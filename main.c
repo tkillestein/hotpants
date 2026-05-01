@@ -658,6 +658,7 @@ int main(int argc,char *argv[]) {
                 pixMin, pixMax, hKeyword, hInfo)
 #endif
     for (i = 0; i < nR; i++) {
+        status = 0;
         if (kernelImIn) {
             /* grab region info from kernelImIn */
             readKernel(kernelImIn, i, &tKerSol, &iKerSol, &rXMin, &rXMax, &rYMin, &rYMax,
