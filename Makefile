@@ -4,8 +4,8 @@
 # THE STANDARD PLACES
 # 
 
-CFITSIOINCDIR =  ../../cfitsio/include
-LIBDIR        =  ../../cfitsio/lib
+CFITSIOINCDIR =  /usr/include
+LIBDIR        =  /usr/lib/x86_64-linux-gnu
 
 #
 #

@@ -9,6 +9,7 @@
 #include<unistd.h>
 
 #include "defaults.h"
+#define HOTPANTS_DEFINE_GLOBALS
 #include "globals.h"
 #include "functions.h"
 
