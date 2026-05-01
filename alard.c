@@ -4,6 +4,7 @@
 #include<malloc.h>
 #include<stdlib.h>
 #include<fitsio.h>
+#include<lapacke.h>
 
 #include "defaults.h"
 #include "globals.h"
@@ -21,10 +22,18 @@ code.
 
 */
 
+/**
+ * @brief Precompute all kernel basis function images and store them in kernel_vec.
+ *
+ * @details Iterates over every Gaussian component and its associated polynomial
+ * orders (deg_fixe[ig]), calling kernel_vector() for each (ig, idegx, idegy)
+ * triplet.  The resulting fwKernel×fwKernel images are the fixed basis profiles
+ * φᵢ in the kernel expansion K(x,y) = Σᵢ cᵢ(x,y)·φᵢ (Alard & Lupton 1998,
+ * Eq. 2).  This function is called exactly once during initialisation; the
+ * populated global array kernel_vec is subsequently used by every convolution
+ * and model-evaluation call.
+ */
 void getKernelVec() {
-    /*****************************************************
-     * Fills kernel_vec with kernel weight filter, called only once
-     *****************************************************/
     int ig, idegx, idegy, nvec;
     int ren;
     
@@ -40,11 +49,34 @@ void getKernelVec() {
     }
 }
 
+/**
+ * @brief Populate a stamp's convolved-image vectors and build its per-stamp
+ *        normal-equation matrices.
+ *
+ * @details For the current substamp (stamp->sscnt):
+ *  1. Calls xy_conv_stamp() for each kernel basis function to fill
+ *     stamp->vectors[0..nCompKer-1] with the image convolved by that basis
+ *     profile.
+ *  2. Fills stamp->vectors[nCompKer..] with polynomial background basis
+ *     images x^i · y^j evaluated over the substamp pixel grid (normalised to
+ *     [-1, 1]).
+ *  3. Calls build_matrix0() and build_scprod0() to accumulate the per-stamp
+ *     least-squares cross-product matrices that will later be combined by
+ *     build_matrix() and build_scprod().
+ *
+ * If all substamps for this stamp have been exhausted (sscnt >= nss) the
+ * stamp is rejected and the function returns 1.
+ *
+ * @param stamp   Pointer to the stamp being processed; stamp->sscnt selects
+ *                the active substamp.
+ * @param imConv  Flat pixel array of the image to be convolved (the "template"
+ *                or "science" image depending on the convolution direction).
+ * @param imRef   Flat pixel array of the reference image (the target of the
+ *                kernel fit, used to build scprod).
+ * @return 0 on success, 1 if the stamp is rejected (out of substamps or bad
+ *         substamp data).
+ */
 int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
-    /*****************************************************
-     * Fills stamp->vectors with convolved images, and 
-     *   pixel indices multiplied by each other for background fit 
-     *****************************************************/
     
     int       ren = 0;
     int       i,j,xi,yi,dx,dy,idegx,idegy,di,dj,nv,ig,nvec;
@@ -124,13 +156,33 @@ int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
     return 0;
 }
 
+/**
+ * @brief Compute the fwKernel×fwKernel image for one Gaussian-polynomial kernel
+ *        basis function.
+ *
+ * @details The n-th basis function is the outer product of two 1-D filters:
+ *   filter_x[k] = exp(-x² · sigma_gauss[ig]) · x^deg_x
+ *   filter_y[k] = exp(-x² · sigma_gauss[ig]) · x^deg_y
+ * where x runs over [-hwKernel, +hwKernel].
+ *
+ * For even-parity bases (deg_x and deg_y both even) the filters are
+ * normalised so that they sum to unity.  Additionally, for n > 0 the zeroth
+ * basis image is subtracted, making higher-order terms represent differential
+ * corrections to the zeroth-order (pure Gaussian) kernel as described in
+ * Alard & Lupton (1998), §2.  When this subtraction is applied *ren is set to
+ * 1 (the "renormalise" flag propagated to xy_conv_stamp).
+ *
+ * If usePCA is set the work is delegated to kernel_vector_PCA().
+ *
+ * @param n     Sequential index of this basis function within kernel_vec.
+ * @param deg_x Polynomial degree of the x-direction filter.
+ * @param deg_y Polynomial degree of the y-direction filter.
+ * @param ig    Gaussian component index (selects sigma_gauss[ig]).
+ * @param ren   Output flag: set to 1 when the zeroth basis is subtracted.
+ * @return Pointer to a newly allocated fwKernel*fwKernel double array; the
+ *         caller stores this in kernel_vec[n] and must eventually free it.
+ */
 double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren) {
-    /*****************************************************
-     * Creates kernel sized entry for kernel_vec for each kernel degree 
-     *   Mask of filter_x * filter_y, filter = exp(-x**2 sig) * x^deg 
-     *   Subtract off kernel_vec[0] if n > 0
-     * NOTE: this does not use any image
-     ******************************************************/
     double    *vector=NULL,*kernel0=NULL;
     int       i,j,k,dx,dy,ix;
     double    sum_x,sum_y,x,qe;
@@ -189,13 +241,26 @@ double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren) {
     return vector;
 }
 
+/**
+ * @brief Compute the n-th kernel basis function image from a pre-supplied PCA
+ *        basis set.
+ *
+ * @details Instead of Gaussian-polynomial analytic forms, each basis image is
+ * read directly from the global PCA[n] array (empirical principal components
+ * derived from observed PSFs).  As with kernel_vector(), for n > 0 the zeroth
+ * PCA component is subtracted so that higher components represent differential
+ * corrections, and *ren is set to 1 to propagate this renormalisation flag to
+ * xy_conv_stamp_PCA().
+ *
+ * @param n     Sequential index of this basis function.
+ * @param deg_x Polynomial degree (unused in PCA mode; kept for API symmetry).
+ * @param deg_y Polynomial degree (unused in PCA mode; kept for API symmetry).
+ * @param ig    Gaussian index (unused in PCA mode; kept for API symmetry).
+ * @param ren   Output flag: set to 1 when the zeroth PCA basis is subtracted.
+ * @return Pointer to a newly allocated fwKernel*fwKernel double array
+ *         initialised with PCA[n] (minus PCA[0] for n > 0).
+ */
 double *kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int *ren) {
-    /*****************************************************
-     * Creates kernel sized entry for kernel_vec for each kernel degree 
-     *   Mask of filter_x * filter_y, filter = exp(-x**2 sig) * x^deg 
-     *   Subtract off kernel_vec[0] if n > 0
-     * NOTE: this does not use any image
-     ******************************************************/
     double    *vector=NULL,*kernel0=NULL;
     int i,j;
     
@@ -220,11 +285,31 @@ double *kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int *ren) {
     return vector;
 }
 
+/**
+ * @brief Convolve the substamp region of an image with the n-th separable
+ *        Gaussian-polynomial kernel basis function.
+ *
+ * @details Uses the separability of the Gaussian-polynomial filter to perform
+ * the convolution in two 1-D passes (first along y, then along x), storing the
+ * fwKSStamp×fwKSStamp result in stamp->vectors[n].  This is the performance-
+ * critical inner loop (~60 % of total runtime according to the PROF file).
+ *
+ * If the renormalise flag @p ren is set (i.e. kernel_vector() returned ren=1
+ * for this basis), the zeroth-basis convolved image stamp->vectors[0] is
+ * subtracted pixel-by-pixel from the result, matching the differential
+ * construction of the higher-order basis images.
+ *
+ * In PCA mode the call is forwarded to xy_conv_stamp_PCA().
+ *
+ * @param stamp  Stamp whose current substamp (stamp->sscnt) defines the pixel
+ *               region to convolve.
+ * @param image  Full-frame input image to be convolved.
+ * @param n      Index of the kernel basis function; selects filter_x/filter_y
+ *               rows and the output slot stamp->vectors[n].
+ * @param ren    If non-zero, subtract stamp->vectors[0] from the result after
+ *               convolution (renormalisation step for higher-order bases).
+ */
 void xy_conv_stamp(stamp_struct *stamp, float *image, int n, int ren) {
-    /*****************************************************
-     * Called for each degree of convolution, ngauss by deg_gauss 
-     * Each convolution is stored in stamp->vectors[n], imc here
-     ******************************************************/
     int       i,j,xc,yc,xij,sub_width,xi,yi;
     double    *v0,*imc;
     
@@ -271,11 +356,24 @@ void xy_conv_stamp(stamp_struct *stamp, float *image, int n, int ren) {
     return;
 }
 
+/**
+ * @brief Convolve the substamp region of an image with the n-th PCA kernel
+ *        basis function using a direct 2-D summation.
+ *
+ * @details Unlike xy_conv_stamp(), which exploits filter separability, this
+ * routine performs a full 2-D correlation between the image patch and the
+ * fwKernel×fwKernel PCA basis image PCA[n].  The fwKSStamp×fwKSStamp result
+ * is written into stamp->vectors[n].  If @p ren is non-zero, stamp->vectors[0]
+ * is subtracted to match the differential construction used in PCA mode.
+ *
+ * @param stamp  Stamp whose current substamp defines the pixel region to convolve.
+ * @param image  Full-frame input image to be convolved.
+ * @param n      PCA basis index; selects PCA[n] and the output slot
+ *               stamp->vectors[n].
+ * @param ren    If non-zero, subtract stamp->vectors[0] from the result after
+ *               convolution.
+ */
 void xy_conv_stamp_PCA(stamp_struct *stamp, float *image, int n, int ren) {
-    /*****************************************************
-     * Called for each degree of convolution, ngauss by deg_gauss 
-     * Each convolution is stored in stamp->vectors[n], imc here
-     ******************************************************/
     
     int       i,j,xc,yc,xij,xi,yi;
     double    *v0,*imc;
@@ -306,13 +404,91 @@ void xy_conv_stamp_PCA(stamp_struct *stamp, float *image, int n, int ren) {
     return;
 }
 
-void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise, double *kernelSol, 
+/**
+ * @brief Solve A·x = b in-place where A is symmetric positive-definite.
+ *
+ * @details Adaptor between the Numerical Recipes 1-based double** convention
+ * used throughout this file and the LAPACKE C interface.  Copies the matrix and
+ * RHS into contiguous 0-based row-major buffers, runs Cholesky factorisation
+ * (dpotrf) followed by the triangular solve (dpotrs), then writes the solution
+ * back into b[1..n].  Cholesky is the correct choice here because the
+ * normal-equations matrix M = Σᵢ AᵢᵀAᵢ is symmetric positive-definite by
+ * construction; it is both faster and more numerically stable than LU.
+ *
+ * @param a  1-indexed n×n SPD matrix a[1..n][1..n]; modified in place during
+ *           factorisation (upper triangle overwritten with Cholesky factor).
+ * @param n  Matrix dimension.
+ * @param b  1-indexed RHS vector b[1..n]; overwritten with the solution x on
+ *           successful return.
+ * @return 0 on success, 1 if the matrix is not positive-definite or allocation
+ *         fails.
+ */
+static int solve_spd(double **a, int n, double *b) {
+    lapack_int info;
+    int i, j;
+    double *flat = (double *)malloc((size_t)n * n * sizeof(double));
+    double *rhs  = (double *)malloc((size_t)n * sizeof(double));
+    if (!flat || !rhs) { free(flat); free(rhs); return 1; }
+
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++)
+            flat[i * n + j] = a[i + 1][j + 1];
+        rhs[i] = b[i + 1];
+    }
+
+    info = LAPACKE_dpotrf(LAPACK_ROW_MAJOR, 'U', (lapack_int)n, flat, (lapack_int)n);
+    if (info == 0)
+        info = LAPACKE_dpotrs(LAPACK_ROW_MAJOR, 'U', (lapack_int)n, 1,
+                              flat, (lapack_int)n, rhs, 1);
+    if (info == 0)
+        for (i = 0; i < n; i++)
+            b[i + 1] = rhs[i];
+    else
+        fprintf(stderr, "WARNING: solve_spd failed (LAPACKE info=%d); "
+                "kernel solution may be unreliable\n", (int)info);
+
+    free(flat);
+    free(rhs);
+    return (info != 0) ? 1 : 0;
+}
+
+/**
+ * @brief Solve for the spatially-varying kernel by fitting the global normal
+ *        equations, iterating until stamp sigma-clipping converges.
+ *
+ * @details Implements the full Alard & Lupton (1998) kernel solution:
+ *  1. Assembles the global normal-equations matrix M via build_matrix() and
+ *     the right-hand-side vector b via build_scprod().
+ *  2. Solves M·a = b by LU decomposition (ludcmp / lubksb); the solution
+ *     vector a is written into @p kernelSol.
+ *  3. Calls check_again() to evaluate each stamp's residual sigma and reject
+ *     or replace bad substamps; if any stamp is flagged the matrices are
+ *     rebuilt and the linear system is solved again.
+ *  4. Iterates steps 1–3 until check_again() reports no further changes.
+ *
+ * Note: the normal-equations matrix is symmetric positive-definite; the
+ * correct solver is Cholesky decomposition, but LU is used here.
+ *
+ * @param stamps              Array of nS stamps used for the fit.
+ * @param imRef               Full-frame reference image (the fit target).
+ * @param imConv              Full-frame image to be convolved (the template or
+ *                            science image).
+ * @param imNoise             Per-pixel noise (sigma) image used when evaluating
+ *                            stamp residuals inside check_again().
+ * @param kernelSol           Output: solution vector of length nCompTotal+1
+ *                            containing the spatially-varying kernel and
+ *                            background coefficients.
+ * @param meansigSubstamps    Output: sigma-clipped mean residual over stamps
+ *                            at convergence.
+ * @param scatterSubstamps    Output: sigma-clipped scatter of residuals over
+ *                            stamps at convergence.
+ * @param NskippedSubstamps   Output: number of substamps excluded from the
+ *                            final solution.
+ */
+void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise, double *kernelSol,
                double *meansigSubstamps, double *scatterSubstamps, int *NskippedSubstamps) {
-    /*****************************************************
-     * Complete fit for kernel solution
-     *****************************************************/
     
-    double d, **matrix;
+    double **matrix;
     char check;
     int i,mat_size;
     int ncomp1, ncomp2, ncomp, nbg_vec;
@@ -343,20 +519,18 @@ void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise
     build_matrix(stamps, nS, matrix);
     build_scprod(stamps, nS, imRef, kernelSol);
     
-    ludcmp(matrix, mat_size, indx, &d);
-    lubksb(matrix, mat_size, indx, kernelSol);
-    
+    solve_spd(matrix, mat_size, kernelSol);
+
     if (verbose>=2) fprintf(stderr, " Checking again\n");
     check = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps);
-    
+
     while(check) {
-        
+
         fprintf(stderr, "\n Re-Expanding Matrix\n");
         build_matrix(stamps, nS, matrix);
         build_scprod(stamps, nS, imRef, kernelSol);
-        
-        ludcmp(matrix, mat_size, indx, &d);
-        lubksb(matrix, mat_size, indx, kernelSol);
+
+        solve_spd(matrix, mat_size, kernelSol);
         
         fprintf(stderr, " Checking again\n");          
         check = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps); 
@@ -374,10 +548,23 @@ void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise
 }
 
 
+/**
+ * @brief Accumulate the per-stamp least-squares cross-product matrix from the
+ *        precomputed convolved-image vectors.
+ *
+ * @details Fills stamp->mat with the pixel-space inner products of the kernel
+ * basis convolution images, corresponding to the Q matrix of Alard & Lupton
+ * (1998), Eq. 3:
+ *   stamp->mat[i][j] = Σ_k  vectors[i][k] · vectors[j][k]
+ * for i,j in [1..nCompKer] (kernel basis terms) and the background coupling
+ * terms (vectors[nCompKer]).  Only the upper triangle and the background row
+ * are filled here; build_matrix() copies to the lower triangle when assembling
+ * the global matrix.
+ *
+ * @param stamp  Stamp whose stamp->vectors have been filled by fillStamp();
+ *               the result is stored in stamp->mat.
+ */
 void build_matrix0(stamp_struct *stamp) {
-    /*****************************************************
-     * Build least squares matrix for each stamp
-     *****************************************************/
     
     int       i,j,pixStamp,k,i1,ivecbg=0;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
@@ -426,11 +613,21 @@ void build_matrix0(stamp_struct *stamp) {
     return;
 }
 
+/**
+ * @brief Compute the per-stamp right-hand-side vector (scalar products of
+ *        basis convolutions with the reference image).
+ *
+ * @details Fills stamp->scprod with the pixel-space inner products
+ *   stamp->scprod[i] = Σ_k  vectors[i][k] · image[xc+rPixX*(yc+yi)]
+ * corresponding to the b vector in the normal equations M·a = b, implementing
+ * Alard & Lupton (1998), Eq. 4.  The first nCompKer entries correspond to
+ * kernel basis terms; the final entry is the cross product with the constant
+ * background basis.
+ *
+ * @param stamp  Stamp whose stamp->vectors have been filled by fillStamp().
+ * @param image  Full-frame reference image (fitting target).
+ */
 void build_scprod0(stamp_struct *stamp, float *image) {
-    /*****************************************************
-     * Build the right side of each stamp's least squares matrix
-     *    stamp.scprod = degree of kernel fit + 1 bg term
-     *****************************************************/
     
     int       xc,yc,xi,yi,i1,k;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
@@ -473,15 +670,40 @@ void build_scprod0(stamp_struct *stamp, float *image) {
     return;
 }
 
+/**
+ * @brief Perform an independent per-stamp kernel fit, sigma-clip outlier stamps
+ *        by kernel sum, optionally do a global fit, and return a figure of merit.
+ *
+ * @details This function is used to evaluate candidate convolution directions
+ * ("which image is sharper?").  For each stamp it extracts the per-stamp
+ * normal-equation system (stamp->mat, stamp->scprod), solves it independently
+ * via LU decomposition, and records the kernel sum (the integral of the kernel,
+ * equal to the flux-scaling ratio).  sigma_clip() is then applied to the
+ * distribution of kernel sums; stamps deviating by more than kerSigReject sigma
+ * are flagged.
+ *
+ * When forceConvolve == "b" (both directions tested) a global fit is performed
+ * using only the unflagged stamps, and three figures of merit are computed
+ * for each stamp:
+ *   - merit1: mean chi-squared per pixel (variance metric)
+ *   - merit2: standard deviation of the difference-image pixel distribution
+ *   - merit3: histogram-FWHM-based noise estimate
+ * All three are normalised by the kernel sum (so units are fractional noise
+ * relative to the source flux).  The function returns the user-selected metric
+ * (figMerit flag).
+ *
+ * @param stamps  Array of nS stamps with pre-built convolution vectors and
+ *                per-stamp normal-equation data.
+ * @param nS      Number of stamps.
+ * @param imRef   Full-frame reference image.
+ * @param imNoise Per-pixel noise image for chi-squared evaluation.
+ * @return Sigma-normalised figure of merit (smaller is better); 0 if the
+ *         global fit is not requested.
+ */
 double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) {
-    /*****************************************************
-     * Fit each stamp independently, reject significant outliers
-     *    Next fit good stamps globally
-     *    Returns a merit statistic, smaller for better fits
-     *****************************************************/
     
     int    nComps,i,im,jm,mcnt1,mcnt2,mcnt3;
-    double d,sum=0,kmean,kstdev;
+    double sum=0,kmean,kstdev;
     double merit1,merit2,merit3,sig1,sig2,sig3;
     float *m1,*m2,*m3,*ks;
     int    xc, yc, nks;
@@ -526,8 +748,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
         }
         
         /* fit stamp, the constant kernel coefficients end up in check_vec */
-        ludcmp(check_mat,nComps,indx,&d);
-        lubksb(check_mat,nComps,indx,check_vec);
+        solve_spd(check_mat, nComps, check_vec);
         
         /* find kernel sum */
         sum = check_vec[1];
@@ -605,8 +826,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
         if (verbose >= 2) fprintf(stderr, " Expanding Test Matrix For Fit\n");
         build_matrix(testStamps, ntestStamps, matrix);
         build_scprod(testStamps, ntestStamps, imRef, testKerSol);
-        ludcmp(matrix, mat_size, indx, &d);
-        lubksb(matrix, mat_size, indx, testKerSol);
+        solve_spd(matrix, mat_size, testKerSol);
         
         /* get the kernel sum to normalize figures of merit! */
         kmean = make_kernel(0, 0, testKerSol);
@@ -716,10 +936,26 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
     return 0;
 }
 
+/**
+ * @brief Alternative implementation of build_matrix() using a slightly
+ *        different spatial coordinate normalisation.
+ *
+ * @details Functionally equivalent to build_matrix() but computes the
+ * spatial polynomial weights wxy[istamp][k] using coordinates normalised as
+ * fx = (xstamp - rPixX/2) / (rPixX/2) rather than the half-pixel-shifted
+ * convention used in build_matrix().  This version is not called in the
+ * default code path; build_matrix() is used instead.  Kept for reference and
+ * potential future use.
+ *
+ * See build_matrix() for a full description of the matrix structure.
+ *
+ * @param stamps  Array of nS stamps with pre-built per-stamp matrices.
+ * @param nS      Number of stamps.
+ * @param matrix  Pre-allocated (mat_size+1)×(mat_size+1) output matrix,
+ *                zeroed on entry; filled with the assembled normal-equations
+ *                matrix on return.
+ */
 void build_matrix_new(stamp_struct *stamps, int nS, double **matrix) {
-    /*****************************************************
-     * Build overall matrix including spatial variations
-     *****************************************************/
     
     int       mat_size,i,j,pixStamp,istamp,k,i1,i2,j1,j2,ibg,jbg,ivecbg,jj;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
@@ -833,10 +1069,30 @@ void build_matrix_new(stamp_struct *stamps, int nS, double **matrix) {
     return;
 }
 
+/**
+ * @brief Assemble the global normal-equations matrix M for the spatially-varying
+ *        kernel fit by accumulating spatially-weighted per-stamp cross-product
+ *        matrices.
+ *
+ * @details Implements Alard & Lupton (1998), Eq. 6.  For each valid stamp
+ * (those whose substamp counter has not overflowed), the spatial polynomial
+ * weight vector wxy[istamp][k] = fx^i · fy^j is evaluated at the substamp
+ * centre (normalised to [-1, 1] across the image).  The global matrix block
+ * for the spatially-varying kernel coefficients is then:
+ *   M[I][J] += wxy[i2] · wxy[j2] · stamp->mat[i1][j1]
+ * where the composite indices I = (i1, i2) and J = (j1, j2) separate the
+ * kernel basis index (i1) from the spatial polynomial index (i2).  Background
+ * polynomial coupling blocks are accumulated similarly.  The full matrix is
+ * symmetrised by copying the upper triangle to the lower triangle before
+ * returning.
+ *
+ * @param stamps  Array of nS stamps with pre-built per-stamp normal-equation
+ *                matrices (stamp->mat) and scalar products (stamp->scprod).
+ * @param nS      Number of stamps.
+ * @param matrix  Pre-allocated (mat_size+1)×(mat_size+1) output matrix;
+ *                zeroed on entry and filled on return.
+ */
 void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
-    /*****************************************************
-     * Build overall matrix including spatial variations
-     *****************************************************/
     
     int       mat_size,i,j,pixStamp,istamp,k,i1,i2,j1,j2,ibg,jbg,ivecbg,jj;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
@@ -957,10 +1213,26 @@ void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
     return;
 }
 
+/**
+ * @brief Assemble the global right-hand-side vector b for the normal equations
+ *        by accumulating spatially-weighted per-stamp scalar products.
+ *
+ * @details For each valid stamp the pre-computed scalar products
+ * stamp->scprod[i] (built by build_scprod0()) are scaled by the appropriate
+ * spatial polynomial weight wxy[istamp][i2] and accumulated into @p kernelSol:
+ *   kernelSol[I] += wxy[istamp][i2] · stamp->scprod[i1]
+ * Background terms are computed directly from the background basis images and
+ * the reference pixel values.  On entry @p kernelSol is zeroed.  After
+ * build_matrix() fills M and this function fills b, ludcmp/lubksb solve M·a=b
+ * to yield the kernel coefficient vector in @p kernelSol.
+ *
+ * @param stamps     Array of nS stamps.
+ * @param nS         Number of stamps.
+ * @param image      Full-frame reference image (used for the background terms).
+ * @param kernelSol  Output: right-hand-side vector of length nCompTotal+1;
+ *                   zeroed on entry, filled on return.
+ */
 void build_scprod(stamp_struct *stamps, int nS, float *image, double *kernelSol) {
-    /*****************************************************
-     * Build the right side of the complete least squares matrix 
-     *****************************************************/
     
     int       istamp,xc,yc,xi,yi,i1,i2,k,ibg,i,ii;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
@@ -1017,6 +1289,23 @@ void build_scprod(stamp_struct *stamps, int nS, float *image, double *kernelSol)
     return;
 }
 
+/**
+ * @brief Compute the mean chi-squared per pixel for a substamp in the final
+ *        difference image.
+ *
+ * @details Sums (imDiff[k])² / (imNoise[k])² over all unmasked pixels in the
+ * fwKSStamp×fwKSStamp substamp centred on the stamp's active substamp location
+ * and divides by the pixel count to produce a mean chi-squared.  Pixels
+ * flagged as FLAG_INPUT_ISBAD are skipped.  Returns -1 via @p sig if no valid
+ * pixels are found.
+ *
+ * @param stamp    Stamp whose active substamp (stamp->sscnt) defines the
+ *                 evaluation region.
+ * @param imDiff   Full-frame difference image.
+ * @param imNoise  Full-frame per-pixel noise image (sigma values).
+ * @param sig      Output: mean chi-squared per pixel over the substamp, or -1
+ *                 if no valid pixels exist.
+ */
 void getFinalStampSig(stamp_struct *stamp, float *imDiff, float *imNoise, double *sig) {
     int i, j, idx, nsig=0;
     int xRegion2, xRegion = stamp->xss[stamp->sscnt];
@@ -1052,6 +1341,28 @@ void getFinalStampSig(stamp_struct *stamp, float *imDiff, float *imNoise, double
     return;
 }
 
+/**
+ * @brief Evaluate three quality-of-fit metrics for a single substamp given the
+ *        current kernel solution.
+ *
+ * @details Builds the model convolved image for the substamp via make_model()
+ * and subtracts the reference (stamp->krefArea), then computes:
+ *  - @p sig1: mean chi-squared per pixel (diff²/noise²), normalised by pixel
+ *    count; used as the "variance" figure of merit (figMerit=="v").
+ *  - @p sig2: standard deviation of the residual pixel distribution from
+ *    getStampStats3(); used as the "sd" figure of merit (figMerit=="s").
+ *  - @p sig3: histogram-FWHM noise estimate from getStampStats3(); used as the
+ *    "histogram" figure of merit (figMerit=="h").
+ * Any metric that cannot be computed (e.g. masked pixels, NaN values) is
+ * returned as -1.
+ *
+ * @param stamp      Stamp to evaluate; stamp->krefArea must be filled.
+ * @param kernelSol  Current global kernel solution vector.
+ * @param imNoise    Full-frame per-pixel noise image.
+ * @param sig1       Output: mean chi-squared per pixel metric.
+ * @param sig2       Output: pixel-distribution standard deviation metric.
+ * @param sig3       Output: histogram FWHM metric.
+ */
 void getStampSig(stamp_struct *stamp, double *kernelSol, float *imNoise, double *sig1, double *sig2, double *sig3) {
     int i, j, idx, sscnt, nsig, xRegion, yRegion, xRegion2, yRegion2;
     double cSum, cMean, cMedian, cMode, cLfwhm;
@@ -1133,10 +1444,37 @@ void getStampSig(stamp_struct *stamp, double *kernelSol, float *imNoise, double 
 }
 
 
+/**
+ * @brief Sigma-clip stamps after a global kernel fit and flag those with poor
+ *        residuals for substamp replacement.
+ *
+ * @details For each stamp that is currently represented by a valid substamp,
+ * getStampSig() is called to measure the residual quality metric selected by
+ * the figMerit flag.  Stamps with an invalid metric (sig == -1) are immediately
+ * advanced to the next substamp via fillStamp().  Valid metrics are collected
+ * and sigma-clipped to derive a robust mean and scatter; any stamp whose metric
+ * exceeds mean + kerSigReject·stdev is likewise advanced to its next substamp.
+ * If any stamp was advanced the function returns 1 (triggering a matrix rebuild
+ * and re-solve in fitKernel()); otherwise it returns 0 (convergence).
+ *
+ * The sigma-clipped mean and scatter are stored in @p meansigSubstamps and
+ * @p scatterSubstamps for inclusion in the output FITS header.
+ *
+ * @param stamps              Array of nS stamps.
+ * @param kernelSol           Current kernel solution vector.
+ * @param imConv              Full-frame image to be convolved (used by
+ *                            fillStamp() when advancing to a new substamp).
+ * @param imRef               Full-frame reference image.
+ * @param imNoise             Full-frame noise image for chi-squared evaluation.
+ * @param meansigSubstamps    Output: sigma-clipped mean residual at the end of
+ *                            this iteration.
+ * @param scatterSubstamps    Output: sigma-clipped scatter of residuals.
+ * @param NskippedSubstamps   Output: number of stamps skipped (out of
+ *                            substamps).
+ * @return 1 if any stamp was advanced (another iteration needed), 0 if
+ *         converged.
+ */
 char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *imRef, float *imNoise, double *meansigSubstamps, double *scatterSubstamps, int *NskippedSubstamps) {
-    /*****************************************************
-     * Check for bad stamps after the global fit - iterate if necessary
-     *****************************************************/
     
     int    istamp,nss,scnt;
     double sig,mean,stdev;
@@ -1239,10 +1577,39 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
     return check;
 }
 
+/**
+ * @brief Convolve an entire image with the spatially-varying kernel, updating
+ *        the output image and propagating the pixel mask.
+ *
+ * @details This is the performance bottleneck of HOTPANTS (~60 % of total
+ * runtime).  The image is divided into kcStep×kcStep blocks.  For each block
+ * make_kernel() is called once at the block centre to evaluate the
+ * spatially-varying kernel K(x,y) = Σᵢ cᵢ(x,y)·φᵢ; the same kernel image is
+ * then applied to all pixels in the block by direct 2-D summation over the
+ * fwKernel×fwKernel support.
+ *
+ * If a variance image is provided (*variance != NULL), it is propagated
+ * simultaneously.  When convolveVariance is set the variance is convolved
+ * linearly (appropriate for correlated noise); otherwise it is convolved with
+ * K² (appropriate for independent noise).
+ *
+ * Mask propagation: the output mask mRData[ni] inherits the input mask of the
+ * central pixel.  If any pixel within the kernel footprint is flagged and the
+ * fraction of unmasked kernel weight uks/aks falls below kerFracMask, the
+ * output pixel is additionally flagged FLAG_OUTPUT_ISBAD | FLAG_BAD_CONV;
+ * otherwise it receives FLAG_OK_CONV.
+ *
+ * @param image      Full-frame input image to be convolved.
+ * @param variance   Pointer to the variance image pointer; updated in-place if
+ *                   non-NULL (old allocation freed and replaced).
+ * @param xSize      Image width in pixels.
+ * @param ySize      Image height in pixels.
+ * @param kernelSol  Kernel solution vector produced by fitKernel().
+ * @param cRdata     Output: full-frame convolved image (pre-allocated by
+ *                   caller).
+ * @param cMask      Input pixel mask array used for mask propagation.
+ */
 void spatial_convolve(float *image, float **variance, int xSize, int ySize, double *kernelSol, float *cRdata, int *cMask) {
-    /*****************************************************
-     * Take image and convolve it using the kernelSol every kernel width
-     *****************************************************/
     
     int       i1,j1,i2,j2,nsteps_x,nsteps_y,i,j,i0,j0,ic,jc,ik,jk,nc,ni,mbit,dovar;
     double    q, qv, kk, aks, uks;
@@ -1336,10 +1703,27 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
     return;
 }
 
+/**
+ * @brief Evaluate the spatially-varying convolution kernel at image position
+ *        (xi, yi) and return its pixel sum.
+ *
+ * @details Computes the spatial polynomial weights at (xi, yi) (normalised to
+ * [-1, 1] across the image) and uses them to form the linear combination of
+ * kernel coefficients:
+ *   kernel_coeffs[i1] = Σ_{ix,iy} kernelSol[k] · xf^ix · yf^iy
+ * then assembles the kernel image:
+ *   kernel[p] = Σ_{i1} kernel_coeffs[i1] · kernel_vec[i1][p]
+ * The result is stored in the global array kernel[] and its pixel sum is
+ * returned.  The kernel sum equals the photometric flux-scaling ratio between
+ * convolved and reference images at this position.
+ *
+ * @param xi         x pixel coordinate at which to evaluate the kernel.
+ * @param yi         y pixel coordinate at which to evaluate the kernel.
+ * @param kernelSol  Kernel solution vector (output of fitKernel()).
+ * @return Sum of all pixels in the assembled kernel image (the flux-scaling
+ *         factor at this position).
+ */
 double make_kernel(int xi, int yi, double *kernelSol) {
-    /*****************************************************
-     * Create the appropriate kernel at xi, yi, return sum
-     *****************************************************/
     
     int    i1,k,ix,iy,i;
     double ax,ay,sum_kernel;
@@ -1377,10 +1761,23 @@ double make_kernel(int xi, int yi, double *kernelSol) {
     return sum_kernel;
 }
 
+/**
+ * @brief Evaluate the spatially-varying background polynomial at image position
+ *        (xi, yi).
+ *
+ * @details The background model is a 2-D polynomial of order bgOrder, with
+ * coefficients stored in kernelSol starting at index ncompBG+1.  Coordinates
+ * are normalised to [-1, 1].  The returned value is the additive sky background
+ * difference between convolved and reference images at (xi, yi), to be
+ * subtracted when forming the difference image.
+ *
+ * @param xi         x pixel coordinate.
+ * @param yi         y pixel coordinate.
+ * @param kernelSol  Kernel solution vector; background coefficients begin
+ *                   immediately after the kernel coefficient block.
+ * @return Background value at (xi, yi) in data units.
+ */
 double get_background(int xi, int yi, double *kernelSol) {
-    /*****************************************************
-     * Return background value at xi, yi
-     *****************************************************/
     
     double  background,ax,ay,xf,yf;
     int     i,j,k;
@@ -1407,10 +1804,25 @@ double get_background(int xi, int yi, double *kernelSol) {
     return background;
 }
 
+/**
+ * @brief Construct the model convolved image for a substamp from the kernel
+ *        solution and the precomputed convolution vectors.
+ *
+ * @details Evaluates the spatial polynomial weights at the substamp centre and
+ * forms the model prediction:
+ *   csModel[p] = Σ_{i1} coeff[i1] · stamp->vectors[i1][p]
+ * where coeff[i1] is the spatially-evaluated kernel coefficient for basis i1.
+ * The result is the predicted appearance of the template convolved to match the
+ * reference at this substamp location, and is used by getStampSig() to compute
+ * residual metrics.  Background is not included here; it is added separately
+ * via get_background().
+ *
+ * @param stamp      Stamp with pre-filled convolution vectors.
+ * @param kernelSol  Kernel solution vector.
+ * @param csModel    Output: fwKSStamp×fwKSStamp float array filled with the
+ *                   model prediction (pre-allocated by caller).
+ */
 void make_model(stamp_struct *stamp, double *kernelSol, float *csModel) {
-    /*****************************************************
-     * Create a model of the convolved image
-     *****************************************************/
     
     int       i1,k,ix,iy,i,xi,yi;
     double    ax,ay,coeff;
@@ -1455,91 +1867,3 @@ void make_model(stamp_struct *stamp, double *kernelSol, float *csModel) {
     return;
 }
 
-int ludcmp(double **a, int n, int *indx, double *d)
-#define TINY 1.0e-20;
-{
-    int     i,imax=0,j,k;
-    double  big,dum,sum,temp2;
-    double  *vv,*lvector();
-    void    lnrerror();
-    
-    vv=(double *)malloc((n+1)*sizeof(double));
-    
-    *d=1.0;
-    for (i=1;i<=n;i++) {
-        big=0.0;
-        for (j=1;j<=n;j++)
-            if ((temp2=fabs(a[i][j])) > big) big=temp2;
-        if (big == 0.) {
-            fprintf(stderr," Numerical Recipies run error....");
-            fprintf(stderr,"Singular matrix in routine LUDCMP\n");
-            fprintf(stderr,"Goodbye ! \n");
-            
-            /*
-              for (i = 1; i <= n; i++) {
-              for (j = 1; j <= n; j++) {
-              fprintf(stderr, "%d %d %f\n", i, j, a[i][j]);
-              }
-              }
-            */
-            return (1);
-        }
-        vv[i]=1.0/big;
-    }
-    for (j=1;j<=n;j++) {
-        for (i=1;i<j;i++) {
-            sum=a[i][j];
-            for (k=1;k<i;k++) sum -= a[i][k]*a[k][j];
-            a[i][j]=sum;
-        }
-        big=0.0;
-        for (i=j;i<=n;i++) {
-            sum=a[i][j];
-            for (k=1;k<j;k++)
-                sum -= a[i][k]*a[k][j];
-            a[i][j]=sum;
-            if ( (dum=vv[i]*fabs(sum)) >= big) {
-                big=dum;
-                imax=i;
-            }
-        }
-        if (j != imax) {
-            for (k=1;k<=n;k++) {
-                dum=a[imax][k];
-                a[imax][k]=a[j][k];
-                a[j][k]=dum;
-            }
-            *d = -(*d);
-            vv[imax]=vv[j];
-        }
-        indx[j]=imax;
-        if (a[j][j] == 0.0) a[j][j]=TINY;
-        if (j != n) {
-            dum=1.0/(a[j][j]);
-            for (i=j+1;i<=n;i++) a[i][j] *= dum;
-        }
-    }
-    free(vv);
-    return 0;
-}
-
-void lubksb(double **a, int n, int *indx, double  *b)
-{
-    int i,ii=0,ip,j;
-    double  sum;
-    
-    for (i=1;i<=n;i++) {
-        ip=indx[i];
-        sum=b[ip];
-        b[ip]=b[i];
-        if (ii)
-            for (j=ii;j<=i-1;j++) sum -= a[i][j]*b[j];
-        else if (sum) ii=i;
-        b[i]=sum;
-    }
-    for (i=n;i>=1;i--) {
-        sum=b[i];
-        for (j=i+1;j<=n;j++) sum -= a[i][j]*b[j];
-        b[i]=sum/a[i][i];
-    }
-}

@@ -6,6 +6,7 @@
 #include<stdlib.h>
 #include<fitsio.h>
 
+#define HOTPANTS_DEFINE_GLOBALS
 #include "globals.h"
 
 #define max(x,y) x>y?x:y

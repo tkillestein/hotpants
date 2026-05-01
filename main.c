@@ -9,6 +9,7 @@
 #include<unistd.h>
 
 #include "defaults.h"
+#define HOTPANTS_DEFINE_GLOBALS
 #include "globals.h"
 #include "functions.h"
 
@@ -424,8 +425,7 @@ int main(int argc,char *argv[]) {
     
     /* malloc data structures */
     if ( !(temp    = (float *)calloc((fwKSStamp+fwKernel)*fwKSStamp, sizeof(float))) ||
-         !(indx    = (int *)calloc((nCompTotal+1+100), sizeof(int))) ||
-         
+
          !(kernel        = (double *)calloc(fwKernel*fwKernel, sizeof(double))) ||
          !(kernel_coeffs = (double *)calloc(nCompKer, sizeof(double))) ||
          
@@ -1960,7 +1960,6 @@ int main(int argc,char *argv[]) {
     free(sigma_gauss);
     
     if (temp)          free(temp);
-    if (indx)          free(indx);
     if (kernel)        free(kernel);
     if (kernel_coeffs) free(kernel_coeffs);
     if (kernel_vec)    free(kernel_vec);
