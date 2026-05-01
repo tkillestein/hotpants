@@ -81,6 +81,15 @@ EXTERN char      version[32];
 /* REGION SIZED */
 EXTERN int       *mRData;   /* bad input data mask */
 
+/* Per-region globals: each parallel region thread needs its own copies.
+   threadprivate persists across OpenMP parallel constructs so scratch
+   buffers allocated once per thread survive the region loop. */
+#ifdef _OPENMP
+#pragma omp threadprivate(rPixX, rPixY, mRData, nS, kerFitThresh, \
+                           temp, temp2, wxy, kernel, kernel_coeffs, \
+                           check_mat, check_vec, check_stack)
+#endif
+
 /* armin */
 /* a dummy varialbe to do some testing */
 EXTERN int        dummy;

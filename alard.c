@@ -1578,6 +1578,56 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
 }
 
 /**
+ * @brief Thread-safe kernel evaluator writing into caller-supplied buffers.
+ *
+ * @details Identical logic to make_kernel() but writes to lkernel and
+ * lkernel_coeffs instead of the global arrays, allowing concurrent calls from
+ * multiple OpenMP threads each with their own private buffers.
+ *
+ * @param xi             x pixel coordinate.
+ * @param yi             y pixel coordinate.
+ * @param kernelSol      Kernel solution vector (read-only).
+ * @param lkernel        Caller-allocated buffer of size fwKernel*fwKernel.
+ * @param lkernel_coeffs Caller-allocated buffer of size nCompKer.
+ * @return Sum of all pixels in the assembled kernel image.
+ */
+static double make_kernel_local(int xi, int yi, double *kernelSol,
+                                double *lkernel, double *lkernel_coeffs) {
+    int    i1, k, ix, iy, i;
+    double ax, ay, sum_kernel;
+    double xf, yf;
+
+    k  = 2;
+    xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
+    yf = (yi - 0.5 * rPixY) / (0.5 * rPixY);
+
+    for (i1 = 1; i1 < nCompKer; i1++) {
+        lkernel_coeffs[i1] = 0.0;
+        ax = 1.0;
+        for (ix = 0; ix <= kerOrder; ix++) {
+            ay = 1.0;
+            for (iy = 0; iy <= kerOrder - ix; iy++) {
+                lkernel_coeffs[i1] += kernelSol[k++] * ax * ay;
+                ay *= yf;
+            }
+            ax *= xf;
+        }
+    }
+    lkernel_coeffs[0] = kernelSol[1];
+
+    for (i = 0; i < fwKernel * fwKernel; i++)
+        lkernel[i] = 0.0;
+
+    sum_kernel = 0.0;
+    for (i = 0; i < fwKernel * fwKernel; i++) {
+        for (i1 = 0; i1 < nCompKer; i1++)
+            lkernel[i] += lkernel_coeffs[i1] * kernel_vec[i1][i];
+        sum_kernel += lkernel[i];
+    }
+    return sum_kernel;
+}
+
+/**
  * @brief Convolve an entire image with the spatially-varying kernel, updating
  *        the output image and propagating the pixel mask.
  *
@@ -1599,6 +1649,12 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
  * output pixel is additionally flagged FLAG_OUTPUT_ISBAD | FLAG_BAD_CONV;
  * otherwise it receives FLAG_OK_CONV.
  *
+ * When built with OpenMP (-fopenmp) the outer j1 loop is parallelised.  Each
+ * thread allocates its own kernel and kernel_coeffs workspace so that
+ * make_kernel_local() calls are data-race free.  The mRData and cRdata writes
+ * are safe because each output pixel index ni = i + xSize*j is unique across
+ * iterations.
+ *
  * @param image      Full-frame input image to be convolved.
  * @param variance   Pointer to the variance image pointer; updated in-place if
  *                   non-NULL (old allocation freed and replaced).
@@ -1610,61 +1666,139 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
  * @param cMask      Input pixel mask array used for mask propagation.
  */
 void spatial_convolve(float *image, float **variance, int xSize, int ySize, double *kernelSol, float *cRdata, int *cMask) {
-    
+
     int       i1,j1,i2,j2,nsteps_x,nsteps_y,i,j,i0,j0,ic,jc,ik,jk,nc,ni,mbit,dovar;
     double    q, qv, kk, aks, uks;
     float     *vData=NULL;
-    
+
     if ((*variance) == NULL)
         dovar = 0;
     else
         dovar = 1;
-    
+
     if (dovar) {
         if ( !(vData = (float *)calloc(xSize*ySize, sizeof(float)))) {
             return;
         }
     }
-    
+
     nsteps_x = ceil((double)(xSize)/(double)kcStep);
     nsteps_y = ceil((double)(ySize)/(double)kcStep);
-    
+
+#ifdef _OPENMP
+    /* Each thread gets private copies of the loop indices and accumulators.
+       j1 is automatically private as the omp-for loop variable.
+       lkernel / lkernel_coeffs are allocated per-thread inside the parallel
+       block so that concurrent make_kernel_local() calls are race-free. */
+    #pragma omp parallel \
+        private(i1, i2, j2, i, j, i0, j0, ic, jc, ik, jk, nc, ni, mbit, q, qv, kk, aks, uks)
+    {
+        double *lkernel       = (double *)calloc(fwKernel * fwKernel, sizeof(double));
+        double *lkernel_coeffs = (double *)calloc(nCompKer, sizeof(double));
+
+        #pragma omp for schedule(dynamic)
+        for (j1 = 0; j1 < nsteps_y; j1++) {
+            j0 = j1 * kcStep + hwKernel;
+
+            for (i1 = 0; i1 < nsteps_x; i1++) {
+                i0 = i1 * kcStep + hwKernel;
+
+                make_kernel_local(i0 + hwKernel, j0 + hwKernel, kernelSol,
+                                  lkernel, lkernel_coeffs);
+
+                for (j2 = 0; j2 < kcStep; j2++) {
+                    j = j0 + j2;
+                    if (j >= ySize - hwKernel) break;
+
+                    for (i2 = 0; i2 < kcStep; i2++) {
+                        i = i0 + i2;
+                        if (i >= xSize - hwKernel) break;
+
+                        ni = i + xSize * j;
+                        qv = q = aks = uks = 0.0;
+                        mbit = 0x0;
+                        for (jc = j - hwKernel; jc <= j + hwKernel; jc++) {
+                            jk = j - jc + hwKernel;
+
+                            for (ic = i - hwKernel; ic <= i + hwKernel; ic++) {
+                                ik = i - ic + hwKernel;
+
+                                nc = ic + xSize * jc;
+                                kk = lkernel[ik + jk * fwKernel];
+
+                                q    += image[nc] * kk;
+                                if (dovar) {
+                                    if (convolveVariance)
+                                        qv += (*variance)[nc] * kk;
+                                    else
+                                        qv += (*variance)[nc] * kk * kk;
+                                }
+
+                                mbit |= cMask[nc];
+                                aks  += fabs(kk);
+                                if (!(cMask[nc] & FLAG_INPUT_ISBAD))
+                                    uks += fabs(kk);
+                            }
+                        }
+
+                        cRdata[ni] = q;
+                        if (dovar)
+                            vData[ni] = qv;
+
+                        mRData[ni] |= cMask[ni];
+                        mRData[ni] |= FLAG_OUTPUT_ISBAD * ((cMask[ni] & FLAG_INPUT_ISBAD) > 0);
+
+                        if (mbit) {
+                            if ((uks / aks) < kerFracMask)
+                                mRData[ni] |= (FLAG_OUTPUT_ISBAD | FLAG_BAD_CONV);
+                            else
+                                mRData[ni] |= FLAG_OK_CONV;
+                        }
+                    }
+                }
+            }
+        }
+
+        free(lkernel);
+        free(lkernel_coeffs);
+    }
+#else
     for (j1 = 0; j1 < nsteps_y; j1++) {
         j0 = j1 * kcStep + hwKernel;
-        
+
         for(i1 = 0; i1 < nsteps_x; i1++) {
             i0 = i1 * kcStep + hwKernel;
-            
+
             make_kernel(i0 + hwKernel, j0 + hwKernel, kernelSol);
-            
+
             for (j2 = 0; j2 < kcStep; j2++) {
                 j = j0 + j2;
                 if ( j >= ySize - hwKernel) break;
-                
+
                 for (i2 = 0; i2 < kcStep; i2++) {
                     i = i0 + i2;
                     if (i >= xSize - hwKernel) break;
-                    
+
                     ni = i+xSize*j;
                     qv = q = aks = uks = 0.0;
                     mbit = 0x0;
                     for (jc = j - hwKernel; jc <= j + hwKernel; jc++) {
                         jk = j - jc + hwKernel;
-                        
+
                         for (ic = i - hwKernel; ic <= i + hwKernel; ic++) {
                             ik = i - ic + hwKernel;
-                            
+
                             nc = ic+xSize*jc;
                             kk = kernel[ik+jk*fwKernel];
-                            
+
                             q     += image[nc] * kk;
                             if (dovar) {
                                 if (convolveVariance)
                                     qv += (*variance)[nc] * kk;
                                 else
-                                    qv += (*variance)[nc] * kk * kk;			   
+                                    qv += (*variance)[nc] * kk * kk;
                             }
-                            
+
                             mbit  |= cMask[nc];
                             aks   += fabs(kk);
                             if (!(cMask[nc] & FLAG_INPUT_ISBAD)) {
@@ -1672,17 +1806,17 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
                             }
                         }
                     }
-                    
+
                     cRdata[ni]   = q;
                     if (dovar)
                         vData[ni] = qv;
-                    
+
                     /* mask propagation changed in 5.1.9 */
-                    /* mRData[ni]  |= mbit; */ 
+                    /* mRData[ni]  |= mbit; */
                     /* mRData[ni]  |= FLAG_OK_CONV      * (mbit > 0);*/
                     mRData[ni]  |= cMask[ni];
                     mRData[ni]  |= FLAG_OUTPUT_ISBAD * ((cMask[ni] & FLAG_INPUT_ISBAD) > 0);
-                    
+
                     if (mbit) {
                         if ((uks / aks) < kerFracMask) {
                             mRData[ni] |= (FLAG_OUTPUT_ISBAD | FLAG_BAD_CONV);
@@ -1691,11 +1825,12 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
                             mRData[ni] |= FLAG_OK_CONV;
                         }
                     }
-                    
-                }       
+
+                }
             }
         }
     }
+#endif
     if (dovar) {
         free(*variance);
         *variance = vData;

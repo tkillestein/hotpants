@@ -7,6 +7,9 @@
 #include<ctype.h>
 #include<time.h>
 #include<unistd.h>
+#ifdef _OPENMP
+#include<omp.h>
+#endif
 
 #include "defaults.h"
 #define HOTPANTS_DEFINE_GLOBALS
@@ -439,11 +442,36 @@ int main(int argc,char *argv[]) {
          !(check_stack = (double *)calloc(nStamps, sizeof(double))) ) {
         exit(1);
     }
-    for (i = 0; i < nC; i++) 
+    for (i = 0; i < nC; i++)
         if ( !(check_mat[i] = (double *)calloc(nC, sizeof(double))) ) {
             exit (1);
         }
-    
+
+    /* Allocate per-thread copies of scratch buffers that are overwritten each
+       region.  Thread 0 already owns the allocations above; worker threads get
+       their own via the threadprivate mechanism.  The empty parallel block
+       causes OpenMP to spin up its thread pool once so that subsequent
+       parallel-for launches incur no start-up overhead. */
+#ifdef _OPENMP
+    #pragma omp parallel
+    {
+        if (omp_get_thread_num() != 0) {
+            int _ki;
+            temp          = (float *)calloc((fwKSStamp+fwKernel)*fwKSStamp, sizeof(float));
+            kernel        = (double *)calloc(fwKernel*fwKernel, sizeof(double));
+            kernel_coeffs = (double *)calloc(nCompKer, sizeof(double));
+            check_vec     = (double *)calloc(nC, sizeof(double));
+            check_stack   = (double *)calloc(nStamps, sizeof(double));
+            check_mat     = (double **)calloc(nC, sizeof(double *));
+            for (_ki = 0; _ki < nC; _ki++)
+                check_mat[_ki] = (double *)calloc(nC, sizeof(double));
+            /* pointer-only threadprivates; region loop body sets these each iteration */
+            wxy = NULL; mRData = NULL; temp2 = NULL;
+            nS = 0; rPixX = 0; rPixY = 0;
+        }
+    }
+#endif
+
     /******/
     /* determine pixel limits of regions, and of stamps in region */
     /******/
@@ -594,9 +622,43 @@ int main(int argc,char *argv[]) {
     
     /* initialize to requested value in case things change later on */
     fitThresh = kerFitThresh;
-    
-    /* cycle through all regions */
+
+    /* cycle through all regions
+     *
+     * Regions are fully independent after the FITS reads, so the loop is
+     * parallelised with OpenMP.  Globals that are overwritten per-region
+     * (rPixX, rPixY, mRData, nS, kerFitThresh, temp, temp2, wxy, kernel,
+     * kernel_coeffs, check_mat, check_vec, check_stack) are declared
+     * threadprivate in globals.h.  All other per-iteration state that lives in
+     * main()'s stack frame is listed in the private() clause below.
+     * CFITSIO is not thread-safe for concurrent access to the same fitsfile
+     * pointer; reads from the shared tPtr/iPtr and all writes to oPtr are
+     * serialised with #pragma omp critical(cfitsio). */
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic) \
+        copyin(kerFitThresh) \
+        private(j, k, l, m, \
+                rXMin, rYMin, rXMax, rYMax, \
+                rXBMin, rYBMin, rXBMax, rYBMax, \
+                xBufLo, xBufHi, yBufLo, yBufHi, \
+                sXMin, sYMin, sXMax, sYMax, \
+                niS, ntS, convTmpl, flag, status, anynul, nx2norm, \
+                fpixelOutX, fpixelOutY, lpixelOutX, lpixelOutY, \
+                tRData, iRData, oRData, eRData, misRData, mtsRData, \
+                tKerSol, iKerSol, ctStamps, ciStamps, \
+                tMerit, iMerit, diffrat, x2norm, sumKernel, inv1, \
+                sum, mean, median, mode, sd, fwhm, lfwhm, \
+                summ, meanm, medianm, modem, sdm, fwhmm, lfwhmm, \
+                nsum, nmean, nmedian, nmode, nsd, nfwhm, nlfwhm, \
+                nsumm, nmeanm, nmedianm, nmodem, nsdm, nfwhmm, nlfwhmm, \
+                meansigSubstamps, scatterSubstamps, \
+                meansigSubstampsF, scatterSubstampsF, \
+                meanksumSubstamps, scatterksumSubstamps, \
+                NskippedSubstamps, iSFrac, tSFrac, ePtr, \
+                pixMin, pixMax, hKeyword, hInfo)
+#endif
     for (i = 0; i < nR; i++) {
+        status = 0;
         if (kernelImIn) {
             /* grab region info from kernelImIn */
             readKernel(kernelImIn, i, &tKerSol, &iKerSol, &rXMin, &rXMax, &rYMin, &rYMax,
@@ -712,10 +774,16 @@ int main(int argc,char *argv[]) {
             }
         }
         
-        /* read image region from fits files into input arrays */
+        /* read image region from fits files into input arrays.
+           tPtr and iPtr are shared read-only fitsfile handles; CFITSIO is not
+           thread-safe so concurrent seeks/reads on the same handle must be
+           serialised. */
+        #pragma omp critical(cfitsio)
+        {
         if (fits_read_subset_flt(tPtr, 0, tNaxis, tNaxes, pixMin, pixMax, inc, 0, tRData, &anynul, &status) ||
             fits_read_subset_flt(iPtr, 0, iNaxis, iNaxes, pixMin, pixMax, inc, 0, iRData, &anynul, &status)) {
             printError(status);
+        }
         }
         
         /* take off possible pedestal */
@@ -1353,15 +1421,18 @@ int main(int argc,char *argv[]) {
             
             if (inclConvImage) {
                 /* if asked for, the convolved image is the second in the multi-fits layer */
+                #pragma omp critical(cfitsio)
+                {
                 if (fits_movabs_hdu(oPtr, 2, NULL, &status))
                     printError(status);
-                if (outShort) 
+                if (outShort)
                     if (fits_set_bscale(oPtr, outBscale, outBzero, &status))
                         printError(status);
                 if (hp_fits_write_subset(oPtr, 0, 2, oNaxes, oRData, &status,
                                          outShort, outBzero, outBscale, fpixelOutX, fpixelOutY,
                                          lpixelOutX, lpixelOutY, xBufLo, yBufLo))
                     printError(status);
+                }
             }
             if (convImage) {
                 if (fits_open_file(&ePtr, convImage, 1, &status))
@@ -1597,6 +1668,12 @@ int main(int argc,char *argv[]) {
             }
         }
         
+        /* All remaining output is written to shared FITS files (oPtr, kernelImOut).
+           Serialise with a critical section so that concurrent regions do not
+           interleave seeks and writes on the same fitsfile handle. */
+        #pragma omp critical(cfitsio)
+        {
+
         /* difference image is the first output layer */
         if ( fits_movabs_hdu(oPtr, 1, NULL, &status) ||
              hp_fits_write_subset(oPtr, 0, 2, oNaxes, oRData, &status,
@@ -1843,8 +1920,10 @@ int main(int argc,char *argv[]) {
             }
         }
         
+        } /* end #pragma omp critical(cfitsio) — output writes */
+
         fprintf(stderr,"Region %i finished\n\n",i);
-        
+
         free(tRData);   tRData   = NULL;
         free(iRData);   iRData   = NULL;
         free(oRData);   oRData   = NULL;
@@ -1857,8 +1936,29 @@ int main(int argc,char *argv[]) {
         if (ciStamps) { free(ciStamps); ciStamps = NULL; }
         if (iKerSol)  { free(tKerSol);  tKerSol  = NULL; }
         if (tKerSol)  { free(iKerSol);  iKerSol  = NULL; }
+    } /* end region loop */
+
+    /* Free per-thread scratch buffers allocated in worker threads above. */
+#ifdef _OPENMP
+    #pragma omp parallel
+    {
+        if (omp_get_thread_num() != 0) {
+            int _ki;
+            if (temp)          { free(temp);          temp          = NULL; }
+            if (kernel)        { free(kernel);        kernel        = NULL; }
+            if (kernel_coeffs) { free(kernel_coeffs); kernel_coeffs = NULL; }
+            if (check_vec)     { free(check_vec);     check_vec     = NULL; }
+            if (check_stack)   { free(check_stack);   check_stack   = NULL; }
+            if (check_mat) {
+                for (_ki = 0; _ki < nC; _ki++)
+                    if (check_mat[_ki]) free(check_mat[_ki]);
+                free(check_mat);
+                check_mat = NULL;
+            }
+        }
     }
-    
+#endif
+
     /* add fits header info */
     fits_movabs_hdu(oPtr, 1, NULL, &status);
     

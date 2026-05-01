@@ -27,7 +27,7 @@ LIBDIR        =  /usr/lib/x86_64-linux-gnu
 
 # standard usage
 # recently added -std=c99 after a bug report
-COPTS = -funroll-loops -O3 -ansi -std=c99 -pedantic-errors -Wall -I$(CFITSIOINCDIR) -D_GNU_SOURCE
+COPTS = -funroll-loops -O3 -ansi -std=c99 -pedantic-errors -Wall -I$(CFITSIOINCDIR) -D_GNU_SOURCE -fopenmp
 LIBS  = -L$(LIBDIR) -lm -lcfitsio -llapacke -llapack -lblas
 
 # compiler
