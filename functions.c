@@ -22,8 +22,20 @@ code.
 
 */
 
-/* armin */ 
-void loadxyfile(char *filename, int cmpfileflag){      
+/**
+ * @brief Load an (X, Y) source position list from a whitespace-delimited text
+ *        file into the global xcmp / ycmp arrays.
+ *
+ * @details Reads the first two columns of each non-alphabetic line as 1-indexed
+ * (X, Y) coordinates and converts them to 0-indexed by subtracting 1.  If
+ * @p cmpfileflag is non-zero the first line of the file is skipped (e.g. a
+ * header line).  Reallocates xcmp and ycmp in chunks of 100 entries.
+ *
+ * @param filename     Path to the input text file.
+ * @param cmpfileflag  If non-zero, skip the first line before parsing.
+ */
+/* armin */
+void loadxyfile(char *filename, int cmpfileflag){
     FILE *xyfile;
     int Nalloc,c;
     char line[SCRLEN];
@@ -64,6 +76,24 @@ void loadxyfile(char *filename, int cmpfileflag){
     }
 }
 
+/**
+ * @brief Write used, all, and skipped substamp positions to DS9-compatible
+ *        region files.
+ *
+ * @details Creates (or appends to, for regioncounter > 0) three region files:
+ *   - xyfilename      : substamps selected for the kernel fit (green boxes)
+ *   - xyfilename.all  : all candidate substamps (yellow boxes)
+ *   - xyfilename.skipped : substamps that were tried but rejected (red boxes)
+ * Coordinates are offset by (xmin, ymin) to convert from local region to global
+ * image coordinates, and incremented by 1 to convert from 0-indexed to
+ * 1-indexed FITS/DS9 convention.
+ *
+ * @param stamps         Array of stamps with substamp lists.
+ * @param nStamps        Number of stamps.
+ * @param xmin           X offset of the local region within the full image.
+ * @param ymin           Y offset of the local region within the full image.
+ * @param regioncounter  Pass 0 to create (overwrite) the files, >0 to append.
+ */
 /*armin*/
 void savexy(stamp_struct *stamps, int nStamps, long xmin, long ymin, int regioncounter){
     int  sscnt,istamp;
@@ -115,7 +145,27 @@ void savexy(stamp_struct *stamps, int nStamps, long xmin, long ymin, int regionc
     fclose(xyfileused);
 }
 
-int allocateStamps(stamp_struct *stamps, int nStamps) {                                                                     
+/**
+ * @brief Allocate all dynamic sub-arrays within an array of stamp_struct
+ *        objects.
+ *
+ * @details For each stamp, allocates:
+ *   - stamps[i].vectors : (nCompKer + nBGVectors) × (fwKSStamp²) double arrays
+ *     for the convolved kernel basis images and background basis images.
+ *   - stamps[i].krefArea: fwKSStamp² double array for the reference-image patch.
+ *   - stamps[i].mat     : nC × nC double array for the per-stamp normal-equation
+ *     matrix.
+ *   - stamps[i].xss, stamps[i].yss: integer arrays of length nKSStamps for
+ *     substamp coordinates.
+ *   - stamps[i].scprod  : nC double array for the right-hand-side vector.
+ * All scalar fields are zeroed.
+ *
+ * @param stamps   Pre-allocated array of nStamps stamp_struct objects (the
+ *                 outer array must already exist).
+ * @param nStamps  Number of stamps to initialise.
+ * @return 0 on success, 1 if any allocation fails.
+ */
+int allocateStamps(stamp_struct *stamps, int nStamps) {
     int i,j;
     int nbgVectors;
     
@@ -177,6 +227,40 @@ int allocateStamps(stamp_struct *stamps, int nStamps) {
 }
 
 
+/**
+ * @brief Initialise stamp statistics and discover or assign substamp centres
+ *        within a stamp region.
+ *
+ * @details For each of the template and image stamp arrays (ctStamps, ciStamps),
+ * if no substamps have been found yet, calls cutStamp() to extract the stamp
+ * pixel data and getStampStats3() to compute sky background statistics (mode,
+ * FWHM used as sky sigma).
+ *
+ * Substamp centres are then assigned in one of two modes:
+ *  - getCenters == 1: calls getPsfCenters() to automatically locate bright,
+ *    isolated PSF-like stars within the stamp, up to nKSStamps substamps.
+ *  - getCenters == 0: assigns a single substamp at the stamp centre (or at a
+ *    hard-coded position if hardX/hardY are non-zero) after validating it with
+ *    checkPsfCenter().  The selected region is masked in mRData with
+ *    FLAG_T_SKIP / FLAG_I_SKIP to prevent overlap with other stamps.
+ *
+ * @param sXMin      Left pixel bound of the stamp region in global image coords.
+ * @param sXMax      Right pixel bound.
+ * @param sYMin      Bottom pixel bound.
+ * @param sYMax      Top pixel bound.
+ * @param niS        In/out: index of the current image stamp in ciStamps.
+ * @param ntS        In/out: index of the current template stamp in ctStamps.
+ * @param getCenters 1 to run automatic PSF-centre search; 0 for single-centre
+ *                   assignment.
+ * @param rXBMin     X origin of the region buffer (offset from full image).
+ * @param rYBMin     Y origin of the region buffer.
+ * @param ciStamps   Array of image stamps being built.
+ * @param ctStamps   Array of template stamps being built.
+ * @param iRData     Full-frame image pixel data.
+ * @param tRData     Full-frame template pixel data.
+ * @param hardX      If non-zero, force the substamp X centre to this value.
+ * @param hardY      If non-zero, force the substamp Y centre to this value.
+ */
 void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
                  int getCenters, int rXBMin, int rYBMin, stamp_struct *ciStamps, stamp_struct *ctStamps,
                  float *iRData, float *tRData, float hardX, float hardY) {
@@ -353,6 +437,25 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
     return;
 }
 
+/**
+ * @brief Copy a rectangular sub-region of a full-frame image into a contiguous
+ *        buffer and record the stamp's position metadata.
+ *
+ * @details Copies pixels data[xMin..xMax][yMin..yMax] (inclusive) into the
+ * pre-allocated array @p refArea, reindexed to [0..sxLen-1][0..syLen-1].  Also
+ * sets stamp->x0, stamp->y0 to the region origin and stamp->x, stamp->y to the
+ * region centre.
+ *
+ * @param data    Full-frame input image.
+ * @param refArea Output buffer of size (xMax-xMin+1)*(yMax-yMin+1), pre-allocated
+ *                by the caller.
+ * @param dxLen   Row stride of @p data (i.e. full-image width, rPixX).
+ * @param xMin    Left column index (inclusive) in @p data.
+ * @param yMin    Bottom row index (inclusive) in @p data.
+ * @param xMax    Right column index (inclusive) in @p data.
+ * @param yMax    Top row index (inclusive) in @p data.
+ * @param stamp   Stamp whose origin and centre fields are set on return.
+ */
 void cutStamp(float *data, float *refArea, int dxLen, int xMin, int yMin,
               int xMax, int yMax, stamp_struct *stamp) {
     
@@ -380,11 +483,24 @@ void cutStamp(float *data, float *refArea, int dxLen, int xMin, int yMin,
     return;
 }
 
+/**
+ * @brief Extract the reference-image pixel patch for the current substamp into
+ *        stamp->krefArea.
+ *
+ * @details The substamp centre (stamp->xss[sscnt], stamp->yss[sscnt]) is given
+ * in global image coordinates.  This function converts to local stamp
+ * coordinates using stamp->x0, stamp->y0, then copies the
+ * fwKSStamp×fwKSStamp pixel region from iData into stamp->krefArea, which is
+ * used later as the fitting target in build_scprod0() and getStampSig().
+ * Masked (FLAG_INPUT_ISBAD) pixels contribute 0 to stamp->sum.
+ * Returns 1 if all substamps are exhausted (sscnt >= nss), causing the stamp
+ * to be rejected.
+ *
+ * @param stamp  Stamp being processed; stamp->sscnt selects the active substamp.
+ * @param iData  Full-frame reference image in global pixel coordinates.
+ * @return 0 on success, 1 if the stamp is out of valid substamps.
+ */
 int cutSStamp(stamp_struct *stamp, float *iData) {
-    /*****************************************************
-     * NOTE: The Centers here are in the regions' coords
-     *    To grab them from the stamp, adjust using stamp->x0,y0
-     *****************************************************/
     
     int i, j, k, nss, sscnt;
     int x, y, dy, xStamp, yStamp;
@@ -435,11 +551,41 @@ int cutSStamp(stamp_struct *stamp, float *iData) {
     return 0;
 }
 
+/**
+ * @brief Validate a candidate substamp centre and return a ranking score.
+ *
+ * @details Checks the fwKSStamp×fwKSStamp box centred on (imax, jmax) in the
+ * stamp coordinate system for any disqualifying conditions:
+ *  - Any pixel masked with @p bbit (overlap, saturation, etc.) → score = 0.
+ *  - Any pixel exceeding @p hiThresh (saturation) → flagged with @p bbit1,
+ *    score = 0.
+ * If the box passes, the score is the sum of pixel values exceeding
+ * kerFitThresh standard deviations above the sky background, providing a
+ * brightness-based ranking so that brighter, more isolated PSF candidates are
+ * preferred.
+ *
+ * @param iData    Full-frame (or stamp-region) image.
+ * @param imax     Candidate centre x in stamp coordinates.
+ * @param jmax     Candidate centre y in stamp coordinates.
+ * @param xLen     Width of the stamp region.
+ * @param yLen     Height of the stamp region.
+ * @param sx0      X offset of the stamp region within the full image.
+ * @param sy0      Y offset of the stamp region within the full image.
+ * @param hiThresh Pixel value above which a star is considered saturated.
+ * @param sky      Sky background level (mode of stamp pixel distribution).
+ * @param invdsky  1 / sky_sigma (reciprocal of the sky noise, i.e. 1/FWHM).
+ * @param xbuffer  Minimum x margin from stamp edge (typically 0).
+ * @param ybuffer  Minimum y margin from stamp edge (typically 0).
+ * @param bbit     Mask bits that disqualify a candidate (any overlap/bad flag).
+ * @param bbit1    Mask bit to set on saturated pixels.
+ * @return Brightness score (sum of above-threshold pixel values) if valid, 0 if
+ *         the candidate is disqualified.
+ */
 double checkPsfCenter(float *iData, int imax, int jmax, int xLen, int yLen,
                       int sx0, int sy0,
                       double hiThresh, float sky, float invdsky,
                       int xbuffer, int ybuffer, int bbit, int bbit1) {
-    
+
     /* note the imax and jmax are in the stamp coordinate system */
     
     int brk, l, k;
@@ -494,12 +640,34 @@ double checkPsfCenter(float *iData, int imax, int jmax, int xLen, int yLen,
     return dmax2;
 }
 
+/**
+ * @brief Automatically locate up to nKSStamps bright, isolated PSF-like stars
+ *        within a stamp region for use as kernel-fitting substamps.
+ *
+ * @details Iteratively lowers a detection threshold from hiThresh × dfrac down
+ * to a floor of sky + kerFitThresh·sigma in steps of dfrac -= 0.2.  At each
+ * threshold level, scans all unmasked pixels above the current threshold,
+ * re-centres each candidate on the brightest pixel within an hwKSStamp box,
+ * then calls checkPsfCenter() to validate the fwKSStamp region (zero tolerance
+ * for bad pixels).  Valid candidates are scored by their above-threshold flux
+ * sum and recorded in xloc/yloc/peaks arrays.  Accepted regions are masked with
+ * bbit2 (FLAG_T_SKIP or FLAG_I_SKIP) to prevent overlap.
+ *
+ * After scanning, candidates are sorted by brightness using quick_sort() and
+ * the top nKSStamps are stored in stamp->xss[], stamp->yss[].
+ *
+ * @param stamp     Stamp for which substamp centres are to be found; stamp->nss
+ *                  is incremented for each accepted substamp.
+ * @param iData     Full-frame (or region) image.
+ * @param xLen      Width of the stamp region in pixels.
+ * @param yLen      Height of the stamp region in pixels.
+ * @param hiThresh  Saturation / upper threshold for valid pixels.
+ * @param bbit1     Mask bit for saturated pixels (e.g. FLAG_T_BAD).
+ * @param bbit2     Mask bit for accepted-substamp exclusion zones
+ *                  (e.g. FLAG_T_SKIP).
+ * @return 0 on success, 1 if no valid substamp could be found.
+ */
 int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double hiThresh, int bbit1, int bbit2) {
-    /*****************************************************
-     * Find the X highest independent maxima in the stamp
-     *   Subject to some stringent cuts
-     *   NOTE : THERE ARE SOME HARDWIRED THINGS IN HERE
-     *****************************************************/
     
     int i, j, k, l, nr, nr2, imax, jmax, xr, yr, xr2, yr2, sy0, sx0, xbuffer, ybuffer;
     double dmax, dmax2, dpt, dpt2, loPsf, floor;
@@ -709,12 +877,29 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
 }
 
 
+/**
+ * @brief Compute the mean normalised chi-squared (signal-to-noise-squared) over
+ *        a full-frame image using a supplied noise map.
+ *
+ * @details Iterates over all pixels in the rPixX × rPixY image, skipping pixels
+ * that fail the mask selection or have near-zero data values.  For accepted
+ * pixels accumulates data[i]² / noise[i]² and divides by the count.  The
+ * result in @p nnorm is a dimensionless noise metric; values near 1 indicate
+ * a well-normalised difference image.
+ *
+ * Mask logic (umask / smask pairs select pixel quality):
+ *  - good pixels: umask=0,      smask=0xffff
+ *  - ok pixels:   umask=0xff,   smask=0x8000
+ *  - bad pixels:  umask=0x8000, smask=0
+ *
+ * @param data     Full-frame data image (e.g. difference image).
+ * @param noise    Full-frame per-pixel noise (sigma) image.
+ * @param nnorm    Output: mean chi-squared per pixel, or MAXVAL if n < 2.
+ * @param nncount  Output: number of valid pixels used in the sum.
+ * @param umask    Pixels with this bit set in mRData are excluded.
+ * @param smask    Pixels without this bit set in mRData are excluded (0 disables).
+ */
 void getNoiseStats3(float *data, float *noise, double *nnorm, int *nncount, int umask, int smask) {
-    /*
-      good pixels : umask=0,      smask=0xffff
-      ok   pixels : umask=0xff,   smask=0x8000
-      bad  pixels : umask=0x8000, smask=0
-    */
     
     double nsum=0;
     int i, n=0, mdat;
@@ -753,15 +938,50 @@ void getNoiseStats3(float *data, float *noise, double *nnorm, int *nncount, int 
     return;
 }
 
+/**
+ * @brief Compute robust pixel-distribution statistics (mean, median, mode, sigma,
+ *        FWHM) for a sub-region of an image using iterative sigma-clipping and
+ *        histogram analysis.
+ *
+ * @details The function operates in two passes:
+ *  1. Draws up to 100 random samples from the nPixX×nPixY region (respecting
+ *     the umask/smask quality flags) to estimate a histogram bin size based on
+ *     the interquartile range; runs sigma_clip() on the full region for the
+ *     initial mean and standard deviation.
+ *  2. Constructs a 256-bin histogram of the sigma-clipped pixel values and
+ *     derives the mode (using the narrowest bin range containing ~10 % of
+ *     points), the median (50th percentile), the sky noise FWHM (bin width
+ *     times the IQR converted to Gaussian sigma via the factor 1/1.35), and a
+ *     lower-quartile FWHM estimate.
+ *  If the histogram bins are poorly chosen (lower/upper percentile bins outside
+ *  [1, 255] or the spread is too narrow) the bins are adjusted and the
+ *  histogram is repeated, up to 5 times.
+ *
+ * @param data    Pixel array of size nPixX × nPixY (row-major).
+ * @param x0Reg   X origin of this region within the full-frame mRData mask.
+ * @param y0Reg   Y origin of this region within the full-frame mRData mask.
+ * @param nPixX   Width of the region in pixels.
+ * @param nPixY   Height of the region in pixels.
+ * @param sum     Output: sum of absolute pixel values in the good pixel set.
+ * @param mean    Output: sigma-clipped mean.
+ * @param median  Output: histogram-interpolated median.
+ * @param mode    Output: mode (peak of pixel histogram).
+ * @param sd      Output: sigma-clipped standard deviation.
+ * @param fwhm    Output: noise FWHM estimated from the histogram IQR (in pixel
+ *                value units, not angular FWHM).
+ * @param lfwhm   Output: lower-quartile FWHM estimate.
+ * @param umask   Pixels with this bit set in mRData are excluded.
+ * @param smask   Pixels without this bit set in mRData are excluded.
+ * @param maxiter Maximum number of sigma-clipping iterations.
+ * @return 0 on success; non-zero error codes for insufficient data (4), memory
+ *         allocation failure (1), no valid pixels (2), degenerate bins (3), or
+ *         sigma-clipping failure (5).
+ */
 int getStampStats3(float *data,
-                   int x0Reg, int y0Reg, int nPixX, int nPixY, 
+                   int x0Reg, int y0Reg, int nPixX, int nPixY,
                    double *sum, double *mean, double *median,
                    double *mode, double *sd, double *fwhm, double *lfwhm,
                    int umask, int smask, int maxiter) {
-    /*****************************************************
-     * Given an input image, return stats on the pixel distribution
-     *    This should be a masked distribution
-     *****************************************************/
     /*
       good pixels : umask=0,      smask=0xffff
       ok   pixels : umask=0xff,   smask=0x8000
@@ -1027,6 +1247,24 @@ int getStampStats3(float *data,
     return 0;
 }
 
+/**
+ * @brief Iteratively sigma-clip a float array to compute a robust mean and
+ *        standard deviation.
+ *
+ * @details Repeatedly computes the mean and standard deviation of all
+ * unmasked points, then masks any point more than statSig standard deviations
+ * from the current mean.  Convergence is declared when no additional points are
+ * rejected or @p maxiter iterations have been completed.  Passing maxiter=0
+ * computes the unclipped mean and standard deviation.
+ *
+ * @param data     Input float array of length @p count.
+ * @param count    Number of elements in @p data.
+ * @param mean     Output: sigma-clipped mean.
+ * @param stdev    Output: sigma-clipped standard deviation.
+ * @param maxiter  Maximum number of rejection iterations (0 = no clipping).
+ * @return 0 on success; 1 if count == 0; 2 if all points rejected; 3 if only
+ *         one point remains.
+ */
 int sigma_clip(float *data, int count, double *mean, double *stdev, int maxiter) {
     int cnt, ncnt, i, iter;
     char *smask;
@@ -1099,9 +1337,29 @@ int sigma_clip(float *data, int count, double *mean, double *stdev, int maxiter)
     return 0;
 }
 
+/**
+ * @brief Compute a spatially-smoothed noise or mean image using a sliding box
+ *        window.
+ *
+ * @details For each pixel (i, j), collects the values of all unmasked
+ * neighbours within a (2*size+1)×(2*size+1) box, calls sigma_clip() with
+ * maxiter=0 (no clipping), and stores either the box mean (doavg=1, useful for
+ * a smoothed noise map) or the box standard deviation (doavg=0, useful for an
+ * empirical RMS noise image from the difference image).  Boundary pixels are
+ * handled by simply skipping out-of-bounds neighbours.
+ *
+ * @param image    Input nx×ny float image.
+ * @param mask     Integer mask array (same size); pixels with (mask[k] & maskval)
+ *                 non-zero are excluded from the box statistics.
+ * @param nx       Image width.
+ * @param ny       Image height.
+ * @param size     Half-width of the sliding box (box is (2*size+1) pixels wide).
+ * @param maskval  Mask bitmask: pixels with this bit set are excluded.
+ * @param doavg    1 to return the box mean; 0 to return the box standard deviation.
+ * @return Pointer to a newly allocated nx×ny output float array, or NULL on
+ *         allocation failure.
+ */
 float *calculateAvgNoise(float *image, int *mask, int nx, int ny, int size, int maskval, int doavg) {
-    /* if avg = 0, take stdev of pixel values (e.g in diffim) */
-    /* if avg = 1, take mean of pixel values (e.g in noiseim)   */
     int i, j, ii, jj, cnt;
     float *data, *outim;
     double mean, stdev;
@@ -1139,10 +1397,20 @@ float *calculateAvgNoise(float *image, int *mask, int nx, int ny, int size, int 
 }
 
 
+/**
+ * @brief Release all dynamically allocated sub-arrays within an array of
+ *        stamp_struct objects.
+ *
+ * @details Frees in the reverse order of allocateStamps(): for each stamp,
+ * frees stamp->vectors[j] for j in [0, nCompKer+nBGVectors), then vectors
+ * itself, then mat[j] for j in [0, nC), then mat itself, then krefArea,
+ * scprod, xss, and yss.  Safe to call after the unused stamp array (e.g.
+ * ctStamps when ciStamps is selected) to recover its memory.
+ *
+ * @param stamps   Array of stamp_struct objects whose sub-arrays are to be freed.
+ * @param nStamps  Number of stamps in the array.
+ */
 void freeStampMem(stamp_struct *stamps, int nStamps) {
-    /*****************************************************
-     * Free ctStamps allocation when ciStamps are used, vice versa
-     *****************************************************/
     int i, j;
     if (stamps) {
         for (i = 0; i < nStamps; i++) {
@@ -1162,6 +1430,22 @@ void freeStampMem(stamp_struct *stamps, int nStamps) {
     }
 }
 
+/**
+ * @brief Construct a per-pixel noise (sigma) image from an input image using a
+ *        Poisson-plus-readout noise model.
+ *
+ * @details For each pixel computes:
+ *   noise² = |iData[i]| · invGain + quad²
+ * where invGain = 1/gain converts detected electrons to ADU, and quad is the
+ * quadrature readout noise term in ADU.  Returns a noise image (not variance)
+ * suitable for chi-squared weighting.
+ *
+ * @param iData    Full-frame input image in ADU.
+ * @param invGain  Reciprocal of the CCD gain (electrons per ADU)^{-1}.
+ * @param quad     Readout noise in ADU (added in quadrature).
+ * @return Pointer to a newly allocated rPixX×rPixY noise image, or NULL on
+ *         allocation failure.
+ */
 float *makeNoiseImage4(float *iData, float invGain, float quad) {
     
     int    i;
@@ -1179,11 +1463,20 @@ float *makeNoiseImage4(float *iData, float invGain, float quad) {
     return nData;
 }
 
+/**
+ * @brief Read kernel configuration parameters from an existing kernel FITS
+ *        file header, overriding defaults and command-line options.
+ *
+ * @details Opens the kernel FITS file, verifies the KERINFO keyword, then reads
+ * NGAUSS, FWKERN, CKORDER, BGORDER, PHOTNORM, and per-Gaussian DGAUSSn /
+ * SGAUSSn keywords from the final binary table HDU.  The sigma values read as
+ * FWHM-like quantities are converted to the internal representation
+ * sigma_gauss[i] = 1/(2·σ²).  This allows a pre-computed kernel to be applied
+ * to a new pair of images without repeating the fit.
+ *
+ * @param kimage  Path to the kernel FITS file produced by a prior HOTPANTS run.
+ */
 void getKernelInfo(char *kimage) {
-    /*****************************************************
-     Get all 1-time info from kernel fits header, overriding defaults
-      and command line options.
-    *****************************************************/
     
     fitsfile *kPtr;
     int i, existsTable, status = 0;
@@ -1242,12 +1535,44 @@ void getKernelInfo(char *kimage) {
 }
 
 
+/**
+ * @brief Read the kernel solution for one image region from a pre-computed
+ *        kernel FITS file.
+ *
+ * @details Reads from the FITS header the spatial extent of the region
+ * (REGIONnn keyword, FITS 1-indexed, converted to 0-indexed internally), the
+ * convolution direction (CONVOLnn), quality-control statistics (SSSIGnn,
+ * SSSSCATnn, FSIGnn, FSCATnn, NSCALOnn), and the kernel solution coefficients
+ * from the binary table column nRegion+1.  Depending on the convolution
+ * direction, the coefficients are stored in *tKerSol (template convolved) or
+ * *iKerSol (image convolved).
+ *
+ * @param kimage               Path to the kernel FITS file.
+ * @param nRegion              0-based region index.
+ * @param tKerSol              In/out: pointer to the template kernel solution
+ *                             vector; reallocated to nCompTotal+1 doubles if
+ *                             the template was convolved.
+ * @param iKerSol              In/out: pointer to the image kernel solution
+ *                             vector; reallocated similarly.
+ * @param rXMin                Output: left pixel bound of the region (0-indexed).
+ * @param rXMax                Output: right pixel bound.
+ * @param rYMin                Output: bottom pixel bound.
+ * @param rYMax                Output: top pixel bound.
+ * @param meansigSubstamps     Output: mean substamp residual sigma from the fit.
+ * @param scatterSubstamps     Output: scatter of substamp residuals from the fit.
+ * @param meansigSubstampsF    Output: mean substamp residual sigma from the
+ *                             final iteration.
+ * @param scatterSubstampsF    Output: scatter from the final iteration.
+ * @param diffrat              Output: photometric scale factor ratio (NSCALO);
+ *                             defaults to 1 if the keyword is absent.
+ * @param NskippedSubstamps    Output: number of skipped substamps (unused here,
+ *                             kept for API consistency).
+ */
 void readKernel(char *kimage, int nRegion, double **tKerSol, double **iKerSol,
                 int *rXMin, int *rXMax, int *rYMin, int *rYMax,
                 double *meansigSubstamps, double *scatterSubstamps,
                 double *meansigSubstampsF, double *scatterSubstampsF,
                 double *diffrat, int *NskippedSubstamps) {
-    /* read in kernel image for region */
     
     fitsfile *kPtr;
     int status = 0;
@@ -1321,6 +1646,21 @@ void readKernel(char *kimage, int nRegion, double **tKerSol, double **iKerSol,
     return;
 }
 
+/**
+ * @brief Read one region's kernel solution coefficients from the binary table
+ *        extension of a kernel FITS file.
+ *
+ * @details Moves to the last HDU of the open FITS file (the binary table
+ * containing all region solutions), then reads nCompTotal+1 double-precision
+ * values from column nRegion+1 into *kernelSol, zeroing the array first.
+ * The table layout stores one column per image region and one row per
+ * kernel coefficient.
+ *
+ * @param kPtr       Open cfitsio fitsfile pointer (read mode).
+ * @param kernelSol  In/out: pointer to a pre-allocated (nCompTotal+1) double
+ *                   array; filled with the kernel solution on return.
+ * @param nRegion    0-based region index; reads from table column nRegion+1.
+ */
 void fits_get_kernel_btbl(fitsfile *kPtr, double **kernelSol, int nRegion) {
     int status=0, existsTable;
     
@@ -1343,11 +1683,21 @@ void fits_get_kernel_btbl(fitsfile *kPtr, double **kernelSol, int nRegion) {
 }
 
 
+/**
+ * @brief Dilate the FLAG_INPUT_ISBAD mask by @p width pixels in all directions.
+ *
+ * @details For every pixel already flagged FLAG_INPUT_ISBAD, sets FLAG_OK_CONV
+ * on all neighbours within a (width/2) × (width/2) box (if those neighbours
+ * are not themselves flagged as bad).  This marks pixels adjacent to bad pixels
+ * as "convolved OK but near bad data", so that downstream processing can apply
+ * appropriate caution.  Called after makeInputMask() to propagate the mask by
+ * hwKernel × kfSpreadMask1 pixels, ensuring that convolution artefacts near
+ * bad pixels are correctly identified in the output.
+ *
+ * @param mData  Full-frame integer mask array (rPixX × rPixY); modified in place.
+ * @param width  Dilation full-width in pixels; no-op if <= 0.
+ */
 void spreadMask(int *mData, int width) {
-    /*****************************************************/
-    /* spread mask by width size in all directions */
-    /* it works, but is it too inefficient? */
-    /*****************************************************/
     
     int i, j, k, l, ii, jj, w2;
     
@@ -1378,10 +1728,24 @@ void spreadMask(int *mData, int width) {
     return;
 }
 
+/**
+ * @brief Build the combined input bad-pixel mask from template and image data,
+ *        then dilate it by the kernel half-width.
+ *
+ * @details Marks pixels in mData with FLAG_INPUT_ISBAD and the appropriate
+ * reason flag for three conditions:
+ *  - Pixel equals fillVal in either image (FLAG_BAD_PIXVAL).
+ *  - Pixel exceeds the upper threshold tUThresh or iUThresh (FLAG_SAT_PIXEL).
+ *  - Pixel falls below the lower threshold tLThresh or iLThresh (FLAG_LOW_PIXEL).
+ * After setting the initial mask, calls spreadMask() with a dilation of
+ * hwKernel × kfSpreadMask1 pixels so that pixels whose convolution footprint
+ * overlaps a bad pixel are correctly flagged in the output difference image.
+ *
+ * @param tData  Full-frame template image.
+ * @param iData  Full-frame science image.
+ * @param mData  Full-frame integer mask array; updated in place.
+ */
 void makeInputMask(float *tData, float *iData, int *mData) {
-    /*****************************************************/
-    /* Construct input mask image, expand by fwKernel  */
-    /*****************************************************/
     
     int i;
     
@@ -1397,6 +1761,20 @@ void makeInputMask(float *tData, float *iData, int *mData) {
     return;
 }
 
+/**
+ * @brief Copy non-structural FITS header keywords from one file to another,
+ *        excluding NAXIS keywords, EXTEND, and boilerplate COMMENT cards.
+ *
+ * @details Reads nkeys from the source HDU and writes each card to the output
+ * HDU, skipping the first (4 + naxis) structural keywords and any EXTEND or
+ * standard FITS boilerplate COMMENT cards.  Used when creating output FITS
+ * images that should inherit the WCS and instrument keywords of an input image.
+ *
+ * @param iPtr    Open cfitsio fitsfile pointer to the source HDU.
+ * @param oPtr    Open cfitsio fitsfile pointer to the destination HDU.
+ * @param status  cfitsio status code; passed through and returned.
+ * @return The cfitsio status code after all operations.
+ */
 int hp_fits_copy_header(fitsfile *iPtr, fitsfile *oPtr, int *status) {
 #define FSTRNCMP(a,b,n)  ((a)[0]<(b)[0]?-1:(a)[0]>(b)[0]?1:strncmp((a),(b),(n)))   
     int nkeys, i;
@@ -1422,6 +1800,22 @@ int hp_fits_copy_header(fitsfile *iPtr, fitsfile *oPtr, int *status) {
     return *status;
 }
 
+/**
+ * @brief Clamp float pixel values to the valid range for 16-bit integer FITS
+ *        output and flag overflowing pixels.
+ *
+ * @details If @p makeShort is non-zero, computes the representable range
+ * [−32768·bScale+bZero, 32767·bScale+bZero] and sets any out-of-range pixel
+ * to the boundary value, simultaneously flagging it FLAG_OUTPUT_ISBAD in
+ * mRData.  This guards against photometric rescaling driving pixel values
+ * beyond the BITPIX=16 dynamic range.
+ *
+ * @param data       Float pixel array of length @p npix; modified in place.
+ * @param npix       Number of pixels.
+ * @param bZero      FITS BZERO keyword value.
+ * @param bScale     FITS BSCALE keyword value.
+ * @param makeShort  If non-zero, apply short-integer range clamping.
+ */
 void hp_fits_correct_data(float *data, int npix, float bZero, float bScale, int makeShort) {
     
     float maxval=1e30, minval=-1e30;
@@ -1469,6 +1863,20 @@ void hp_fits_correct_data(float *data, int npix, float bZero, float bScale, int 
     return;
 }
 
+/**
+ * @brief Clamp integer pixel values to the valid range for 16-bit integer FITS
+ *        output and flag overflowing pixels.
+ *
+ * @details Integer variant of hp_fits_correct_data() applied to mask or integer
+ * output images.  Behaviour and parameters are identical to the float version
+ * except that @p data is an int array.
+ *
+ * @param data       Integer pixel array of length @p npix; modified in place.
+ * @param npix       Number of pixels.
+ * @param bZero      FITS BZERO keyword value.
+ * @param bScale     FITS BSCALE keyword value.
+ * @param makeShort  If non-zero, apply short-integer range clamping.
+ */
 void hp_fits_correct_data_int(int *data, int npix, float bZero, float bScale, int makeShort) {
     
     float maxval=1e30, minval=-1e30;
@@ -1505,6 +1913,33 @@ void hp_fits_correct_data_int(int *data, int npix, float bZero, float bScale, in
     return;
 }
 
+/**
+ * @brief Write a rectangular sub-region of a float array to a FITS image,
+ *        clamping values to the 16-bit range if required.
+ *
+ * @details First calls hp_fits_correct_data() to clamp the full rPixX×rPixY
+ * buffer in place, then writes rows fpixelY..lpixelY, columns fpixelX..lpixelX
+ * to the FITS file using fits_write_subset_flt(), skipping xArrayLo columns
+ * at the beginning of each row.  This allows writing a tiled sub-region of the
+ * output image without copying data to a separate buffer.
+ *
+ * @param fptr      Open cfitsio fitsfile pointer (write mode).
+ * @param group     Group parameter (0 for primary image).
+ * @param naxis     Number of image axes.
+ * @param naxes     Array of axis sizes.
+ * @param data      Full rPixX×rPixY float image; values clamped in place.
+ * @param status    cfitsio status code; passed through.
+ * @param makeShort If non-zero, clamp to 16-bit short range.
+ * @param bZero     FITS BZERO.
+ * @param bScale    FITS BSCALE.
+ * @param fpixelX   First pixel column to write (1-indexed FITS convention).
+ * @param fpixelY   First pixel row to write.
+ * @param lpixelX   Last pixel column to write.
+ * @param lpixelY   Last pixel row to write.
+ * @param xArrayLo  Column offset within the @p data row for the first pixel.
+ * @param yArrayLo  Row offset within @p data for the first row.
+ * @return cfitsio status code.
+ */
 int hp_fits_write_subset(fitsfile *fptr, long group, long naxis, long *naxes,
                          float *data, int *status, int makeShort,
                          float bZero, float bScale,
@@ -1544,6 +1979,31 @@ int hp_fits_write_subset(fitsfile *fptr, long group, long naxis, long *naxes,
     return *status;
 }
 
+/**
+ * @brief Write a rectangular sub-region of an integer array to a FITS image,
+ *        clamping values to the 16-bit range if required.
+ *
+ * @details Integer variant of hp_fits_write_subset() for the mask output image.
+ * Calls hp_fits_correct_data_int() then writes via fits_write_subset_int().
+ * Parameters are identical to the float version except @p data is an int array.
+ *
+ * @param fptr      Open cfitsio fitsfile pointer (write mode).
+ * @param group     Group parameter (0 for primary image).
+ * @param naxis     Number of image axes.
+ * @param naxes     Array of axis sizes.
+ * @param data      Full rPixX×rPixY int image; values clamped in place.
+ * @param status    cfitsio status code; passed through.
+ * @param makeShort If non-zero, clamp to 16-bit short range.
+ * @param bZero     FITS BZERO.
+ * @param bScale    FITS BSCALE.
+ * @param fpixelX   First pixel column to write (1-indexed FITS convention).
+ * @param fpixelY   First pixel row to write.
+ * @param lpixelX   Last pixel column to write.
+ * @param lpixelY   Last pixel row to write.
+ * @param xArrayLo  Column offset within the @p data row for the first pixel.
+ * @param yArrayLo  Row offset within @p data for the first row.
+ * @return cfitsio status code.
+ */
 int hp_fits_write_subset_int(fitsfile *fptr, long group, long naxis, long *naxes,
                              int *data, int *status, int makeShort,
                              float bZero, float bScale,
@@ -1583,6 +2043,14 @@ int hp_fits_write_subset_int(fitsfile *fptr, long group, long naxis, long *naxes
     return *status;
 }
 
+/**
+ * @brief Fill a float pixel array with a constant value.
+ *
+ * @param data   Float array to be filled; length must be at least nPixX*nPixY.
+ * @param value  Fill value.
+ * @param nPixX  Width (used together with nPixY to determine array length).
+ * @param nPixY  Height.
+ */
 void fset(float *data, double value, int nPixX, int nPixY) {
     int    i;
     float *d;
@@ -1591,6 +2059,14 @@ void fset(float *data, double value, int nPixX, int nPixY) {
         *(d++) = value;
 }
 
+/**
+ * @brief Fill a double pixel array with a constant value.
+ *
+ * @param data   Double array to be filled; length must be at least nPixX*nPixY.
+ * @param value  Fill value.
+ * @param nPixX  Width (used together with nPixY to determine array length).
+ * @param nPixY  Height.
+ */
 void dfset(double *data, double value, int nPixX, int nPixY) {
     int     i;
     double *d;
@@ -1599,10 +2075,16 @@ void dfset(double *data, double value, int nPixX, int nPixY) {
         *(d++) = value;
 }
 
+/**
+ * @brief Print a cfitsio error report to stderr and terminate the program.
+ *
+ * @details Calls fits_report_error() to print the full cfitsio error stack and
+ * then exits with @p status as the return code.  A no-op if status == 0.
+ *
+ * @param status  cfitsio status code; non-zero values trigger the error report
+ *                and program exit.
+ */
 void printError(int status) {
-    /*****************************************************/
-    /* Print out cfitsio error messages and exit program */
-    /*****************************************************/
     if (status) {
         fits_report_error(stderr, status); /* print error report */
         exit( status );    /* terminate the program, returning error status */
@@ -1622,6 +2104,22 @@ void printError(int status) {
 #define IA3 4561
 #define IC3 51349
 
+/**
+ * @brief Portable uniform pseudo-random number generator returning values in
+ *        (0, 1).
+ *
+ * @details Implements the combined multiplicative linear congruential generator
+ * described in Numerical Recipes (Press et al.), using three independent
+ * congruential sequences shuffled via a Bays–Durham table of 97 entries to
+ * remove low-order serial correlations.  The generator is seeded by passing
+ * *idum < 0 or on the first call; subsequent calls with *idum > 0 continue the
+ * sequence.  Used by getStampStats3() for random pixel sampling when estimating
+ * histogram bin widths.
+ *
+ * @param idum  Seed pointer: pass a negative integer to (re-)seed; *idum is
+ *              set to 1 after seeding and must not be altered between calls.
+ * @return Pseudo-random double in the open interval (0, 1).
+ */
 double ran1(int *idum) {
     static long ix1,ix2,ix3;
     static double r[98];
@@ -1666,6 +2164,20 @@ double ran1(int *idum) {
 #undef IA3
 #undef IC3
 
+/**
+ * @brief Initialise an index array and sort it by the values in @p list using
+ *        an in-place quicksort.
+ *
+ * @details Fills index[0..n-1] with 0..n-1, then calls quick_sort_1() to
+ * sort the index array so that list[index[0]] <= list[index[1]] <= ... <=
+ * list[index[n-1]].  The original @p list is not modified.  Used by
+ * getPsfCenters() to rank candidate substamp positions by brightness.
+ *
+ * @param list   Array of n double values to sort (read-only).
+ * @param index  Output: index array of length n; initialised and sorted on
+ *               return.
+ * @param n      Number of elements.
+ */
 void quick_sort (double *list, int *index, int n) {
     
     int i;
@@ -1679,6 +2191,20 @@ void quick_sort (double *list, int *index, int n) {
 
 
 
+/**
+ * @brief Recursive in-place quicksort on an index array, using a median-of-one
+ *        pivot.
+ *
+ * @details Partitions the subarray index[left_end..right_end] around the pivot
+ * list[index[mid]] (mid = (left_end+right_end)/2), then recursively sorts each
+ * partition.  The sort is ascending in list values.  Called exclusively by
+ * quick_sort().
+ *
+ * @param list       Array of double values (read-only); indexed through @p index.
+ * @param index      Index array being sorted in place.
+ * @param left_end   Left boundary of the subarray to sort (inclusive).
+ * @param right_end  Right boundary of the subarray to sort (inclusive).
+ */
 void quick_sort_1(double *list, int *index, int left_end, int right_end) {
     int i,j,temp;
     double chosen;
@@ -1706,6 +2232,18 @@ void quick_sort_1(double *list, int *index, int left_end, int right_end) {
     return;
 }
 
+/**
+ * @brief Comparator function for qsort() that orders double values in ascending
+ *        order.
+ *
+ * @details Returns -1, 0, or 1 depending on whether *x < *y, *x == *y, or
+ * *x > *y respectively.  Passed to qsort() in getStampStats3() to sort a
+ * sample of pixel values for interquartile range estimation.
+ *
+ * @param x  Pointer to the first double value.
+ * @param y  Pointer to the second double value.
+ * @return -1 if *x < *y, 0 if equal, 1 if *x > *y.
+ */
 /**** comparison call for the qsort ****/
 int flcomp(x,y)
      double *x,*y;
@@ -1715,12 +2253,27 @@ int flcomp(x,y)
     else return(-1);
 }
 
+/**
+ * @brief Return the smaller of two integers.
+ *
+ * @param a  First integer.
+ * @param b  Second integer.
+ * @return The minimum of a and b.
+ */
 int imin(int a, int b) {
     if (a < b) { return a; }
     else { return b; }
-}   
+}
+
+/**
+ * @brief Return the larger of two integers.
+ *
+ * @param a  First integer.
+ * @param b  Second integer.
+ * @return The maximum of a and b.
+ */
 int imax(int a, int b) {
     if (a < b) { return b; }
     else { return a; }
-}   
+}
 
