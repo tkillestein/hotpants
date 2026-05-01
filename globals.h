@@ -71,7 +71,7 @@ EXTERN int       nStamps, nS, nCompKer, nC;
 
 EXTERN int       nComp, nCompBG, nBGVectors, nCompTotal;
 
-EXTERN int       fwKernel, fwStamp, hwStamp, fwKSStamp, kcStep, *indx;
+EXTERN int       fwKernel, fwStamp, hwStamp, fwKSStamp, kcStep;
 EXTERN int       cmpFile;
 EXTERN float     *temp, *temp2;
 EXTERN double    *check_stack,*filter_x,*filter_y,**kernel_vec;

@@ -4,6 +4,7 @@
 #include<malloc.h>
 #include<stdlib.h>
 #include<fitsio.h>
+#include<lapacke.h>
 
 #include "defaults.h"
 #include "globals.h"
@@ -404,6 +405,54 @@ void xy_conv_stamp_PCA(stamp_struct *stamp, float *image, int n, int ren) {
 }
 
 /**
+ * @brief Solve A·x = b in-place where A is symmetric positive-definite.
+ *
+ * @details Adaptor between the Numerical Recipes 1-based double** convention
+ * used throughout this file and the LAPACKE C interface.  Copies the matrix and
+ * RHS into contiguous 0-based row-major buffers, runs Cholesky factorisation
+ * (dpotrf) followed by the triangular solve (dpotrs), then writes the solution
+ * back into b[1..n].  Cholesky is the correct choice here because the
+ * normal-equations matrix M = Σᵢ AᵢᵀAᵢ is symmetric positive-definite by
+ * construction; it is both faster and more numerically stable than LU.
+ *
+ * @param a  1-indexed n×n SPD matrix a[1..n][1..n]; modified in place during
+ *           factorisation (upper triangle overwritten with Cholesky factor).
+ * @param n  Matrix dimension.
+ * @param b  1-indexed RHS vector b[1..n]; overwritten with the solution x on
+ *           successful return.
+ * @return 0 on success, 1 if the matrix is not positive-definite or allocation
+ *         fails.
+ */
+static int solve_spd(double **a, int n, double *b) {
+    lapack_int info;
+    int i, j;
+    double *flat = (double *)malloc((size_t)n * n * sizeof(double));
+    double *rhs  = (double *)malloc((size_t)n * sizeof(double));
+    if (!flat || !rhs) { free(flat); free(rhs); return 1; }
+
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++)
+            flat[i * n + j] = a[i + 1][j + 1];
+        rhs[i] = b[i + 1];
+    }
+
+    info = LAPACKE_dpotrf(LAPACK_ROW_MAJOR, 'U', (lapack_int)n, flat, (lapack_int)n);
+    if (info == 0)
+        info = LAPACKE_dpotrs(LAPACK_ROW_MAJOR, 'U', (lapack_int)n, 1,
+                              flat, (lapack_int)n, rhs, 1);
+    if (info == 0)
+        for (i = 0; i < n; i++)
+            b[i + 1] = rhs[i];
+    else
+        fprintf(stderr, "WARNING: solve_spd failed (LAPACKE info=%d); "
+                "kernel solution may be unreliable\n", (int)info);
+
+    free(flat);
+    free(rhs);
+    return (info != 0) ? 1 : 0;
+}
+
+/**
  * @brief Solve for the spatially-varying kernel by fitting the global normal
  *        equations, iterating until stamp sigma-clipping converges.
  *
@@ -439,7 +488,7 @@ void xy_conv_stamp_PCA(stamp_struct *stamp, float *image, int n, int ren) {
 void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise, double *kernelSol,
                double *meansigSubstamps, double *scatterSubstamps, int *NskippedSubstamps) {
     
-    double d, **matrix;
+    double **matrix;
     char check;
     int i,mat_size;
     int ncomp1, ncomp2, ncomp, nbg_vec;
@@ -470,20 +519,18 @@ void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise
     build_matrix(stamps, nS, matrix);
     build_scprod(stamps, nS, imRef, kernelSol);
     
-    ludcmp(matrix, mat_size, indx, &d);
-    lubksb(matrix, mat_size, indx, kernelSol);
-    
+    solve_spd(matrix, mat_size, kernelSol);
+
     if (verbose>=2) fprintf(stderr, " Checking again\n");
     check = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps);
-    
+
     while(check) {
-        
+
         fprintf(stderr, "\n Re-Expanding Matrix\n");
         build_matrix(stamps, nS, matrix);
         build_scprod(stamps, nS, imRef, kernelSol);
-        
-        ludcmp(matrix, mat_size, indx, &d);
-        lubksb(matrix, mat_size, indx, kernelSol);
+
+        solve_spd(matrix, mat_size, kernelSol);
         
         fprintf(stderr, " Checking again\n");          
         check = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps); 
@@ -656,7 +703,7 @@ void build_scprod0(stamp_struct *stamp, float *image) {
 double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) {
     
     int    nComps,i,im,jm,mcnt1,mcnt2,mcnt3;
-    double d,sum=0,kmean,kstdev;
+    double sum=0,kmean,kstdev;
     double merit1,merit2,merit3,sig1,sig2,sig3;
     float *m1,*m2,*m3,*ks;
     int    xc, yc, nks;
@@ -701,8 +748,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
         }
         
         /* fit stamp, the constant kernel coefficients end up in check_vec */
-        ludcmp(check_mat,nComps,indx,&d);
-        lubksb(check_mat,nComps,indx,check_vec);
+        solve_spd(check_mat, nComps, check_vec);
         
         /* find kernel sum */
         sum = check_vec[1];
@@ -780,8 +826,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
         if (verbose >= 2) fprintf(stderr, " Expanding Test Matrix For Fit\n");
         build_matrix(testStamps, ntestStamps, matrix);
         build_scprod(testStamps, ntestStamps, imRef, testKerSol);
-        ludcmp(matrix, mat_size, indx, &d);
-        lubksb(matrix, mat_size, indx, testKerSol);
+        solve_spd(matrix, mat_size, testKerSol);
         
         /* get the kernel sum to normalize figures of merit! */
         kmean = make_kernel(0, 0, testKerSol);
@@ -1822,130 +1867,3 @@ void make_model(stamp_struct *stamp, double *kernelSol, float *csModel) {
     return;
 }
 
-/**
- * @brief LU-decompose an n×n matrix in place using partial pivoting
- *        (Crout's algorithm).
- *
- * @details Replaces the matrix @p a with its LU decomposition, storing both L
- * and U in the same array (L below the diagonal, U on and above).  Row
- * interchanges are recorded in @p indx.  This decomposition is used to solve
- * the normal equations M·a = b by calling lubksb() afterwards.
- *
- * The normal-equations matrix for the kernel fit is symmetric positive-definite;
- * Cholesky decomposition would be more efficient and numerically stable, but LU
- * with partial pivoting is used here for generality.
- *
- * @param a     1-indexed n×n matrix (a[1..n][1..n]); overwritten with the LU
- *              factorisation on return.
- * @param n     Matrix dimension.
- * @param indx  Output: integer array (length n+1) recording the row
- *              permutation for partial pivoting.
- * @param d     Output: +1 or -1 indicating the sign of the row permutation
- *              (parity of the permutation), useful for computing the
- *              determinant.
- * @return 0 on success, 1 if the matrix is singular.
- */
-int ludcmp(double **a, int n, int *indx, double *d)
-#define TINY 1.0e-20;
-{
-    int     i,imax=0,j,k;
-    double  big,dum,sum,temp2;
-    double  *vv,*lvector();
-    void    lnrerror();
-    
-    vv=(double *)malloc((n+1)*sizeof(double));
-    
-    *d=1.0;
-    for (i=1;i<=n;i++) {
-        big=0.0;
-        for (j=1;j<=n;j++)
-            if ((temp2=fabs(a[i][j])) > big) big=temp2;
-        if (big == 0.) {
-            fprintf(stderr," Numerical Recipies run error....");
-            fprintf(stderr,"Singular matrix in routine LUDCMP\n");
-            fprintf(stderr,"Goodbye ! \n");
-            
-            /*
-              for (i = 1; i <= n; i++) {
-              for (j = 1; j <= n; j++) {
-              fprintf(stderr, "%d %d %f\n", i, j, a[i][j]);
-              }
-              }
-            */
-            return (1);
-        }
-        vv[i]=1.0/big;
-    }
-    for (j=1;j<=n;j++) {
-        for (i=1;i<j;i++) {
-            sum=a[i][j];
-            for (k=1;k<i;k++) sum -= a[i][k]*a[k][j];
-            a[i][j]=sum;
-        }
-        big=0.0;
-        for (i=j;i<=n;i++) {
-            sum=a[i][j];
-            for (k=1;k<j;k++)
-                sum -= a[i][k]*a[k][j];
-            a[i][j]=sum;
-            if ( (dum=vv[i]*fabs(sum)) >= big) {
-                big=dum;
-                imax=i;
-            }
-        }
-        if (j != imax) {
-            for (k=1;k<=n;k++) {
-                dum=a[imax][k];
-                a[imax][k]=a[j][k];
-                a[j][k]=dum;
-            }
-            *d = -(*d);
-            vv[imax]=vv[j];
-        }
-        indx[j]=imax;
-        if (a[j][j] == 0.0) a[j][j]=TINY;
-        if (j != n) {
-            dum=1.0/(a[j][j]);
-            for (i=j+1;i<=n;i++) a[i][j] *= dum;
-        }
-    }
-    free(vv);
-    return 0;
-}
-
-/**
- * @brief Back-substitution step to solve M·x = b after LU decomposition by
- *        ludcmp().
- *
- * @details Performs forward substitution (L·y = b) followed by back
- * substitution (U·x = y) using the LU factorisation and pivot array produced
- * by ludcmp().  On return @p b contains the solution vector x.  This is the
- * final step that yields the kernel coefficient vector kernelSol.
- *
- * @param a     1-indexed n×n matrix (a[1..n][1..n]) holding the LU
- *              factorisation from ludcmp().
- * @param n     Matrix dimension.
- * @param indx  Pivot array produced by ludcmp().
- * @param b     On entry: the right-hand-side vector b[1..n].  On return:
- *              overwritten with the solution vector x.
- */
-void lubksb(double **a, int n, int *indx, double  *b)
-{
-    int i,ii=0,ip,j;
-    double  sum;
-    
-    for (i=1;i<=n;i++) {
-        ip=indx[i];
-        sum=b[ip];
-        b[ip]=b[i];
-        if (ii)
-            for (j=ii;j<=i-1;j++) sum -= a[i][j]*b[j];
-        else if (sum) ii=i;
-        b[i]=sum;
-    }
-    for (i=n;i>=1;i--) {
-        sum=b[i];
-        for (j=i+1;j<=n;j++) sum -= a[i][j]*b[j];
-        b[i]=sum/a[i][i];
-    }
-}
