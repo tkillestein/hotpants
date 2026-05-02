@@ -526,63 +526,63 @@ static int solve_spd(double **a, int n, double *b) {
  */
 void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise, double *kernelSol,
                double *meansigSubstamps, double *scatterSubstamps, int *NskippedSubstamps) {
-    
+
     double **matrix;
-    char check;
-    int i,mat_size;
+    char convergedFlag;
+    int matrixRowIdx,mat_size;
     int ncomp1, ncomp2, ncomp, nbg_vec;
-    
+
     ncomp1  = nCompKer - 1;
     ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     ncomp   = ncomp1 * ncomp2;
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
+
     mat_size   = ncomp1 * ncomp2 + nbg_vec + 1;
-    
+
     if (verbose >= 2) fprintf(stderr, " Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i \n",
                               mat_size, ncomp2, ncomp1, nbg_vec);
-    
+
     /* allocate fitting matrix */
     matrix = (double **)malloc((mat_size + 1)*sizeof(double *));
-    for (i = 0; i <= mat_size; i++) 
-        matrix[i] = (double *)malloc((mat_size + 1)*sizeof(double));
-    
+    for (matrixRowIdx = 0; matrixRowIdx <= mat_size; matrixRowIdx++)
+        matrix[matrixRowIdx] = (double *)malloc((mat_size + 1)*sizeof(double));
+
     /* allocate weight matrix */
     wxy = (double **)malloc(nS*sizeof(double *));
-    for (i = 0; i < nS; i++)
-        wxy[i] = (double *)malloc(ncomp2*sizeof(double));
-    
-    
-    
+    for (matrixRowIdx = 0; matrixRowIdx < nS; matrixRowIdx++)
+        wxy[matrixRowIdx] = (double *)malloc(ncomp2*sizeof(double));
+
+
+
     if (verbose>=2) fprintf(stderr, " Expanding Matrix For Full Fit\n");
     build_matrix(stamps, nS, matrix);
     build_scprod(stamps, nS, imRef, kernelSol);
-    
+
     solve_spd(matrix, mat_size, kernelSol);
 
     if (verbose>=2) fprintf(stderr, " Checking again\n");
-    check = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps);
+    convergedFlag = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps);
 
-    while(check) {
+    while(convergedFlag) {
 
         fprintf(stderr, "\n Re-Expanding Matrix\n");
         build_matrix(stamps, nS, matrix);
         build_scprod(stamps, nS, imRef, kernelSol);
 
         solve_spd(matrix, mat_size, kernelSol);
-        
-        fprintf(stderr, " Checking again\n");          
-        check = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps); 
+
+        fprintf(stderr, " Checking again\n");
+        convergedFlag = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps);
     }
     fprintf(stderr, " Sigma clipping of bad stamps converged, kernel determined\n");
-    
-    for (i = 0; i <= mat_size; i++)
-        free(matrix[i]);
-    for (i = 0; i < nS; i++)
-        free(wxy[i]);
+
+    for (matrixRowIdx = 0; matrixRowIdx <= mat_size; matrixRowIdx++)
+        free(matrix[matrixRowIdx]);
+    for (matrixRowIdx = 0; matrixRowIdx < nS; matrixRowIdx++)
+        free(wxy[matrixRowIdx]);
     free(matrix);
     free(wxy);
-    
+
     return;
 }
 
