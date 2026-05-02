@@ -1,21 +1,21 @@
 #include <fitsio.h>
 
 /* Alard.c */
-void getKernelVec(double *, double *, double **);
+void getKernelVec();
 
-int fillStamp(stamp_struct *, float *, float *, int *, int, int, double *, double *, float *);
+int fillStamp(stamp_struct *, float *, float *);
 
-double *kernel_vector(int, int, int, int, int *, double *, double *, double **);
+double *kernel_vector(int, int, int, int, int *);
 
-void xy_conv_stamp(stamp_struct *, const float *, int, int, int, const double *, const double *, float *);
+void xy_conv_stamp(stamp_struct *, float *, int, int);
 
-void fitKernel(stamp_struct *, float *, float *, float *, double *, double *, double *, int *, int *, int, int, int, double *, double *, int *, float *);
+void fitKernel(stamp_struct *, float *, float *, float *, double *, double *, double *, int *);
 
 void build_matrix0(stamp_struct *);
 
 void build_scprod0(stamp_struct *, const float *, int);
 
-double check_stamps(stamp_struct *, int, float *, float *, int *, int, int, double **, double *, double *, double **, double *, double *, double **, int *, float *);
+double check_stamps(stamp_struct *, int, float *, float *);
 
 void build_matrix(stamp_struct *, int, double **, int, int, double **);
 
@@ -27,9 +27,9 @@ void getFinalStampSig(stamp_struct *, const float *, const float *, double *, co
 
 char check_again(stamp_struct *, double *, float *, float *, float *, double *, double *, int *, int *, int, int, int, double *, double *, float *);
 
-void spatial_convolve(const float *, float **, int, int, double *, float *, const int *, int *, int, int, double *, double *, double **);
+void spatial_convolve(float *, float **, int, int, double *, float *, int *);
 
-double make_kernel(int, int, const double *, int, int, double *, double *, double **);
+double make_kernel(int, int, double *);
 
 double get_background(int, int, const double *, int, int);
 
