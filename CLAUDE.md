@@ -256,3 +256,149 @@ as well, but requires careful handling of integer/binary mask semantics.
   OpenMP. See `CMakeLists.txt`.
 - Compiler flags: `-O3 -march=native -funroll-loops -std=c17` (enable SIMD
   optimisations with `-march=native` for portable binaries on target systems).
+
+---
+
+## Readability Improvements
+
+This section identifies code readability antipatterns discovered in the HOTPANTS
+codebase and proposes improvements to make the implementation clearer, more
+maintainable, and faster to onboard new contributors (especially those building
+the Python API). Clear code is essential for debugging, optimization, and
+understanding the complex algorithms from Alard & Lupton (1998).
+
+### Readability Antipatterns
+
+The table below catalogues specific readability issues, their locations,
+impact, and recommended fixes. Use this as a reference guide when refactoring
+or writing new code.
+
+| Antipattern | Category | Found in | Problem | Fix | Priority | Effort |
+|---|---|---|---|---|---|---|
+| Global variable prefix abbreviations (tRData, iRData, mRData, oRData, eRData) | Naming | globals.h:37-75 | No prefix legend; forces reader to deduce meaning from context | Add comment block in globals.h explaining: `t*` = template, `i*` = image, `m*` = mask, `o*` = output, `e*` = ephemeris | HIGH | 30 min |
+| Single-letter loop variables in nested contexts (i, j, k, l, m, n) | Naming | alard.c, functions.c (pervasive) | Confusing when nesting depth > 2; hard to trace what variable refers to | Use descriptive names: `pixel_x`, `pixel_y`, `bin_idx`, `vector_idx`, `stamp_idx` based on loop purpose | HIGH | 2-3 hrs |
+| Cryptic flag names: `ren` | Naming | alard.c:108, 111, 116 | Purpose obscured; requires tracing code to understand as "renormalization flag" | Rename to `renormalize_flag` and document when/why it's set | MEDIUM | 1 hr |
+| Cryptic variable names: `q`, `ncomp1`, `ncomp2`, `ivecbg` | Naming | alard.c:589, 577-578, 571 | Intent hidden; `q` = scalar products in normal equations, others relate to polynomial basis structure | Use full names: `scalar_product`, `num_kernel_components_low`, `num_kernel_components_high`, `background_vector_index` | MEDIUM | 1-2 hrs |
+| Mixed naming conventions (camelCase vs snake_case) | Naming | globals.h, alard.c (inconsistent) | Legacy code uses `kerOrder`, `fwKernel`; newer uses `build_matrix`, `spatial_convolve` | Document preference (snake_case for new code, accept camelCase for legacy globals); add convention rule to contributor checklist | LOW | Ongoing |
+| Magic formula: (kerOrder+1)*(kerOrder+2)/2 | Magic Numbers | alard.c:499, 577, 640, 726, etc. (9+ occurrences) | Formula appears repeatedly without explanation; connection to triangular polynomial basis not documented | Replace with named constant `NUM_POLY_TERMS(order)` or `#define` and add comment: "Triangular basis: polynomial degrees i,j ≤ order with i+j ≤ order; term count = (order+1)*(order+2)/2. See Alard & Lupton 1998, Eq. 3." | HIGH | 1-2 hrs |
+| Parity check arithmetic: (idegx / 2) * 2 - idegx | Magic Numbers | alard.c:109-110 | Computes odd/even detection without comment; cryptic bit-twiddling pattern | Add comment explaining: "Detects odd-degree terms; result is 1 if idegx is odd, 0 if even. Used to trigger renormalization for higher-order basis functions." | MEDIUM | 30 min |
+| Hardcoded histogram thresholds: nstat=100, ufstat=0.9, mfstat=0.5 | Magic Numbers | functions.c:1008-1010 | Why these specific values? Rationale for 100 pixels, 0.9 and 0.5 percentiles not explained | Define in defaults.h with names `HISTOGRAM_SAMPLE_SIZE`, `HISTOGRAM_UPPER_FRAC`, `HISTOGRAM_LOWER_FRAC` and add comments explaining histogram bin-width estimation | HIGH | 1 hr |
+| Hardcoded RNG seed: idum = -666 | Magic Numbers | functions.c:1023 | "The devil's seed" comment mentions Numerical Recipes convention but algorithm rationale absent | Define `RNG_SEED_MAGIC -666` in defaults.h with comment: "Numerical Recipes convention; triggers internal re-seeding of Park & Miller generator" | MEDIUM | 30 min |
+| Sigma-clipping iteration cap: tries >= 5 with no explanation | Magic Numbers | functions.c:1094 | Why 5? What does iteration do? Convergence criteria not documented | Define `MAX_SIGMA_CLIP_RETRIES 5` in defaults.h with comment: "Iteration cap to prevent divergence in histogram-based bin-width estimation. Typical convergence < 3 iterations." | MEDIUM | 30 min |
+| Undocumented polynomial basis construction | Documentation | alard.c:104-120 | Triple nested loop (ig → idegx → idegy) with variable `nvec` counter; relationship between triplet and vector index is implicit | Add Doxygen comment before loop explaining: "Triangular basis construction: for each Gaussian basis element φᵢ (ig), iterate over polynomial degrees (idegx, idegy) such that idegx+idegy ≤ kerOrder. Assemble convolution responses for each (ig, idegx, idegy) triplet into vector nvec. See Alard & Lupton 1998, Sect. 2.2." | HIGH | 1 hr |
+| Undocumented separable convolution intent | Documentation | alard.c:294-358 | Comment mentions "separability" but doesn't explain why it's chosen or the performance benefit | Add comment: "Gaussian-polynomial filters are separable: G(x,y)*P(x,y) = [G(x)*P_x(x)] * [G(y)*P_y(y)]. This reduces 2D convolution O(k²n²) to two 1D passes O(kn²), critical for performance. Renormalization flag adjusts for half-Gaussian overlap." | MEDIUM | 30 min |
+| Undocumented histogram FWHM algorithm | Documentation | functions.c:979-1100+ | getStampStats3() performs 5-iteration loop for histogram bin refinement; nested loops, thresholding logic unmarked | Extract algorithm into separate function with Doxygen block: "Algorithm: (1) sample 100 random pixels to estimate range, (2) compute bin width from percentile ranges, (3) build 256-bin histogram, (4) locate peak (mode) via threshold, (5) iterate if necessary for convergence. Returns FWHM and mean." | MEDIUM | 2 hrs |
+| Oversized functions without segmentation (check_stamps, spatial_convolve_fft, getStampStats3) | Code Structure | alard.c:705-960, alard.c:1684+, functions.c:979+ | Functions exceed 100-150 lines; multiple concerns intermingled (matrix extraction, solving, statistics); hard to test/debug individual steps | Break into smaller sub-functions: `extract_stamp_matrix()`, `solve_kernel_linear_system()`, `compute_sigma_clipped_mean()`, `estimate_histogram_fwhm()`. Document with Doxygen. | MEDIUM | 4-6 hrs |
+| Scattered obsolete/commented-out debug code | Code Quality | functions.c:270, 1095 | Fragments like `/* DD fprintf(...) */` and commented variable definitions create noise; unclear why kept | Remove dead code entirely; use version control for history. Retain only active debug output with explicit `verbose` level checks. | LOW | 1-2 hrs |
+| Inconsistent error handling and logging | Code Quality | alard.c:92-100, functions.c:1095-1098 | Mix of `verbose >= 1` and `verbose >= 2` checks; ad-hoc `fprintf` calls without standardized format | Implement centralized logging macro: `VERBOSE_LOG(level, fmt, ...)` that checks verbosity level and prints to stderr with consistent formatting. Document verbose levels (0=silent, 1=progress, 2=debug). | LOW | 2-3 hrs |
+
+### Improvement Priorities & Roadmap
+
+**HIGH PRIORITY (Quick Wins, Direct Impact):** 1–3 hours per item
+
+- Add global variable naming legend to globals.h (30 min)
+- Replace magic numbers with #define constants in defaults.h (1-2 hrs)
+- Document polynomial basis formula in comments (1 hr)
+- Add Doxygen summaries to complex functions (2-3 hrs)
+
+**MEDIUM PRIORITY (Refactoring, Medium Effort):** 1–6 hours per item
+
+- Rename loop variables in complex nesting contexts (2-3 hrs per file)
+- Extract sub-functions from getStampStats3 to clarify histogram algorithm (2 hrs)
+- Document parity checks and renormalization logic (1 hr)
+- Consolidate logging/verbosity checks (2-3 hrs)
+
+**LOW PRIORITY (Nice-to-Have, Larger Refactoring):** 4–10+ hours per item
+
+- Full function decomposition of spatial_convolve_fft and xy_conv_stamp (4-6 hrs each)
+- Standardize naming conventions across all files (8-10 hrs)
+- Remove all dead code and obsolete comments (1-2 hrs)
+
+### Actionable Guidance by Category
+
+**A. Global Variable Naming**
+
+Add a naming legend at the top of `globals.h`, right after the struct definitions:
+
+```
+/*
+  GLOBAL VARIABLE PREFIX LEGEND
+  ==============================
+  These variables are declared with single-letter prefixes for brevity but
+  clarity is essential. Prefix meanings:
+  
+  t* = template image (e.g., tGain, tUThresh, tRData)
+  i* = science image (e.g., iGain, iUKThresh, iRData)  
+  m* = mask/masking data (e.g., mRData, mGain)
+  o* = output image (e.g., outim, oRData)
+  e* = reserved for ephemeris/environment (currently unused)
+  
+  Example: tUThresh = template upper threshold for saturation
+           iRdnoise = science image readnoise
+*/
+```
+
+**B. Loop Variables in Complex Contexts**
+
+When nesting depth exceeds 2 or when loop purpose isn't immediately obvious from context,
+use descriptive names. Apply this rule to files like `alard.c` (kernel basis iteration,
+polynomial assembly) and `functions.c` (histogram binning, stamp processing).
+
+Rule of thumb: If you cannot immediately name the loop variable's domain (e.g., "pixel
+columns", "polynomial degrees", "histogram bins"), it's too cryptic and needs renaming.
+
+**C. Magic Numbers Conversion**
+
+Convert all "magic" constants to named `#define` in `defaults.h` with explanatory comments:
+
+- `HISTOGRAM_SAMPLE_SIZE 100` — number of random pixels sampled to estimate bin width
+- `HISTOGRAM_NUM_BINS 256` — resolution of final histogram for FWHM estimation
+- `HISTOGRAM_LOWER_FRAC 0.5` — lower percentile for bin-width estimation
+- `HISTOGRAM_UPPER_FRAC 0.9` — upper percentile for bin-width estimation
+- `RNG_SEED_MAGIC -666` — Numerical Recipes convention; triggers re-seeding
+- `MAX_SIGMA_CLIP_RETRIES 5` — iteration cap to prevent divergence
+- `KERNEL_BASE_ORDER_FORMULA` — document the polynomial basis formula with Alard & Lupton reference
+
+**D. Documenting Undocumented Algorithms**
+
+For functions with complex multi-step algorithms (e.g., `getStampStats3`), add Doxygen
+`@brief` and `@details` blocks that:
+
+- Explain the algorithm in prose (not just parameter lists)
+- Reference the paper equation or section (e.g., "Alard & Lupton 1998, Eq. 3")
+- Note any non-obvious invariants (e.g., "assumes stamps are background-subtracted")
+- Describe the purpose of flags and special cases (e.g., when renormalization is triggered)
+
+Priority: Functions larger than 50 lines or those implementing algorithms not obvious from code.
+
+**E. Standardizing Naming Conventions**
+
+Document a single preferred convention in `CONTRIBUTING.md`:
+
+- **Legacy code (globals.h, existing camelCase functions):** Accept as-is; incremental improvement acceptable
+- **New code:** Use `snake_case` for functions and local variables; reserve camelCase for type names
+- **Future refactoring:** Gradual migration to snake_case is preferred, but not required for small fixes
+
+### Contributor Checklist
+
+When writing or modifying code in HOTPANTS, ensure:
+
+- Global variables follow the `t*/i*/m*` naming convention or are documented in a prefix legend
+- Loop variables in nesting depth > 2 use descriptive names (not i, j, k)
+- All magic numbers are replaced with `#define` constants in defaults.h with explanatory comments
+- All functions longer than 50 lines have a Doxygen `@brief` and `@details` block
+- All undocumented algorithms include a reference to Alard & Lupton (1998) or the relevant paper
+- Parity checks, bit-twiddling logic, and other non-obvious operations have explanatory comments
+- Functions are decomposed if nesting depth exceeds 3 or cyclomatic complexity exceeds 5
+- Dead code is removed; debug output uses consistent logging macros with explicit verbose-level checks
+- Code follows established naming conventions (camelCase for legacy, snake_case for new)
+- Optimization-critical sections are commented with their expected performance profile
+
+### Why Readability Matters for HOTPANTS
+
+Readability improvements directly support the modernization goals:
+
+1. **Python API Clarity:** The C core must be self-documenting for Doxygen + Sphinx integration; vague variable names and hidden algorithms hinder API documentation quality.
+2. **Faster Onboarding:** Explicit naming and documented algorithms reduce the time new contributors spend deciphering code intent.
+3. **Debugging and Optimization:** Clear algorithm documentation makes it easier to identify bottlenecks and verify correctness during performance profiling.
+4. **Long-term Maintainability:** Well-named code and comprehensive comments reduce technical debt and prevent subtle bugs from creeping in during refactoring.
