@@ -12,6 +12,11 @@ test = [
     "astropy>=6.0",
     "scipy>=1.13",
 ]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=2.0",
+    "breathe>=4.35",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

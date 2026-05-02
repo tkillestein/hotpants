@@ -2015,6 +2015,31 @@ cleanup_fft:
  *                   caller).
  * @param cMask      Input pixel mask array used for mask propagation.
  */
+/**
+ * @brief Apply spatially-varying convolution kernel to an image region.
+ *
+ * @details Evaluates K(x,y) = Σᵢ cᵢ(x,y)·φᵢ at each pixel and computes the
+ * convolution D(x,y) = I(x,y) - [T ⊗ K](x,y). Two implementations available:
+ * - Direct convolution: O(N·k²) pixel-level loops (fallback)
+ * - FFT acceleration: O(N log N) precomputed basis convolutions (preferred for large images)
+ *
+ * Dispatches to spatial_convolve_fft() if USE_FFTW is enabled and FFTW3 is available;
+ * otherwise uses direct O(N·k²) implementation.
+ *
+ * @param[in] image      Flat image array (e.g., template) to be convolved.
+ * @param[in,out] variance Optional variance map (pointer-to-pointer); if non-NULL,
+ *                        noise propagation is computed in-place.
+ * @param[in] xSize      Image width in pixels.
+ * @param[in] ySize      Image height in pixels.
+ * @param[in] kernelSol  Kernel solution vector cᵢ from fitKernel(); dimensionality nCompKer.
+ * @param[out] cRdata    Output convolved image (pre-allocated by caller; xSize×ySize).
+ * @param[in] cMask      Input pixel mask for mask propagation (0 = bad, non-zero = good).
+ *
+ * @note Calls make_kernel() to evaluate K(x,y) at each pixel; expensive operation.
+ *       For multi-threaded execution, loop indices and temporary buffers are thread-local.
+ * @see spatial_convolve_fft() for FFT-accelerated variant
+ * @see fitKernel() for kernel solution computation
+ */
 void spatial_convolve(float *image, float **variance, int xSize, int ySize, double *kernelSol, float *cRdata, int *cMask) {
 #ifdef USE_FFTW
     spatial_convolve_fft(image, variance, xSize, ySize, kernelSol, cRdata, cMask);

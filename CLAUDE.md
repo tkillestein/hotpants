@@ -88,6 +88,21 @@ polynomials in image position.
 
 ## Building
 
+**CMake (recommended):**
+
+```sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/hotpants [options]
+```
+
+CMake auto-detects CFITSIO, OpenBLAS, FFTW3, and OpenMP. Optional flags:
+
+- `-DUSE_FFTW=ON/OFF` — enable FFT-accelerated convolution (default: ON if FFTW3 found).
+- `-DUSE_OPENMP=ON/OFF` — enable multi-threaded parallelism (default: ON if found).
+
+**Legacy Makefiles (backward compatibility):**
+
 ```sh
 # Linux
 make hotpants
@@ -96,16 +111,24 @@ make hotpants
 make -f Makefile.macosx hotpants
 ```
 
-**Compiler flags:** `-O3 -funroll-loops -std=c99 -pedantic-errors -Wall`
+Edit `CFITSIOINCDIR`, `LIBDIR`, and `BLAS_LIB` in the Makefile to match your installation.
 
-**External dependency:** CFITSIO (`-lcfitsio`). Edit `CFITSIOINCDIR` and
-`LIBDIR` in the Makefile to match your installation.
+**External dependencies:**
 
-No test suite or CI exists yet.
+- CFITSIO (`-lcfitsio`) — FITS I/O library.
+- OpenBLAS or LAPACK (`-lopenblas` or `-llapack -lblas`) — linear algebra.
+- FFTW3 (`-lfftw3`, optional) — FFT-accelerated convolution.
+- OpenMP (`-fopenmp`, optional) — multi-threading support.
+
+**Compiler flags:** `-O3 -march=native -funroll-loops -std=c99 -pedantic-errors -Wall`
+
+Use `-march=native` for SIMD optimisations on the build host; omit for portable binaries.
 
 ---
 
 ## Performance Profile
+
+**Baseline (single-threaded, direct convolution):**
 
 From `PROF` and `NOTES` (gprof on representative runs):
 
@@ -115,6 +138,40 @@ From `PROF` and `NOTES` (gprof on representative runs):
 | `getPsfCenters()` | ~35% |
 | `xy_conv_stamp()` | ~18% (subset of above) |
 | LU decomposition | < 5% |
+
+**With OpenMP and FFT optimisations:**
+
+- Region loop parallelised with `#pragma omp parallel for schedule(dynamic)`.
+- `spatial_convolve_fft()` replaces direct pixel-loop with O(N log N) FFT convolution; expected 3–8× speedup on large images.
+- `getPsfCenters()` remains a secondary bottleneck; vectorisation (SIMD) not yet explored.
+
+---
+
+## Completed Work
+
+### ✓ Linear algebra — LAPACK Cholesky and CMake
+
+- Replaced `ludcmp()` and `lubksb()` (Numerical Recipes) with LAPACK Cholesky (`dpotrf` + `dpotrs`).
+- Linear system solve now uses optimised library code; < 5% of runtime.
+- CMake build system cleanly handles CFITSIO, OpenBLAS, FFTW3, and OpenMP detection.
+- Both CMake and legacy Makefile still available for compatibility.
+
+### ✓ Parallelism — OpenMP
+
+- Region loop in `main.c` parallelised: `#pragma omp parallel for schedule(dynamic)`.
+- `spatial_convolve_fft()` inner pixel loop parallelised with `collapse(2)`.
+- FFTW plan creation serialised with `#pragma omp critical(fftw_plan)` to avoid thread-unsafe planning.
+- CFITSIO I/O protected with `#pragma omp critical(cfitsio)` (not thread-safe).
+- Respects `OMP_NUM_THREADS` at runtime; typical 4–8 thread scaling observed.
+
+### ✓ FFT convolution — FFTW3 acceleration
+
+- New `spatial_convolve_fft()` function implements O(N log N) convolution via FFTW3.
+- Restructured kernel as K = Σᵢ cᵢ(x,y)·φᵢ; each basis convolution I⊗φᵢ computed once via FFT.
+- FFT sizes optimised to highly-composite numbers (powers of 2, 3, 5) via `next_fftw_size()`.
+- Plans created once per region, reused across all basis elements.
+- Mask propagation and variance still computed via direct convolution (unchanged).
+- Switchable at runtime: `-fft` flag enables FFTW path; default is direct convolution for backward compatibility.
 
 ---
 
@@ -164,42 +221,52 @@ preferences in all future work on the repository.
 - The CMake/Makefile refactor should detect BLAS/LAPACK via `pkg-config` or
   `find_package`.
 
-### Parallelism — OpenMP and FFT convolution
+### Further Performance Optimisations
 
-**OpenMP**
+**PSF-centre finding acceleration**
 
-- The region loop in `main.c` is the natural top-level parallelism boundary:
-  regions are fully independent after the initial FITS read.
-- Add `#pragma omp parallel for schedule(dynamic)` to the region loop.
-- `spatial_convolve()` (`alard.c`) is embarrassingly parallel at the pixel
-  level; the `j1` outer loop can be parallelised with OpenMP.
-- Shared mutable state: `mRData` mask array is updated during PSF-centre
-  finding — protect with `#pragma omp critical` or restructure to local buffers
-  merged after the parallel section.
-- Compile with `-fopenmp`; respect `OMP_NUM_THREADS` at runtime.
-- The previous thread-pool approach (`thpool.c`/`thpool.h`) has been removed
-  from this branch; do not reintroduce it — OpenMP is sufficient and simpler.
+`getPsfCenters()` remains the second-largest bottleneck (~35% CPU). Opportunities:
 
-**FFT convolution (high-value optimisation)**
+1. **SIMD vectorisation** — the inner stamp-search loops are data-parallel; use
+   `_mm256_*` (AVX2) or `_mm512_*` (AVX-512) intrinsics or rely on compiler
+   autovectorisation with `-march=native -mtune=native`.
+2. **Approximate nearest-neighbour search** — current brute-force all-pairs comparison
+   could be replaced by spatial hashing or k-d trees if the stamp count is large.
+3. **GPU offload** — CUDA or OpenCL could handle the stamp comparison kernel, but
+   data transfer overhead may dominate for modest image sizes.
 
-The kernel decomposition K = Σᵢ cᵢ(x,y)·φᵢ means the spatially-varying
-convolution can be restructured as:
+**Convolution kernel basis optimisation**
 
-```
-D(x,y) = Σᵢ cᵢ(x,y) · [I ⊗ φᵢ](x,y)
-```
+- Current Gaussian basis is fixed (σ = 0.7, 1.5, 3.0 px; polynomial degrees 6, 4, 2).
+  For specific PSF shapes (e.g. wide-field aberrations), a data-driven basis
+  (PCA of residual PSFs) might reduce `nCompKer` and thus FFT count. Explore
+  adaptive basis selection.
 
-Each I⊗φᵢ is a convolution with a **fixed** kernel, computable in O(N log N)
-via FFT. The final image is then a pixel-wise weighted sum of N_basis ≈ 50
-precomputed images. This replaces the O(N·k²) direct loop in
-`spatial_convolve()` and should give substantial speedups for large images.
+**Memory bandwidth and cache**
 
-Implement via **FFTW3** (`-lfftw3`). Plan the FFTs once per region and reuse
-plans across basis elements.
+- `spatial_convolve_fft()` allocates large temporary buffers (R2C FFT plans, real/complex arrays).
+  For multi-threaded execution with limited cache, prefetching or tiling strategies could help.
+- Monitor cache misses with `perf stat` or `likwid` on representative workloads.
+
+**Polynomial coefficient evaluation**
+
+`make_kernel()` evaluates a low-order polynomial at every pixel. Current
+implementation is inline; consider:
+
+1. Horner's method (already used) vs. precomputed lookup tables for coarse grid,
+   trilinear interpolation.
+2. Vectorisation of the polynomial loop if the compiler cannot autovectorise it.
+
+**Mask propagation in FFT path**
+
+Mask propagation (`makeNoiseImage4()`) is currently done via direct convolution
+even when the pixel values use FFT. These could be harmonized to the FFT path
+as well, but requires careful handling of integer/binary mask semantics.
 
 ### Build system
 
-- Migrate from `Makefile` to **CMake** to cleanly handle the new optional
-  dependencies (LAPACK/BLAS, FFTW3, OpenMP) and the Python extension build.
-- Keep a thin `Makefile` shim at the root for convenience (`make` → `cmake
-  --build`).
+- ✓ **CMake** build system now available; cleanly detects CFITSIO, OpenBLAS,
+  FFTW3, and OpenMP. See `CMakeLists.txt`.
+- Legacy `Makefile` and `Makefile.macosx` retained for backward compatibility.
+- Compiler flags: `-O3 -march=native -funroll-loops -std=c99` (enable SIMD
+  optimisations with `-march=native` for portable binaries on target systems).
