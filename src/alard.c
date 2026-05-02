@@ -1282,57 +1282,57 @@ void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
  *                   zeroed on entry, filled on return.
  */
 void build_scprod(stamp_struct *stamps, int nS, float *image, double *kernelSol) {
-    
-    int       istamp,xc,yc,xi,yi,i1,i2,k,ibg,i,ii;
+
+    int       stampIdx,stampColIdx,stampRowIdx,stampCenterX,stampCenterY,gaussianCompIdx,polyTermIdx,pixelIdx,bgVecIdx,solIdx,recomputedColIdx;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
-    double    p0,q;
-    double    **vec;
-    
+    double    scalarProduct,innerProduct;
+    double    **vectorArray;
+
     ncomp1  = nCompKer - 1;
     ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     ncomp   = ncomp1 * ncomp2;
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
-    
-    for (i = 0; i <= ncomp + nbg_vec + 1; i++)
-        kernelSol[i]=0.0;
-    
-    for (istamp = 0; istamp < nS; istamp++) {
+
+
+    for (solIdx = 0; solIdx <= ncomp + nbg_vec + 1; solIdx++)
+        kernelSol[solIdx]=0.0;
+
+    for (stampIdx = 0; stampIdx < nS; stampIdx++) {
         /* skip over any bad stamps along the way */
-        while(stamps[istamp].sscnt >= stamps[istamp].nss) {
-            ++istamp; 
-            if (istamp >= nS) break;
+        while(stamps[stampIdx].sscnt >= stamps[stampIdx].nss) {
+            ++stampIdx;
+            if (stampIdx >= nS) break;
         }
-        if (istamp >= nS) break;
-        
-        vec= stamps[istamp].vectors;
-        xi = stamps[istamp].xss[stamps[istamp].sscnt];
-        yi = stamps[istamp].yss[stamps[istamp].sscnt];
-        
-        p0 = stamps[istamp].scprod[1];
-        kernelSol[1] += p0;
-        
+        if (stampIdx >= nS) break;
+
+        vectorArray= stamps[stampIdx].vectors;
+        stampCenterX = stamps[stampIdx].xss[stamps[stampIdx].sscnt];
+        stampCenterY = stamps[stampIdx].yss[stamps[stampIdx].sscnt];
+
+        scalarProduct = stamps[stampIdx].scprod[1];
+        kernelSol[1] += scalarProduct;
+
         /* spatially weighted convolved image * ref image */
-        for (i1 = 1; i1 < ncomp1 + 1; i1++) {
-            p0 = stamps[istamp].scprod[i1+1];
-            for (i2 = 0; i2 < ncomp2; i2++) {
-                ii = (i1-1) * ncomp2 + i2 + 1;
+        for (gaussianCompIdx = 1; gaussianCompIdx < ncomp1 + 1; gaussianCompIdx++) {
+            scalarProduct = stamps[stampIdx].scprod[gaussianCompIdx+1];
+            for (polyTermIdx = 0; polyTermIdx < ncomp2; polyTermIdx++) {
+                recomputedColIdx = (gaussianCompIdx-1) * ncomp2 + polyTermIdx + 1;
                 /* no need for weighting here */
-                kernelSol[ii+1] += p0 * wxy[istamp][i2];
+                kernelSol[recomputedColIdx+1] += scalarProduct * wxy[stampIdx][polyTermIdx];
             }
         }
-        
+
         /* spatially weighted bg model convolved with ref image */
-        for (ibg = 0; ibg < nbg_vec; ibg++) {
-            q = 0.0;
-            for (xc = -hwKSStamp; xc <= hwKSStamp; xc++) {
-                for (yc = -hwKSStamp; yc <= hwKSStamp;yc++) {
-                    k  = xc + hwKSStamp + fwKSStamp * (yc + hwKSStamp);
-                    q += vec[ncomp1+ibg+1][k] * image[xc+xi+rPixX*(yc+yi)];
-                    
+        for (bgVecIdx = 0; bgVecIdx < nbg_vec; bgVecIdx++) {
+            innerProduct = 0.0;
+            for (stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp; stampColIdx++) {
+                for (stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp;stampRowIdx++) {
+                    pixelIdx  = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
+                    innerProduct += vectorArray[ncomp1+bgVecIdx+1][pixelIdx] * image[stampColIdx+stampCenterX+rPixX*(stampRowIdx+stampCenterY)];
+
                 }
             }
-            kernelSol[ncomp+ibg+2] += q;
+            kernelSol[ncomp+bgVecIdx+2] += innerProduct;
         }
     }
     return;
