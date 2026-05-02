@@ -586,8 +586,8 @@ double checkPsfCenter(float *iData, int imax, int jmax, int xLen, int yLen,
                       int xbuffer, int ybuffer, int bbit, int bbit1) {
 
     /* note the imax and jmax are in the stamp coordinate system */
-    
-    int brk, l, k;
+
+    int brk, checkRowIdx, checkColIdx;
     int xr2, yr2, nr2;
     double dmax2, dpt2;
     
@@ -600,40 +600,40 @@ double checkPsfCenter(float *iData, int imax, int jmax, int xLen, int yLen,
        sum of all the pixels in the other boxes.  rank on
        this!  well, sum of high sigma pixels anyways...*/
     dmax2 = 0.;
-    
-    for (l = jmax-hwKSStamp; l <= jmax+hwKSStamp; l++) {
-        if ((l < ybuffer) || (l >= yLen-ybuffer)) 
-            continue; /* continue l loop */
-        
-        yr2 = l + sy0;
-        
-        for (k = imax-hwKSStamp; k <= imax+hwKSStamp; k++) {
-            if ((k < xbuffer) || (k >= xLen-xbuffer)) 
-                continue; /* continue k loop */
-            
-            xr2 = k + sx0;
+
+    for (checkRowIdx = jmax-hwKSStamp; checkRowIdx <= jmax+hwKSStamp; checkRowIdx++) {
+        if ((checkRowIdx < ybuffer) || (checkRowIdx >= yLen-ybuffer))
+            continue; /* continue checkRowIdx loop */
+
+        yr2 = checkRowIdx + sy0;
+
+        for (checkColIdx = imax-hwKSStamp; checkColIdx <= imax+hwKSStamp; checkColIdx++) {
+            if ((checkColIdx < xbuffer) || (checkColIdx >= xLen-xbuffer))
+                continue; /* continue checkColIdx loop */
+
+            xr2 = checkColIdx + sx0;
             nr2 = xr2+rPixX*yr2;
-            
+
             if (mRData[nr2] & bbit) {
                 brk = 1;
                 dmax2 = 0;
-                break; /* exit k loop */
+                break; /* exit checkColIdx loop */
             }
-            
+
             dpt2   = iData[nr2];
-            
+
             if (dpt2 >= hiThresh) {
                 mRData[nr2] |= bbit1;
                 brk = 1;
                 dmax2 = 0;
-                break; /* exit k loop */
+                break; /* exit checkColIdx loop */
             }
-            
+
             if (( (dpt2 - sky) * invdsky) > kerFitThresh)
                 dmax2 += dpt2;
         }
         if (brk == 1)
-            break; /* exit l loop */
+            break; /* exit checkRowIdx loop */
     }
     
     return dmax2;
