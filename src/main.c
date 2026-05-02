@@ -1,7 +1,6 @@
 #include<stdio.h>
 #include<string.h>
 #include<math.h>
-#include<malloc.h>
 #include<stdlib.h>
 #include<fitsio.h>
 #include<ctype.h>
@@ -103,7 +102,7 @@ int main(int argc,char *argv[]) {
     time_t thetime;
     
     /* SET VERSION */
-    sprintf(version, "5.1.11");
+    snprintf(version, sizeof(version), "5.1.11");
     
     /* set global vars, and grab command line args */
     /*   return image names in fnames */
@@ -215,8 +214,8 @@ int main(int argc,char *argv[]) {
     iLThresh  -= iPedestal;
     
     /* overwrite output image? */
-    if (!noClobber) { sprintf(scrStr, "!%s", outim); }
-    else { sprintf(scrStr, "%s", outim); }
+    if (!noClobber) { snprintf(scrStr, sizeof(scrStr), "!%s", outim); }
+    else { snprintf(scrStr, sizeof(scrStr), "%s", outim); }
     
     oNaxes[0] = imax(tNaxes[0], iNaxes[0]);
     oNaxes[1] = imax(tNaxes[1], iNaxes[1]);
@@ -258,9 +257,9 @@ int main(int argc,char *argv[]) {
     /* what was it fired up */
     thetime = time(NULL);
     tm = gmtime(&thetime);
-    sprintf(hInfo,"%04d-%02d-%02dT%02d:%02d:%02d",
-            tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday,
-            tm->tm_hour, tm->tm_min, tm->tm_sec);
+    snprintf(hInfo, sizeof(hInfo), "%04d-%02d-%02dT%02d:%02d:%02d",
+             tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday,
+             tm->tm_hour, tm->tm_min, tm->tm_sec);
     fits_write_key_str(oPtr, "DATE", hInfo, "When it was started (GMT)", &status);
     
     fits_write_key_str(oPtr, "COMMENT", "", "", &status);
@@ -279,8 +278,8 @@ int main(int argc,char *argv[]) {
             printError(status);
     }
     if (convImage) {
-        if (!noClobber) { sprintf(scrStr, "!%s", convImage); }
-        else { sprintf(scrStr, "%s", convImage); }
+        if (!noClobber) { snprintf(scrStr, sizeof(scrStr), "!%s", convImage); }
+        else { snprintf(scrStr, sizeof(scrStr), "%s", convImage); }
         if (fits_create_file(&ePtr, scrStr, &status) ||
             fits_create_img(ePtr, oBitpix, oNaxis, oNaxes, &status) ||
             hp_fits_copy_header(iPtr, ePtr, &status) ||
@@ -295,8 +294,8 @@ int main(int argc,char *argv[]) {
             printError(status);
     }
     if (sigmaImage) {
-        if (!noClobber) { sprintf(scrStr, "!%s", sigmaImage); }
-        else { sprintf(scrStr, "%s", sigmaImage); }
+        if (!noClobber) { snprintf(scrStr, sizeof(scrStr), "!%s", sigmaImage); }
+        else { snprintf(scrStr, sizeof(scrStr), "%s", sigmaImage); }
         if (fits_create_file(&ePtr, scrStr, &status) ||
             fits_create_img(ePtr, oBitpix, oNaxis, oNaxes, &status) ||
             hp_fits_copy_header(iPtr, ePtr, &status) ||
@@ -325,8 +324,8 @@ int main(int argc,char *argv[]) {
         }
     }
     if (noiseImage) {
-        if (!noClobber) { sprintf(scrStr, "!%s", noiseImage); }
-        else { sprintf(scrStr, "%s", noiseImage); }
+        if (!noClobber) { snprintf(scrStr, sizeof(scrStr), "!%s", noiseImage); }
+        else { snprintf(scrStr, sizeof(scrStr), "%s", noiseImage); }
         
         if (fits_create_file(&ePtr, scrStr, &status))
             printError(status);
@@ -357,8 +356,8 @@ int main(int argc,char *argv[]) {
     }
     
     if (outMask) {
-        if (!noClobber) { sprintf(scrStr, "!%s", outMask); }
-        else { sprintf(scrStr, "%s", outMask); }
+        if (!noClobber) { snprintf(scrStr, sizeof(scrStr), "!%s", outMask); }
+        else { snprintf(scrStr, sizeof(scrStr), "%s", outMask); }
         if (fits_create_file(&ePtr, scrStr, &status) ||
             fits_create_img(ePtr, SHORT_IMG, oNaxis, oNaxes, &status) ||
             hp_fits_copy_header(iPtr, ePtr, &status) ||
@@ -515,7 +514,7 @@ int main(int argc,char *argv[]) {
             exit(1);
         
         for (nR = 0; nR < numRegKeyWord; nR++){
-            sprintf(hKeyword, "%s%d", regKeyWord, nR);
+            snprintf(hKeyword, sizeof(hKeyword), "%s%d", regKeyWord, nR);
             
             if (fits_read_key_str(tPtr, hKeyword, hInfo, scrStr, &status)) {
                 rXMins[nR] = xMin;
@@ -587,7 +586,7 @@ int main(int argc,char *argv[]) {
             ttype[k] = (char *)malloc(10*sizeof(char));
             tunit[k] = (char *)malloc(sizeof(char));
             strcpy(tform[k], "D10.8");
-            sprintf(ttype[k], "Region%d", k);
+            snprintf(ttype[k], 10, "Region%d", k);
             strcpy(tunit[k], "");
         }
         
@@ -599,8 +598,8 @@ int main(int argc,char *argv[]) {
                 printError(status);
         }
         if (kernelImOut) {
-            if (!noClobber) { sprintf(scrStr, "!%s", kernelImOut); }
-            else { sprintf(scrStr, "%s", kernelImOut); }
+            if (!noClobber) { snprintf(scrStr, sizeof(scrStr), "!%s", kernelImOut); }
+            else { snprintf(scrStr, sizeof(scrStr), "%s", kernelImOut); }
             if (fits_create_file(&ePtr, scrStr, &status) ||
                 fits_insert_btbl(ePtr, (nCompTotal+1), nR, ttype, tform, tunit, "Convolution Kernel Information", 0L, &status) ||
                 fits_update_key(ePtr, TSTRING, "OBJECT", "Convolution Kernel Information", "", &status) ||
@@ -1720,8 +1719,8 @@ int main(int argc,char *argv[]) {
         }
         
         /* noise image is next in the queue */
-        sprintf(hKeyword, "NSCALO%02d", i);
-        sprintf(hInfo,    "%.4f", diffrat);
+        snprintf(hKeyword, sizeof(hKeyword), "NSCALO%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%.4f", diffrat);
         
         if (inclNoiseImage) {
             if (fits_movrel_hdu(oPtr, 1, NULL, &status) ||
@@ -1786,103 +1785,103 @@ int main(int argc,char *argv[]) {
                 printError(status);
         
         /* add comment to TITLE saying which image was actually convolved */
-        sprintf(hKeyword, "REGION%02d", i);
-        sprintf(hInfo,    "[%d:%d,%d:%d]", rXMin+1, rXMax+1, rYMin+1, rYMax+1);
+        snprintf(hKeyword, sizeof(hKeyword), "REGION%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "[%d:%d,%d:%d]", rXMin+1, rXMax+1, rYMin+1, rYMax+1);
         fits_write_key_str(oPtr, hKeyword, hInfo, "", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "", &status);
         
-        sprintf(hKeyword, "CONVOL%02d", i);
-        sprintf(hInfo,    "%s", ( convTmpl ? "TEMPLATE" : "IMAGE" ));
+        snprintf(hKeyword, sizeof(hKeyword), "CONVOL%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%s", ( convTmpl ? "TEMPLATE" : "IMAGE" ));
         fits_write_key_str(oPtr, hKeyword, hInfo, "", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "", &status);
         
-        sprintf(hKeyword, "KSUM%02d", i);
-        sprintf(hInfo,    "%.4f", sumKernel);
+        snprintf(hKeyword, sizeof(hKeyword), "KSUM%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%.4f", sumKernel);
         fits_write_key_str(oPtr, hKeyword, hInfo, "Kernel Sum", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "Kernel Sum", &status);
         
-        sprintf(hKeyword, "SSSIG%02d", i);
-        sprintf(hInfo,    "%.4f", meansigSubstamps);
+        snprintf(hKeyword, sizeof(hKeyword), "SSSIG%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%.4f", meansigSubstamps);
         fits_write_key_str(oPtr, hKeyword, hInfo, "Average Figure of Merit across Stamps", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "Average Figure of Merit across Stamps", &status);
         
-        sprintf(hKeyword, "SSSCAT%02d", i);
-        sprintf(hInfo,    "%.4f", scatterSubstamps);
+        snprintf(hKeyword, sizeof(hKeyword), "SSSCAT%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%.4f", scatterSubstamps);
         fits_write_key_str(oPtr, hKeyword, hInfo, "Stdev in Figure of Merit", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "Stdev in Figure of Merit", &status);
         
         
         if (strncmp(figMerit, "v", 1)==0) {
-            sprintf(hKeyword, "FSIG%02d", i);
-            sprintf(hInfo,    "%.4f", meansigSubstampsF);
+            snprintf(hKeyword, sizeof(hKeyword), "FSIG%02d", i);
+            snprintf(hInfo,    sizeof(hInfo),    "%.4f", meansigSubstampsF);
             fits_write_key_str(oPtr, hKeyword, hInfo, "Final SSSIG", &status);
             if (kernelImOut)
                 fits_write_key_str(ePtr, hKeyword, hInfo, "Final SSSIG", &status);
             
-            sprintf(hKeyword, "FSCAT%02d", i);
-            sprintf(hInfo,    "%.4f", scatterSubstampsF);
+            snprintf(hKeyword, sizeof(hKeyword), "FSCAT%02d", i);
+            snprintf(hInfo,    sizeof(hInfo),    "%.4f", scatterSubstampsF);
             fits_write_key_str(oPtr, hKeyword, hInfo, "Final SSSCAT", &status);
             if (kernelImOut)
                 fits_write_key_str(ePtr, hKeyword, hInfo, "Final SSSCAT", &status);
             
         }
         
-        sprintf(hKeyword, "X2NRM%02d", i);
-        sprintf(hInfo,    "%.4f", x2norm);
+        snprintf(hKeyword, sizeof(hKeyword), "X2NRM%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%.4f", x2norm);
         fits_write_key_str(oPtr, hKeyword, hInfo, "1/N * SUM (diff/noise)^2", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "1/N * SUM (diff/noise)^2", &status);
         
-        sprintf(hKeyword, "NX2NRM%02d", i);
-        sprintf(hInfo,    "%d", nx2norm);
+        snprintf(hKeyword, sizeof(hKeyword), "NX2NRM%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%d", nx2norm);
         fits_write_key_str(oPtr, hKeyword, hInfo, "Number of pixels in X2NRM", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "Number of pixels in X2NRM", &status);
         
-        sprintf(hKeyword, "DMEAN%02d", i);
-        sprintf(hInfo,    "%.4f", mean);
+        snprintf(hKeyword, sizeof(hKeyword), "DMEAN%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%.4f", mean);
         fits_write_key_str(oPtr, hKeyword, hInfo, "Mean of diff image; good pixels", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "Mean of diff image; good pixels", &status);
         
-        sprintf(hKeyword, "DSIGE%02d", i);
-        sprintf(hInfo,    "%.4f", sd);
+        snprintf(hKeyword, sizeof(hKeyword), "DSIGE%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%.4f", sd);
         fits_write_key_str(oPtr, hKeyword, hInfo, "Stdev of diff image; good pixels", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "Stdev of diff image; good pixels", &status);
         
-        sprintf(hKeyword, "DSIG%02d", i);
-        sprintf(hInfo,    "%.4f", nmean);
+        snprintf(hKeyword, sizeof(hKeyword), "DSIG%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%.4f", nmean);
         fits_write_key_str(oPtr, hKeyword, hInfo, "Mean of noise image; good pixels", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "Mean of noise image; good pixels", &status);
         
-        sprintf(hKeyword, "DMEANO%02d", i);
-        sprintf(hInfo,    "%.4f", meanm);
+        snprintf(hKeyword, sizeof(hKeyword), "DMEANO%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%.4f", meanm);
         fits_write_key_str(oPtr, hKeyword, hInfo, "Mean of diff image; OK pixels", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "Mean of diff image; OK pixels", &status);
         
-        sprintf(hKeyword, "DSIGEO%02d", i);
-        sprintf(hInfo,    "%.4f", sdm);
+        snprintf(hKeyword, sizeof(hKeyword), "DSIGEO%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%.4f", sdm);
         fits_write_key_str(oPtr, hKeyword, hInfo, "Stdev of diff image; OK pixels", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "Stdev of diff image; OK pixels", &status);
         
-        sprintf(hKeyword, "DSIGO%02d", i);
-        sprintf(hInfo,    "%.4f", nmeanm);
+        snprintf(hKeyword, sizeof(hKeyword), "DSIGO%02d", i);
+        snprintf(hInfo,    sizeof(hInfo),    "%.4f", nmeanm);
         fits_write_key_str(oPtr, hKeyword, hInfo, "Mean of noise image; OK pixels", &status);
         if (kernelImOut)
             fits_write_key_str(ePtr, hKeyword, hInfo, "Mean of noise image; OK pixels", &status);
         
         if (rescaleOK) {
-            sprintf(hKeyword, "NSCALO%02d", i);
-            sprintf(hInfo,    "%.4f", diffrat);
+            snprintf(hKeyword, sizeof(hKeyword), "NSCALO%02d", i);
+            snprintf(hInfo,    sizeof(hInfo),    "%.4f", diffrat);
             fits_write_key_str(oPtr, hKeyword, hInfo, "Rescaling factor of OK noise pixels", &status);
             if (kernelImOut)
                 fits_write_key_str(ePtr, hKeyword, hInfo, "Rescaling factor of OK noise pixels", &status);
@@ -1964,10 +1963,12 @@ int main(int argc,char *argv[]) {
     
     /*fits_write_key_str(oPtr, "HPVSN", version, "HOTPANTS Version", &status);*/
     
-    sprintf(hKeyword, "DIFFCMD");
-    sprintf(hInfo, "%s", argv[0]);
-    for (i = 1; i < argc; i++)
-        sprintf(hInfo, "%s %s", hInfo, argv[i]);
+    snprintf(hKeyword, sizeof(hKeyword), "DIFFCMD");
+    snprintf(hInfo, sizeof(hInfo), "%s", argv[0]);
+    for (i = 1; i < argc; i++) {
+        size_t n = strlen(hInfo);
+        snprintf(hInfo + n, sizeof(hInfo) - n, " %s", argv[i]);
+    }
     fits_write_key_longstr(oPtr, hKeyword, hInfo, "", &status);
     
     fits_write_key_longstr(oPtr, "TARGET",   image,    "HOTPanTS : Input Image", &status);
@@ -1985,13 +1986,13 @@ int main(int argc,char *argv[]) {
         /* to the convolution kernel table */
         fits_movabs_hdu(oPtr, kInfoNum, NULL, &status);
         
-        sprintf(hKeyword, "NGAUSS");
+        snprintf(hKeyword, sizeof(hKeyword), "NGAUSS");
         fits_write_key_lng(oPtr, hKeyword, ngauss, "Number of Gaussian Basis Functions", &status);
         for (k = 0; k < ngauss; k++) {
-            sprintf(hKeyword, "DGAUSS%d", k+1);
-            fits_write_key_lng(oPtr, hKeyword, deg_fixe[k], "Polynomial Degree", &status);      
-            
-            sprintf(hKeyword, "SGAUSS%d", k+1);
+            snprintf(hKeyword, sizeof(hKeyword), "DGAUSS%d", k+1);
+            fits_write_key_lng(oPtr, hKeyword, deg_fixe[k], "Polynomial Degree", &status);
+
+            snprintf(hKeyword, sizeof(hKeyword), "SGAUSS%d", k+1);
             fits_write_key_flt(oPtr, hKeyword, 1./sqrt(2.*sigma_gauss[k]), 8, "Gaussian Sigma", &status);
         }
         
@@ -2020,15 +2021,15 @@ int main(int argc,char *argv[]) {
         
         fits_write_key_str(ePtr, "PHOTNORM", photNormalize, "Direction of photometric normalization", &status);
         
-        sprintf(hKeyword, "NGAUSS");
+        snprintf(hKeyword, sizeof(hKeyword), "NGAUSS");
         fits_write_key_lng(ePtr, hKeyword, ngauss, "Number of Gaussian Basis Functions", &status);
         fits_write_key_lng(oPtr, hKeyword, ngauss, "Number of Gaussian Basis Functions", &status);
         for (k = 0; k < ngauss; k++) {
-            sprintf(hKeyword, "DGAUSS%d", k+1);
-            fits_write_key_lng(ePtr, hKeyword, deg_fixe[k], "Polynomial Degree", &status);      
-            fits_write_key_lng(oPtr, hKeyword, deg_fixe[k], "Polynomial Degree", &status);      
-            
-            sprintf(hKeyword, "SGAUSS%d", k+1);
+            snprintf(hKeyword, sizeof(hKeyword), "DGAUSS%d", k+1);
+            fits_write_key_lng(ePtr, hKeyword, deg_fixe[k], "Polynomial Degree", &status);
+            fits_write_key_lng(oPtr, hKeyword, deg_fixe[k], "Polynomial Degree", &status);
+
+            snprintf(hKeyword, sizeof(hKeyword), "SGAUSS%d", k+1);
             fits_write_key_flt(ePtr, hKeyword, 1./sqrt(2.*sigma_gauss[k]), 8, "Gaussian Sigma", &status);
             fits_write_key_flt(oPtr, hKeyword, 1./sqrt(2.*sigma_gauss[k]), 8, "Gaussian Sigma", &status);
         }

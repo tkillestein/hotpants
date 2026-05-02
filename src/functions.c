@@ -1,7 +1,6 @@
 #include<stdio.h>
 #include<string.h>
 #include<math.h>
-#include<malloc.h>
 #include<stdlib.h>
 #include<fitsio.h>
 #include<ctype.h>
@@ -101,8 +100,8 @@ void savexy(stamp_struct *stamps, int nStamps, long xmin, long ymin, int regionc
     char xyfilenameall[1000];
     char xyfilenameskipped[1000];
     
-    sprintf(xyfilenameall,"%s.all",xyfilename);
-    sprintf(xyfilenameskipped,"%s.skipped",xyfilename);
+    snprintf(xyfilenameall,     sizeof(xyfilenameall),     "%s.all",     xyfilename);
+    snprintf(xyfilenameskipped, sizeof(xyfilenameskipped), "%s.skipped", xyfilename);
     
     if (regioncounter==0) {
         xyfileused = fopen(xyfilename, "w");
@@ -1511,16 +1510,16 @@ void getKernelInfo(char *kimage) {
     /* this took a while to figure out! */
     photNormalize = (char *)malloc(1*sizeof(char));
     
-    sprintf(hKeyword, "PHOTNORM");
+    snprintf(hKeyword, sizeof(hKeyword), "PHOTNORM");
     if (fits_read_key(kPtr, TSTRING, hKeyword, photNormalize, NULL, &status))
         printError(status);
     
     /* read kernel gaussian info */
     for (i = 0; i < ngauss; i++) {
-        sprintf(hKeyword, "DGAUSS%d", i+1);
+        snprintf(hKeyword, sizeof(hKeyword), "DGAUSS%d", i+1);
         if (fits_read_key(kPtr, TINT, hKeyword, &deg_fixe[i], NULL, &status))
             printError(status);
-        sprintf(hKeyword, "SGAUSS%d", i+1);
+        snprintf(hKeyword, sizeof(hKeyword), "SGAUSS%d", i+1);
         if (fits_read_key(kPtr, TFLOAT, hKeyword, &sigma_gauss[i], NULL, &status))
             printError(status);
         
@@ -1583,7 +1582,7 @@ void readKernel(char *kimage, int nRegion, double **tKerSol, double **iKerSol,
         printError(status);
     
     /* grab stuff for this region */
-    sprintf(hKeyword, "REGION%02d", nRegion);
+    snprintf(hKeyword, sizeof(hKeyword), "REGION%02d", nRegion);
     if (fits_read_key(kPtr, TSTRING, hKeyword, &hInfo, NULL, &status))
         printError(status);
     
@@ -1599,29 +1598,29 @@ void readKernel(char *kimage, int nRegion, double **tKerSol, double **iKerSol,
     *rYMax -= 1;
     
     /* which way to convolve */
-    sprintf(hKeyword, "CONVOL%02d", nRegion);
+    snprintf(hKeyword, sizeof(hKeyword), "CONVOL%02d", nRegion);
     if (fits_read_key(kPtr, TSTRING, hKeyword, &hInfo, NULL, &status))
         printError(status);
     
     /* copy quality control stuff: mean sigma, scatter, # substamps skipped */
-    sprintf(hKeyword, "SSSIG%02d", nRegion);
+    snprintf(hKeyword, sizeof(hKeyword), "SSSIG%02d", nRegion);
     if (fits_read_key(kPtr, TDOUBLE, hKeyword, meansigSubstamps, NULL, &status))
         printError(status);
     
-    sprintf(hKeyword, "SSSCAT%02d", nRegion);
+    snprintf(hKeyword, sizeof(hKeyword), "SSSCAT%02d", nRegion);
     if (fits_read_key(kPtr, TDOUBLE, hKeyword, scatterSubstamps, NULL, &status))
         printError(status);
     
-    sprintf(hKeyword, "FSIG%02d", nRegion);
+    snprintf(hKeyword, sizeof(hKeyword), "FSIG%02d", nRegion);
     if (fits_read_key(kPtr, TDOUBLE, hKeyword, meansigSubstampsF, NULL, &status))
         printError(status);
     
-    sprintf(hKeyword, "FSCAT%02d", nRegion);
+    snprintf(hKeyword, sizeof(hKeyword), "FSCAT%02d", nRegion);
     if (fits_read_key(kPtr, TDOUBLE, hKeyword, scatterSubstampsF, NULL, &status))
         printError(status);
     
     /* sometimes does not exist */
-    sprintf(hKeyword, "NSCALO%02d", nRegion);
+    snprintf(hKeyword, sizeof(hKeyword), "NSCALO%02d", nRegion);
     if (fits_read_key(kPtr, TDOUBLE, hKeyword, diffrat, NULL, &status)) {
         *diffrat = 1;
         status = 0;
