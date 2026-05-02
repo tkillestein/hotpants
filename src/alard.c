@@ -1413,69 +1413,69 @@ void getFinalStampSig(stamp_struct *stamp, float *imDiff, float *imNoise, double
  * @param sig3       Output: histogram FWHM metric.
  */
 void getStampSig(stamp_struct *stamp, double *kernelSol, float *imNoise, double *sig1, double *sig2, double *sig3) {
-    int i, j, idx, sscnt, nsig, xRegion, yRegion, xRegion2, yRegion2;
+    int colIdx, rowIdx, stampPixelIdx, substampIdx, validPixelCount, xRegion, yRegion, xPixel, yPixel;
     double cSum, cMean, cMedian, cMode, cLfwhm;
-    double *im, tdat, idat, ndat, diff, bg;
-    
+    double *referenceImage, templateData, imageData, noiseData, diffValue, bgValue;
+
     /* info */
-    sscnt   = stamp->sscnt;
-    xRegion = stamp->xss[sscnt];
-    yRegion = stamp->yss[sscnt];
-    
+    substampIdx   = stamp->sscnt;
+    xRegion = stamp->xss[substampIdx];
+    yRegion = stamp->yss[substampIdx];
+
     /* the comparison image */
-    im = stamp->krefArea;
+    referenceImage = stamp->krefArea;
     /* background from fit */
-    bg = get_background(xRegion, yRegion, kernelSol);
+    bgValue = get_background(xRegion, yRegion, kernelSol);
     /* temp contains the convolved image from fit, fwKSStamp x fwKSStamp */
-    make_model(stamp, kernelSol, temp); 
-    
+    make_model(stamp, kernelSol, temp);
+
     /* get sigma of stamp diff */
-    nsig = 0;
+    validPixelCount = 0;
     *sig1 = 0;
     *sig2 = 0;
     *sig3 = 0;
-    
-    for (j = 0; j < fwKSStamp; j++) {
-        yRegion2 = yRegion - hwKSStamp + j;
-        
-        for (i = 0; i < fwKSStamp; i++) {
-            xRegion2 = xRegion - hwKSStamp + i;
-            
-            idx  = i+j*fwKSStamp;
-            
-            tdat = temp[idx];
-            idat = im[idx];
-            ndat = imNoise[xRegion2+rPixX*yRegion2];
-            
-            diff = tdat - idat + bg;
-            
-            if ((mRData[xRegion2+rPixX*yRegion2] & FLAG_INPUT_ISBAD) || (fabs(idat) <= ZEROVAL)) {
+
+    for (rowIdx = 0; rowIdx < fwKSStamp; rowIdx++) {
+        yPixel = yRegion - hwKSStamp + rowIdx;
+
+        for (colIdx = 0; colIdx < fwKSStamp; colIdx++) {
+            xPixel = xRegion - hwKSStamp + colIdx;
+
+            stampPixelIdx  = colIdx+rowIdx*fwKSStamp;
+
+            templateData = temp[stampPixelIdx];
+            imageData = referenceImage[stampPixelIdx];
+            noiseData = imNoise[xPixel+rPixX*yPixel];
+
+            diffValue = templateData - imageData + bgValue;
+
+            if ((mRData[xPixel+rPixX*yPixel] & FLAG_INPUT_ISBAD) || (fabs(imageData) <= ZEROVAL)) {
                 continue;
             }
             else {
-                temp[idx] = diff;
+                temp[stampPixelIdx] = diffValue;
             }
-            
+
             /* check for NaN */
-            if ((tdat*0.0 != 0.0) || (idat*0.0 != 0.0)) {
-                mRData[xRegion2+rPixX*yRegion2] |= (FLAG_INPUT_ISBAD | FLAG_ISNAN);
+            if ((templateData*0.0 != 0.0) || (imageData*0.0 != 0.0)) {
+                mRData[xPixel+rPixX*yPixel] |= (FLAG_INPUT_ISBAD | FLAG_ISNAN);
                 continue;
             }
-            
-            nsig++;
-            *sig1 += diff * diff / ndat;
-            /*fprintf(stderr, "OK %d %d : %f %f %f\n", xRegion2, yRegion2, tdat, idat, ndat);*/
+
+            validPixelCount++;
+            *sig1 += diffValue * diffValue / noiseData;
+            /*fprintf(stderr, "OK %d %d : %f %f %f\n", xPixel, yPixel, templateData, imageData, noiseData);*/
         }
     }
-    if (nsig > 0) {
-        *sig1 /= nsig;
+    if (validPixelCount > 0) {
+        *sig1 /= validPixelCount;
         if (*sig1 >= MAXVAL)
             *sig1 = -1;
     }
     else
         *sig1 = -1;
-    
-    
+
+
     /* don't do think unless you need to! */
     if (strncmp(figMerit, "v", 1)!=0) {
         if (getStampStats3(temp, xRegion - hwKSStamp, yRegion - hwKSStamp, fwKSStamp, fwKSStamp,
@@ -1488,7 +1488,7 @@ void getStampSig(stamp_struct *stamp, double *kernelSol, float *imNoise, double 
         else if (*sig3 < 0 || *sig3 >= MAXVAL)
             *sig3 = -1;
     }
-    
+
     return;
 }
 
