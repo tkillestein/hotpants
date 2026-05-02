@@ -208,43 +208,43 @@ int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
  */
 double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren) {
     double    *vector=NULL,*kernel0=NULL;
-    int       kernelRow,kernelCol,k,dx,dy,ix,pixelIdx;
-    double    sum_x,sum_y,x,qe;
-    
+    int       kernelRow,kernelCol,xFilterIdx,xParityCheck,yParityCheck,xKernelIdx,pixelIdx;
+    double    filterXSum,filterYSum,kernelPosition,gaussianVal;
+
     if (usePCA) {
         return kernel_vector_PCA(n, deg_x, deg_y, ig, ren);
     }
-    
+
     vector = (double *)malloc(fwKernel*fwKernel*sizeof(double));
     /* Detect parity: (deg/2)*2 - deg = 0 if even, -1 if odd.
-       Odd-degree filters (dx != 0 || dy != 0) retain full normalization;
-       even-degree filters (dx==0 && dy==0) are normalized and (for n>0)
+       Odd-degree filters (xParityCheck != 0 || yParityCheck != 0) retain full normalization;
+       even-degree filters (xParityCheck==0 && yParityCheck==0) are normalized and (for n>0)
        have the n=0 basis subtracted to form differential corrections. */
-    dx = (deg_x / 2) * 2 - deg_x;
-    dy = (deg_y / 2) * 2 - deg_y;
-    sum_x = sum_y = 0.0;
+    xParityCheck = (deg_x / 2) * 2 - deg_x;
+    yParityCheck = (deg_y / 2) * 2 - deg_y;
+    filterXSum = filterYSum = 0.0;
     *ren = 0;
-    
-    for (ix = 0; ix < fwKernel; ix++) {
-        x            = (double)(ix - hwKernel);
-        k            = ix+n*fwKernel;
-        qe           = exp(-x * x * sigma_gauss[ig]);
-        filter_x[k]  = qe * pow(x, deg_x);
-        filter_y[k]  = qe * pow(x, deg_y);
-        sum_x       += filter_x[k];
-        sum_y       += filter_y[k];
+
+    for (xKernelIdx = 0; xKernelIdx < fwKernel; xKernelIdx++) {
+        kernelPosition            = (double)(xKernelIdx - hwKernel);
+        xFilterIdx            = xKernelIdx+n*fwKernel;
+        gaussianVal           = exp(-kernelPosition * kernelPosition * sigma_gauss[ig]);
+        filter_x[xFilterIdx]  = gaussianVal * pow(kernelPosition, deg_x);
+        filter_y[xFilterIdx]  = gaussianVal * pow(kernelPosition, deg_y);
+        filterXSum       += filter_x[xFilterIdx];
+        filterYSum       += filter_y[xFilterIdx];
     }
-    
+
     if (n > 0)
         kernel0 = kernel_vec[0];
-    
-    sum_x = 1. / sum_x;
-    sum_y = 1. / sum_y;
-    
-    if (dx == 0 && dy == 0) {
-        for (ix = 0; ix < fwKernel; ix++) {
-            filter_x[ix+n*fwKernel] *= sum_x;
-            filter_y[ix+n*fwKernel] *= sum_y;
+
+    filterXSum = 1. / filterXSum;
+    filterYSum = 1. / filterYSum;
+
+    if (xParityCheck == 0 && yParityCheck == 0) {
+        for (xKernelIdx = 0; xKernelIdx < fwKernel; xKernelIdx++) {
+            filter_x[xKernelIdx+n*fwKernel] *= filterXSum;
+            filter_y[xKernelIdx+n*fwKernel] *= filterYSum;
         }
 
         for (kernelRow = 0; kernelRow < fwKernel; kernelRow++) {
@@ -290,26 +290,26 @@ double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren) {
  */
 double *kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int *ren) {
     double    *vector=NULL,*kernel0=NULL;
-    int i,j;
-    
+    int xIdx,yIdx;
+
     vector = (double *)malloc(fwKernel*fwKernel*sizeof(double));
-    
-    for (i = 0; i < fwKernel; i++) {
-        for (j = 0; j < fwKernel; j++) {
-            vector[i+fwKernel*j] = PCA[n][i+fwKernel*j];
+
+    for (xIdx = 0; xIdx < fwKernel; xIdx++) {
+        for (yIdx = 0; yIdx < fwKernel; yIdx++) {
+            vector[xIdx+fwKernel*yIdx] = PCA[n][xIdx+fwKernel*yIdx];
         }
     }
-    
+
     if (n > 0)
         kernel0 = kernel_vec[0];
-    
+
     if (n > 0) {
-        for (i = 0; i < fwKernel * fwKernel; i++) {
-            vector[i] -= kernel0[i];
+        for (xIdx = 0; xIdx < fwKernel * fwKernel; xIdx++) {
+            vector[xIdx] -= kernel0[xIdx];
         }
         *ren = 1;
     }
-    
+
     return vector;
 }
 
