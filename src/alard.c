@@ -36,15 +36,15 @@ code.
  * and model-evaluation call.
  */
 void getKernelVec() {
-    int ig, idegx, idegy, nvec;
+    int gaussIdx, idegx, idegy, nvec;
     int ren;
-    
+
     nvec = 0;
-    for (ig = 0; ig < ngauss; ig++) {
-        for (idegx = 0; idegx <= deg_fixe[ig]; idegx++) {
-            for (idegy = 0; idegy <= deg_fixe[ig]-idegx; idegy++) {
+    for (gaussIdx = 0; gaussIdx < ngauss; gaussIdx++) {
+        for (idegx = 0; idegx <= deg_fixe[gaussIdx]; idegx++) {
+            for (idegy = 0; idegy <= deg_fixe[gaussIdx]-idegx; idegy++) {
                 /* stores kernel weight mask for each order */
-                kernel_vec[nvec] = kernel_vector(nvec, idegx, idegy, ig, &ren);
+                kernel_vec[nvec] = kernel_vector(nvec, idegx, idegy, gaussIdx, &ren);
                 nvec++;
             }
         }
@@ -208,7 +208,7 @@ int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
  */
 double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren) {
     double    *vector=NULL,*kernel0=NULL;
-    int       i,j,k,dx,dy,ix;
+    int       kernelRow,kernelCol,k,dx,dy,ix,pixelIdx;
     double    sum_x,sum_y,x,qe;
     
     if (usePCA) {
@@ -246,23 +246,23 @@ double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren) {
             filter_x[ix+n*fwKernel] *= sum_x;
             filter_y[ix+n*fwKernel] *= sum_y;
         }
-        
-        for (i = 0; i < fwKernel; i++) {
-            for (j = 0; j < fwKernel; j++) {
-                vector[i+fwKernel*j] = filter_x[i+n*fwKernel] * filter_y[j+n*fwKernel];
+
+        for (kernelRow = 0; kernelRow < fwKernel; kernelRow++) {
+            for (kernelCol = 0; kernelCol < fwKernel; kernelCol++) {
+                vector[kernelRow+fwKernel*kernelCol] = filter_x[kernelRow+n*fwKernel] * filter_y[kernelCol+n*fwKernel];
             }
         }
-        
+
         if (n > 0) {
-            for (i = 0; i < fwKernel * fwKernel; i++) {
-                vector[i] -= kernel0[i];
+            for (pixelIdx = 0; pixelIdx < fwKernel * fwKernel; pixelIdx++) {
+                vector[pixelIdx] -= kernel0[pixelIdx];
             }
             *ren = 1;
         }
     } else {
-        for (i = 0; i < fwKernel; i++) {
-            for (j = 0; j < fwKernel; j++) {
-                vector[i+fwKernel*j] = filter_x[i+n*fwKernel] * filter_y[j+n*fwKernel];
+        for (kernelRow = 0; kernelRow < fwKernel; kernelRow++) {
+            for (kernelCol = 0; kernelCol < fwKernel; kernelCol++) {
+                vector[kernelRow+fwKernel*kernelCol] = filter_x[kernelRow+n*fwKernel] * filter_y[kernelCol+n*fwKernel];
             }
         }
     }
