@@ -413,33 +413,33 @@ void xy_conv_stamp(stamp_struct *stamp, float *image, int n, int ren) {
  *               convolution.
  */
 void xy_conv_stamp_PCA(stamp_struct *stamp, float *image, int n, int ren) {
-    
-    int       i,j,xc,yc,xij,xi,yi;
+
+    int       imgColIdx,imgRowIdx,kerOffsetX,kerOffsetY,xij,xi,yi,pixelIdx;
     double    *v0,*imc;
-    
+
     xi  = stamp->xss[stamp->sscnt];
     yi  = stamp->yss[stamp->sscnt];
     imc = stamp->vectors[n];
-    
+
     /* pull area to convolve out of full reference image region */
-    for(j = yi - hwKSStamp; j <= yi + hwKSStamp; j++) {
-        for(i = xi - hwKSStamp; i <= xi + hwKSStamp; i++) {
-            xij      = i - (xi - hwKSStamp) + fwKSStamp * (j - (yi - hwKSStamp));
+    for(imgRowIdx = yi - hwKSStamp; imgRowIdx <= yi + hwKSStamp; imgRowIdx++) {
+        for(imgColIdx = xi - hwKSStamp; imgColIdx <= xi + hwKSStamp; imgColIdx++) {
+            xij      = imgColIdx - (xi - hwKSStamp) + fwKSStamp * (imgRowIdx - (yi - hwKSStamp));
             imc[xij] = 0.;
-            
-            for(yc = -hwKernel; yc <= hwKernel; yc++) {
-                for(xc = -hwKernel; xc <= hwKernel; xc++) {
-                    imc[xij] += image[(i+xc)+rPixX*(j+yc)] * PCA[n][(xc+hwKernel) + fwKernel*(yc+hwKernel)];
+
+            for(kerOffsetY = -hwKernel; kerOffsetY <= hwKernel; kerOffsetY++) {
+                for(kerOffsetX = -hwKernel; kerOffsetX <= hwKernel; kerOffsetX++) {
+                    imc[xij] += image[(imgColIdx+kerOffsetX)+rPixX*(imgRowIdx+kerOffsetY)] * PCA[n][(kerOffsetX+hwKernel) + fwKernel*(kerOffsetY+hwKernel)];
                 }
             }
         }
     }
-    
+
     if (ren) {
         v0 = stamp->vectors[0];
-        for(i = 0; i < fwKSStamp * fwKSStamp; i++) imc[i] -= v0[i];
+        for(pixelIdx = 0; pixelIdx < fwKSStamp * fwKSStamp; pixelIdx++) imc[pixelIdx] -= v0[pixelIdx];
     }
-    
+
     return;
 }
 
@@ -604,52 +604,52 @@ void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise
  *               the result is stored in stamp->mat.
  */
 void build_matrix0(stamp_struct *stamp) {
-    
-    int       i,j,pixStamp,k,i1,ivecbg=0;
+
+    int       kernelBasisIdx1,kernelBasisIdx2,pixStamp,pixelIdx,kernelBasisIdx,bgVectorIdx=0;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
     double    p0,q;
     double    **vec;
-    
+
     ncomp1   = nCompKer;
     ncomp2   = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     ncomp    = ncomp1 * ncomp2;
     nbg_vec  = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
+
     pixStamp = fwKSStamp * fwKSStamp;
-    
+
     vec      = stamp->vectors;
-    
+
     /* loop over the convolved images created by xy_conv_stamp() */
     /* each level represents ngauss and deg_gauss */
-    for (i = 0; i < ncomp1; i++) {
-        for (j = 0; j <= i; j++) {
+    for (kernelBasisIdx1 = 0; kernelBasisIdx1 < ncomp1; kernelBasisIdx1++) {
+        for (kernelBasisIdx2 = 0; kernelBasisIdx2 <= kernelBasisIdx1; kernelBasisIdx2++) {
             q = 0.0;
             /* integrate W_m1 and W_m2 (sum over all pixels) */
-            for (k = 0; k < pixStamp; k++) 
-                q += vec[i][k] * vec[j][k];
-            
+            for (pixelIdx = 0; pixelIdx < pixStamp; pixelIdx++)
+                q += vec[kernelBasisIdx1][pixelIdx] * vec[kernelBasisIdx2][pixelIdx];
+
             /* Q from Eqn 3. in Alard */
-            stamp->mat[i+1][j+1] = q;
+            stamp->mat[kernelBasisIdx1+1][kernelBasisIdx2+1] = q;
         }
     }
-    
-    for (i1 = 0; i1 < ncomp1; i1++) {
-        /* ivecbg = index into the background vector array (the constant background term) */
-        ivecbg = ncomp1;
+
+    for (kernelBasisIdx = 0; kernelBasisIdx < ncomp1; kernelBasisIdx++) {
+        /* bgVectorIdx = index into the background vector array (the constant background term) */
+        bgVectorIdx = ncomp1;
 
         p0 = 0.0;
         /* integrate convolved images and first order background (equals 1 everywhere!)*/
-        for (k = 0; k < pixStamp; k++)
-            p0 += vec[i1][k] * vec[ivecbg][k];
-        stamp->mat[ncomp1+1][i1+1] = p0;
-    }  
-    
+        for (pixelIdx = 0; pixelIdx < pixStamp; pixelIdx++)
+            p0 += vec[kernelBasisIdx][pixelIdx] * vec[bgVectorIdx][pixelIdx];
+        stamp->mat[ncomp1+1][kernelBasisIdx+1] = p0;
+    }
+
     /* integrate first order background with itself */
     /* NOTE : DON'T MASK K HERE - BACKGROUND! */
-    for (k = 0, q = 0.0; k < pixStamp; k++)
-        q += vec[ivecbg][k] * vec[ncomp1][k];
+    for (pixelIdx = 0, q = 0.0; pixelIdx < pixStamp; pixelIdx++)
+        q += vec[bgVectorIdx][pixelIdx] * vec[ncomp1][pixelIdx];
     stamp->mat[ncomp1+1][ncomp1+1] = q;
-    
+
     return;
 }
 
@@ -668,45 +668,45 @@ void build_matrix0(stamp_struct *stamp) {
  * @param image  Full-frame reference image (fitting target).
  */
 void build_scprod0(stamp_struct *stamp, float *image) {
-    
-    int       xc,yc,xi,yi,i1,k;
+
+    int       stampColIdx,stampRowIdx,xi,yi,kernelBasisIdx,pixelIdx;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
     double    p0,q;
     double **vec;
-    
+
     ncomp1  = nCompKer;
     ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     ncomp   = ncomp1 * ncomp2;
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
+
     vec = stamp->vectors;
     xi  = stamp->xss[stamp->sscnt];
     yi  = stamp->yss[stamp->sscnt];
-    
+
     /* Do eqn 4. in Alard */
-    
+
     /* Multiply each order's convolved image with reference image */
-    for (i1 = 0; i1 < ncomp1; i1++) {
+    for (kernelBasisIdx = 0; kernelBasisIdx < ncomp1; kernelBasisIdx++) {
         p0 = 0.0;
-        for (xc = -hwKSStamp; xc <= hwKSStamp; xc++) {
-            for (yc = -hwKSStamp; yc <= hwKSStamp; yc++) {
-                k   = xc + hwKSStamp + fwKSStamp * (yc + hwKSStamp);
-                p0 += vec[i1][k] * image[xc+xi+rPixX*(yc+yi)];
+        for (stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp; stampColIdx++) {
+            for (stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp; stampRowIdx++) {
+                pixelIdx   = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
+                p0 += vec[kernelBasisIdx][pixelIdx] * image[stampColIdx+xi+rPixX*(stampRowIdx+yi)];
             }
         }
-        stamp->scprod[i1+1] = p0;
+        stamp->scprod[kernelBasisIdx+1] = p0;
     }
-    
+
     /* Multiply first order background model with reference image */
     q = 0.0;
-    for (xc = -hwKSStamp; xc <= hwKSStamp; xc++) {
-        for (yc = -hwKSStamp; yc <= hwKSStamp; yc++) {
-            k  = xc + hwKSStamp + fwKSStamp * (yc + hwKSStamp);
-            q += vec[ncomp1][k] * image[xc+xi+rPixX*(yc+yi)];	 
+    for (stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp; stampColIdx++) {
+        for (stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp; stampRowIdx++) {
+            pixelIdx  = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
+            q += vec[ncomp1][pixelIdx] * image[stampColIdx+xi+rPixX*(stampRowIdx+yi)];
         }
     }
     stamp->scprod[ncomp1+1] = q;
-    
+
     return;
 }
 
