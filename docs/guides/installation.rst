@@ -2,10 +2,10 @@
 Installation
 ============
 
-HOTPANTS can be installed via CMake (recommended) or legacy Makefiles.
+HOTPANTS is built with CMake.
 
-CMake (Recommended)
-===================
+CMake
+=====
 
 **Prerequisites:**
 
@@ -48,25 +48,6 @@ Configuration options:
 - ``-DUSE_FFTW=ON/OFF`` — Enable FFT acceleration (default: ON if FFTW3 found)
 - ``-DUSE_OPENMP=ON/OFF`` — Enable multi-threading (default: ON if found)
 - ``-DCMAKE_C_FLAGS="-O3 -march=native -funroll-loops"`` — Compiler optimization
-
-Legacy Makefiles
-================
-
-**Linux:**
-
-.. code-block:: bash
-
-   make hotpants
-   ./hotpants -h
-
-**macOS:**
-
-.. code-block:: bash
-
-   make -f Makefile.macosx hotpants
-   ./hotpants -h
-
-Edit ``CFITSIOINCDIR``, ``LIBDIR``, and ``BLAS_LIB`` in the Makefile to match your installation paths.
 
 Docker (Future)
 ===============
@@ -121,7 +102,7 @@ Install CFITSIO and ensure CMake can find it:
 
    pkg-config --cflags --libs cfitsio  # Should output paths
 
-If not found, edit ``CMakeLists.txt`` to specify explicit paths, or use legacy Makefiles.
+If not found, edit ``CMakeLists.txt`` to specify explicit paths.
 
 **"Doxygen not found" (when building docs)**
 

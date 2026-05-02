@@ -15,21 +15,22 @@ License: MIT (Andy Becker, 2013). See `LICENSE`.
 
 ```
 hotpants/
-├── main.c              # Pipeline orchestration: FITS I/O, region loop, output assembly
-├── alard.c             # Core algorithm: kernel fitting, spatial convolution, LU solver
-├── functions.c         # Stamps, PSF-centre finding, statistics, masking
-├── vargs.c             # CLI argument parsing (~50 options)
-├── defaults.h          # Compile-time parameter defaults
-├── globals.h           # Global variable declarations
-├── functions.h         # Function prototypes and CFITSIO includes
-├── extractkern.c       # Standalone utility: reconstruct and inspect kernel
-├── extractkernOnes.c   # Variant of extractkern
-├── maskim.c            # Standalone utility: apply mask to image
-├── Makefile            # Linux build
-├── Makefile.macosx     # macOS build
+├── src/
+│   ├── main.c          # Pipeline orchestration: FITS I/O, region loop, output assembly
+│   ├── alard.c         # Core algorithm: kernel fitting, spatial convolution, LU solver
+│   ├── functions.c     # Stamps, PSF-centre finding, statistics, masking
+│   ├── vargs.c         # CLI argument parsing (~50 options)
+│   ├── maskim.c        # Standalone utility: apply mask to image
+│   ├── defaults.h      # Compile-time parameter defaults
+│   ├── globals.h       # Global variable declarations
+│   └── functions.h     # Function prototypes and CFITSIO includes
+├── tests/              # pytest regression suite
+├── docs/               # Sphinx documentation
+├── CMakeLists.txt      # Build system
+├── Doxyfile            # Doxygen configuration
+├── pyproject.toml      # Python project (uv-managed)
 ├── README.md           # User-facing option reference
-├── NOTES               # Version history and profiling data
-└── PROF                # gprof output from representative runs
+└── NOTES               # Version history
 ```
 
 ### Key functions
@@ -39,7 +40,7 @@ hotpants/
 | `main()` | `main.c` | Orchestrates the full pipeline |
 | `fitKernel()` | `alard.c` | Least-squares kernel fit per region |
 | `build_matrix()` / `build_scprod()` | `alard.c` | Accumulate normal equations |
-| `ludcmp()` / `lubksb()` | `alard.c` | LU decomposition and back-substitution (Numerical Recipes) |
+| `fitKernel()` solver | `alard.c` | LAPACK Cholesky (`dpotrf`/`dpotrs`) solve of normal equations |
 | `spatial_convolve()` | `alard.c` | Apply spatially-varying kernel to full region — **primary bottleneck** |
 | `make_kernel()` | `alard.c` | Evaluate kernel at image position from polynomial coefficients |
 | `xy_conv_stamp()` | `alard.c` | Separable 2D convolution of a stamp with a Gaussian basis element |
@@ -88,8 +89,6 @@ polynomials in image position.
 
 ## Building
 
-**CMake (recommended):**
-
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
@@ -100,18 +99,6 @@ CMake auto-detects CFITSIO, OpenBLAS, FFTW3, and OpenMP. Optional flags:
 
 - `-DUSE_FFTW=ON/OFF` — enable FFT-accelerated convolution (default: ON if FFTW3 found).
 - `-DUSE_OPENMP=ON/OFF` — enable multi-threaded parallelism (default: ON if found).
-
-**Legacy Makefiles (backward compatibility):**
-
-```sh
-# Linux
-make hotpants
-
-# macOS
-make -f Makefile.macosx hotpants
-```
-
-Edit `CFITSIOINCDIR`, `LIBDIR`, and `BLAS_LIB` in the Makefile to match your installation.
 
 **External dependencies:**
 
@@ -130,7 +117,7 @@ Use `-march=native` for SIMD optimisations on the build host; omit for portable 
 
 **Baseline (single-threaded, direct convolution):**
 
-From `PROF` and `NOTES` (gprof on representative runs):
+From `NOTES` (gprof on representative runs):
 
 | Function | Approx. CPU share |
 |---|---|
@@ -265,8 +252,7 @@ as well, but requires careful handling of integer/binary mask semantics.
 
 ### Build system
 
-- ✓ **CMake** build system now available; cleanly detects CFITSIO, OpenBLAS,
-  FFTW3, and OpenMP. See `CMakeLists.txt`.
-- Legacy `Makefile` and `Makefile.macosx` retained for backward compatibility.
+- ✓ **CMake** build system; cleanly detects CFITSIO, OpenBLAS, FFTW3, and
+  OpenMP. See `CMakeLists.txt`.
 - Compiler flags: `-O3 -march=native -funroll-loops -std=c99` (enable SIMD
   optimisations with `-march=native` for portable binaries on target systems).

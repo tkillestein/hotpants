@@ -27,15 +27,16 @@ find_package(OpenMP)
 # ---------------------------------------------------------------------------
 
 add_executable(hotpants
-    main.c
-    alard.c
-    functions.c
-    vargs.c
+    src/main.c
+    src/alard.c
+    src/functions.c
+    src/vargs.c
 )
 
 target_include_directories(hotpants PRIVATE
     ${CFITSIO_INCLUDE_DIRS}
     ${LAPACKE_INCLUDE_DIR}
+    src
 )
 
 target_link_libraries(hotpants PRIVATE
@@ -50,25 +51,16 @@ if(OpenMP_C_FOUND)
 endif()
 
 # ---------------------------------------------------------------------------
-# extractkern (standalone kernel inspection utility)
-# ---------------------------------------------------------------------------
-
-add_executable(extractkern extractkern.c)
-
-target_include_directories(extractkern PRIVATE ${CFITSIO_INCLUDE_DIRS})
-target_link_libraries(extractkern PRIVATE ${CFITSIO_LIBRARIES} m)
-
-# ---------------------------------------------------------------------------
 # maskim (standalone mask application utility)
 # ---------------------------------------------------------------------------
 
-add_executable(maskim maskim.c)
+add_executable(maskim src/maskim.c)
 
-target_include_directories(maskim PRIVATE ${CFITSIO_INCLUDE_DIRS})
+target_include_directories(maskim PRIVATE ${CFITSIO_INCLUDE_DIRS} src)
 target_link_libraries(maskim PRIVATE ${CFITSIO_LIBRARIES} m)
 
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 
-install(TARGETS hotpants extractkern maskim DESTINATION bin)
+install(TARGETS hotpants maskim DESTINATION bin)
