@@ -165,61 +165,61 @@ void savexy(stamp_struct *stamps, int nStamps, long xmin, long ymin, int regionc
  * @return 0 on success, 1 if any allocation fails.
  */
 int allocateStamps(stamp_struct *stamps, int nStamps) {
-    int i,j;
+    int stampIdx, vectorIdx;
     int nbgVectors;
     
     nbgVectors = ((bgOrder + 1) * (bgOrder + 2)) / 2;
     
     if (stamps) {
-        for (i = 0; i < nStamps; i++) {
-            
+        for (stampIdx = 0; stampIdx < nStamps; stampIdx++) {
+
             /* **************************** */
-            if(!(stamps[i].vectors = (double **)calloc((nCompKer+nbgVectors), sizeof(double *))))
+            if(!(stamps[stampIdx].vectors = (double **)calloc((nCompKer+nbgVectors), sizeof(double *))))
                 return 1;
-            
-            for (j = 0; j < nCompKer + nbgVectors; j++) {
-                if(!(stamps[i].vectors[j] = (double *)calloc(fwKSStamp*fwKSStamp, sizeof(double))))
+
+            for (vectorIdx = 0; vectorIdx < nCompKer + nbgVectors; vectorIdx++) {
+                if(!(stamps[stampIdx].vectors[vectorIdx] = (double *)calloc(fwKSStamp*fwKSStamp, sizeof(double))))
                     return 1;
             }
-            
+
             /* **************************** */
-            
-            if (!(stamps[i].krefArea      = (double *)calloc(fwKSStamp*fwKSStamp, sizeof(double))))
+
+            if (!(stamps[stampIdx].krefArea      = (double *)calloc(fwKSStamp*fwKSStamp, sizeof(double))))
                 return 1;
-            
+
             /* **************************** */
-            
-            if (!(stamps[i].mat    = (double **)calloc(nC, sizeof(double *))))
+
+            if (!(stamps[stampIdx].mat    = (double **)calloc(nC, sizeof(double *))))
                 return 1;
-            
-            for (j = 0; j < nC; j++)
-                if ( !(stamps[i].mat[j] = (double *)calloc(nC, sizeof(double))) )
+
+            for (vectorIdx = 0; vectorIdx < nC; vectorIdx++)
+                if ( !(stamps[stampIdx].mat[vectorIdx] = (double *)calloc(nC, sizeof(double))) )
                     return 1;
             
             /* **************************** */
-            
-            if (!(stamps[i].xss = (int *)calloc(nKSStamps, sizeof(int))))
+
+            if (!(stamps[stampIdx].xss = (int *)calloc(nKSStamps, sizeof(int))))
                 return 1;
-            
+
             /* **************************** */
-            
-            if (!(stamps[i].yss = (int *)calloc(nKSStamps, sizeof(int))))
+
+            if (!(stamps[stampIdx].yss = (int *)calloc(nKSStamps, sizeof(int))))
                 return 1;
-            
+
             /* **************************** */
-            
-            if (!(stamps[i].scprod = (double *)calloc(nC, sizeof(double))))
+
+            if (!(stamps[stampIdx].scprod = (double *)calloc(nC, sizeof(double))))
                 return 1;
-            
+
             /* **************************** */
-            
-            stamps[i].x0 = stamps[i].y0 = stamps[i].x = stamps[i].y = 0;
-            stamps[i].nss = stamps[i].sscnt = 0;
-            stamps[i].nx = stamps[i].ny = 0;
-            stamps[i].sum = stamps[i].mean = stamps[i].median = 0;
-            stamps[i].mode = stamps[i].sd = stamps[i].fwhm = 0;
-            stamps[i].lfwhm = stamps[i].chi2 = 0;
-            stamps[i].norm = stamps[i].diff = 0;
+
+            stamps[stampIdx].x0 = stamps[stampIdx].y0 = stamps[stampIdx].x = stamps[stampIdx].y = 0;
+            stamps[stampIdx].nss = stamps[stampIdx].sscnt = 0;
+            stamps[stampIdx].nx = stamps[stampIdx].ny = 0;
+            stamps[stampIdx].sum = stamps[stampIdx].mean = stamps[stampIdx].median = 0;
+            stamps[stampIdx].mode = stamps[stampIdx].sd = stamps[stampIdx].fwhm = 0;
+            stamps[stampIdx].lfwhm = stamps[stampIdx].chi2 = 0;
+            stamps[stampIdx].norm = stamps[stampIdx].diff = 0;
         }
     }
     return 0;
@@ -458,20 +458,20 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
 void cutStamp(float *data, float *refArea, int dxLen, int xMin, int yMin,
               int xMax, int yMax, stamp_struct *stamp) {
     
-    int i, j;
+    int srcCol, srcRow;
     int x, y;
     int sxLen;
-    
+
     sxLen = xMax - xMin + 1;
-    /* NOTE, use j <= yMax here, not j < yMax, include yMax point */
-    for (j = yMin; j <= yMax; j++) {
-        y = j - yMin;
-        
-        for (i = xMin; i <= xMax; i++) {
-            x = i - xMin;
-            
-            refArea[x+y*sxLen] = data[i+j*dxLen];
-            /*fprintf(stderr, "%d %d %d %d %f\n", x, y, i, j, data[i+j*dxLen]); */
+    /* NOTE, use srcRow <= yMax here, not srcRow < yMax, include yMax point */
+    for (srcRow = yMin; srcRow <= yMax; srcRow++) {
+        y = srcRow - yMin;
+
+        for (srcCol = xMin; srcCol <= xMax; srcCol++) {
+            x = srcCol - xMin;
+
+            refArea[x+y*sxLen] = data[srcCol+srcRow*dxLen];
+            /*fprintf(stderr, "%d %d %d %d %f\n", x, y, srcCol, srcRow, data[srcCol+srcRow*dxLen]); */
         }
     }
     stamp->x0 = xMin;
@@ -500,8 +500,8 @@ void cutStamp(float *data, float *refArea, int dxLen, int xMin, int yMin,
  * @return 0 on success, 1 if the stamp is out of valid substamps.
  */
 int cutSStamp(stamp_struct *stamp, float *iData) {
-    
-    int i, j, k, nss, sscnt;
+
+    int substampCol, substampRow, k, nss, sscnt;
     int x, y, dy, xStamp, yStamp;
     float dpt;
     double sum = 0.;
@@ -531,16 +531,16 @@ int cutSStamp(stamp_struct *stamp, float *iData) {
     if (verbose >= 1)
         fprintf(stderr, "    xss : %4i yss : %4i\n", stamp->xss[sscnt], stamp->yss[sscnt]);
     
-    for (j = yStamp - hwKSStamp; j <= yStamp + hwKSStamp; j++) {
-        y  = j - (yStamp - hwKSStamp);
-        dy = j + stamp->y0;
-        
-        for (i = xStamp - hwKSStamp; i <= xStamp + hwKSStamp; i++) {
-            x = i - (xStamp - hwKSStamp);
-            
-            k   = i+stamp->x0 + rPixX*dy;
+    for (substampRow = yStamp - hwKSStamp; substampRow <= yStamp + hwKSStamp; substampRow++) {
+        y  = substampRow - (yStamp - hwKSStamp);
+        dy = substampRow + stamp->y0;
+
+        for (substampCol = xStamp - hwKSStamp; substampCol <= xStamp + hwKSStamp; substampCol++) {
+            x = substampCol - (xStamp - hwKSStamp);
+
+            k   = substampCol+stamp->x0 + rPixX*dy;
             dpt = iData[k];
-            
+
             stamp->krefArea[x+y*fwKSStamp] = dpt;
             sum += (mRData[k] & FLAG_INPUT_ISBAD) ? 0 : fabs(dpt);
         }
@@ -586,8 +586,8 @@ double checkPsfCenter(float *iData, int imax, int jmax, int xLen, int yLen,
                       int xbuffer, int ybuffer, int bbit, int bbit1) {
 
     /* note the imax and jmax are in the stamp coordinate system */
-    
-    int brk, l, k;
+
+    int brk, checkRowIdx, checkColIdx;
     int xr2, yr2, nr2;
     double dmax2, dpt2;
     
@@ -600,40 +600,40 @@ double checkPsfCenter(float *iData, int imax, int jmax, int xLen, int yLen,
        sum of all the pixels in the other boxes.  rank on
        this!  well, sum of high sigma pixels anyways...*/
     dmax2 = 0.;
-    
-    for (l = jmax-hwKSStamp; l <= jmax+hwKSStamp; l++) {
-        if ((l < ybuffer) || (l >= yLen-ybuffer)) 
-            continue; /* continue l loop */
-        
-        yr2 = l + sy0;
-        
-        for (k = imax-hwKSStamp; k <= imax+hwKSStamp; k++) {
-            if ((k < xbuffer) || (k >= xLen-xbuffer)) 
-                continue; /* continue k loop */
-            
-            xr2 = k + sx0;
+
+    for (checkRowIdx = jmax-hwKSStamp; checkRowIdx <= jmax+hwKSStamp; checkRowIdx++) {
+        if ((checkRowIdx < ybuffer) || (checkRowIdx >= yLen-ybuffer))
+            continue; /* continue checkRowIdx loop */
+
+        yr2 = checkRowIdx + sy0;
+
+        for (checkColIdx = imax-hwKSStamp; checkColIdx <= imax+hwKSStamp; checkColIdx++) {
+            if ((checkColIdx < xbuffer) || (checkColIdx >= xLen-xbuffer))
+                continue; /* continue checkColIdx loop */
+
+            xr2 = checkColIdx + sx0;
             nr2 = xr2+rPixX*yr2;
-            
+
             if (mRData[nr2] & bbit) {
                 brk = 1;
                 dmax2 = 0;
-                break; /* exit k loop */
+                break; /* exit checkColIdx loop */
             }
-            
+
             dpt2   = iData[nr2];
-            
+
             if (dpt2 >= hiThresh) {
                 mRData[nr2] |= bbit1;
                 brk = 1;
                 dmax2 = 0;
-                break; /* exit k loop */
+                break; /* exit checkColIdx loop */
             }
-            
+
             if (( (dpt2 - sky) * invdsky) > kerFitThresh)
                 dmax2 += dpt2;
         }
         if (brk == 1)
-            break; /* exit l loop */
+            break; /* exit checkRowIdx loop */
     }
     
     return dmax2;
@@ -667,8 +667,8 @@ double checkPsfCenter(float *iData, int imax, int jmax, int xLen, int yLen,
  * @return 0 on success, 1 if no valid substamp could be found.
  */
 int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double hiThresh, int bbit1, int bbit2) {
-    
-    int i, j, k, l, nr, nr2, imax, jmax, xr, yr, xr2, yr2, sy0, sx0, xbuffer, ybuffer;
+
+    int stampRegionCol, stampRegionRow, centroidCol, centroidRow, nr, nr2, imax, jmax, xr, yr, xr2, yr2, sy0, sx0, xbuffer, ybuffer, i, j;
     double dmax, dmax2, dpt, dpt2, loPsf, floor;
     int *xloc, *yloc, *qs, pcnt, brk, bbit, fcnt;
     double *peaks;
@@ -719,11 +719,11 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
         loPsf = (loPsf > floor) ? loPsf : floor;   /* last ditch attempt to get some usable pixels */
         
         /* (0). ignore near the edges */
-        for (j = ybuffer; j < yLen-ybuffer; j++) {
-            yr  = j + sy0;
-            
-            for (i = xbuffer; i < xLen-xbuffer; i++) {
-                xr = i + sx0;
+        for (stampRegionRow = ybuffer; stampRegionRow < yLen-ybuffer; stampRegionRow++) {
+            yr  = stampRegionRow + sy0;
+
+            for (stampRegionCol = xbuffer; stampRegionCol < xLen-xbuffer; stampRegionCol++) {
+                xr = stampRegionCol + sx0;
                 nr = xr+rPixX*yr;
                 
                 /* (1). pixel already included in another stamp, or exceeds hiThresh */
@@ -744,24 +744,24 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
                 
                 /* finally, a good candidate! */
                 if (dpt > loPsf) {
-                    
+
                     dmax  = dpt;
-                    imax  = i;
-                    jmax  = j;
+                    imax  = stampRegionCol;
+                    jmax  = stampRegionRow;
                     
                     /* center this candidate on the peak flux */
-                    for (l = j-hwKSStamp; l <= j+hwKSStamp; l++) {
-                        yr2 = l + sy0;
-                        
-                        if ((l < ybuffer) || (l >= yLen-ybuffer))
-                            continue; /* continue l loop */
-                        
-                        for (k = i-hwKSStamp; k <= i+hwKSStamp; k++) {
-                            xr2 = k + sx0;
+                    for (centroidRow = stampRegionRow-hwKSStamp; centroidRow <= stampRegionRow+hwKSStamp; centroidRow++) {
+                        yr2 = centroidRow + sy0;
+
+                        if ((centroidRow < ybuffer) || (centroidRow >= yLen-ybuffer))
+                            continue; /* continue centroidRow loop */
+
+                        for (centroidCol = stampRegionCol-hwKSStamp; centroidCol <= stampRegionCol+hwKSStamp; centroidCol++) {
+                            xr2 = centroidCol + sx0;
                             nr2 = xr2+rPixX*yr2;
-                            
-                            if ((k < xbuffer) || (k >= xLen-xbuffer))
-                                continue; /* continue k loop */
+
+                            if ((centroidCol < xbuffer) || (centroidCol >= xLen-xbuffer))
+                                continue; /* continue centroidCol loop */
                             
                             /* (3). no fill/sat values within checked region, and not overlapping other stamp */
                             if (mRData[nr2] & bbit)
@@ -779,11 +779,11 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
                             if (( (dpt2 - sky) * invdsky) < kerFitThresh)
                                 continue;
                             
-                            /* record position and amp of good point centroid in i,j,dmax */
+                            /* record position and amp of good point centroid in stampRegionCol,stampRegionRow,dmax */
                             if (dpt2 > dmax) {
                                 dmax = dpt2;
-                                imax = k;
-                                jmax = l;
+                                imax = centroidCol;
+                                jmax = centroidRow;
                             }
                         }
                     }
@@ -800,7 +800,7 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
                                            hiThresh, sky, invdsky, xbuffer, ybuffer, bbit, bbit1);
                     
                     if (dmax2 == 0.)
-                        continue; /* continue i loop */
+                        continue; /* continue stampRegionCol loop */
                     
                     /* made it! - a valid peak */
                     xloc[pcnt]    = imax;
@@ -808,14 +808,14 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
                     peaks[pcnt++] = dmax2;
                     
                     /* globally mask out the region around this guy */
-                    for (l = jmax-hwKSStamp; l <= jmax+hwKSStamp; l++) {
-                        yr2 = l + sy0;
-                        
-                        for (k = imax-hwKSStamp; k <= imax+hwKSStamp; k++) {
-                            xr2 = k + sx0;
+                    for (centroidRow = jmax-hwKSStamp; centroidRow <= jmax+hwKSStamp; centroidRow++) {
+                        yr2 = centroidRow + sy0;
+
+                        for (centroidCol = imax-hwKSStamp; centroidCol <= imax+hwKSStamp; centroidCol++) {
+                            xr2 = centroidCol + sx0;
                             nr2 = xr2+rPixX*yr2;
-                            
-                            if ((k > 0) && (k < xLen) && (l > 0) && (l < yLen))
+
+                            if ((centroidCol > 0) && (centroidCol < xLen) && (centroidRow > 0) && (centroidRow < yLen))
                                 mRData[nr2] |= bbit2;
                         }
                     }
@@ -899,39 +899,39 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
  * @param smask    Pixels without this bit set in mRData are excluded (0 disables).
  */
 void getNoiseStats3(float *data, float *noise, double *nnorm, int *nncount, int umask, int smask) {
-    
-    double nsum=0;
-    int i, n=0, mdat;
-    float ddat=0, ndat=0;
-    
-    
-    for (i = rPixX*rPixY; i--; ) {
-        ddat = data[i];
-        mdat = mRData[i];
-        
+
+    double noiseWeightedSum=0;
+    int pixelIdx, validPixelCount=0, maskData;
+    float dataValue=0, noiseInv=0;
+
+
+    for (pixelIdx = rPixX*rPixY; pixelIdx--; ) {
+        dataValue = data[pixelIdx];
+        maskData = mRData[pixelIdx];
+
         /*
-          fprintf(stderr, "CAW %d %f %f %f %d %d %d %d\n", n, nsum, ddat, ndat, mdat,
-	      ((umask > 0) && (!(mdat & umask))),
-	      ((smask > 0) &&   (mdat & smask)),
-	      (ddat == fillVal) || (fabs(ddat) <= ZEROVAL));
+          fprintf(stderr, "CAW %d %f %f %f %d %d %d %d\n", validPixelCount, noiseWeightedSum, dataValue, noiseInv, maskData,
+          ((umask > 0) && (!(maskData & umask))),
+          ((smask > 0) &&   (maskData & smask)),
+          (dataValue == fillVal) || (fabs(dataValue) <= ZEROVAL));
         */
-        
-        if (((umask > 0) && (!(mdat & umask))) ||
-            ((smask > 0) &&   (mdat & smask))  ||
-            (fabs(ddat) <= ZEROVAL))
+
+        if (((umask > 0) && (!(maskData & umask))) ||
+            ((smask > 0) &&   (maskData & smask))  ||
+            (fabs(dataValue) <= ZEROVAL))
             continue;
-        
-        ndat  = 1. / noise[i];
-        
-        n    += 1;
-        nsum += ddat*ddat * ndat*ndat;
+
+        noiseInv  = 1. / noise[pixelIdx];
+
+        validPixelCount    += 1;
+        noiseWeightedSum += dataValue*dataValue * noiseInv*noiseInv;
     }
-    if (n > 1) {
-        *nncount = n;
-        *nnorm   = nsum / (float)n;
+    if (validPixelCount > 1) {
+        *nncount = validPixelCount;
+        *nnorm   = noiseWeightedSum / (float)validPixelCount;
     }
     else {
-        *nncount = n;
+        *nncount = validPixelCount;
         *nnorm   = MAXVAL;
     }
     return;
@@ -942,39 +942,66 @@ void getNoiseStats3(float *data, float *noise, double *nnorm, int *nncount, int 
  *        FWHM) for a sub-region of an image using iterative sigma-clipping and
  *        histogram analysis.
  *
- * @details The function operates in two passes:
- *  1. Draws up to 100 random samples from the nPixX×nPixY region (respecting
- *     the umask/smask quality flags) to estimate a histogram bin size based on
- *     the interquartile range; runs sigma_clip() on the full region for the
- *     initial mean and standard deviation.
- *  2. Constructs a 256-bin histogram of the sigma-clipped pixel values and
- *     derives the mode (using the narrowest bin range containing ~10 % of
- *     points), the median (50th percentile), the sky noise FWHM (bin width
- *     times the IQR converted to Gaussian sigma via the factor 1/1.35), and a
- *     lower-quartile FWHM estimate.
- *  If the histogram bins are poorly chosen (lower/upper percentile bins outside
- *  [1, 255] or the spread is too narrow) the bins are adjusted and the
- *  histogram is repeated, up to 5 times.
+ * @details Algorithm (multi-step histogram refinement):
  *
- * @param data    Pixel array of size nPixX × nPixY (row-major).
- * @param x0Reg   X origin of this region within the full-frame mRData mask.
- * @param y0Reg   Y origin of this region within the full-frame mRData mask.
- * @param nPixX   Width of the region in pixels.
- * @param nPixY   Height of the region in pixels.
- * @param sum     Output: sum of absolute pixel values in the good pixel set.
- * @param mean    Output: sigma-clipped mean.
- * @param median  Output: histogram-interpolated median.
- * @param mode    Output: mode (peak of pixel histogram).
- * @param sd      Output: sigma-clipped standard deviation.
- * @param fwhm    Output: noise FWHM estimated from the histogram IQR (in pixel
- *                value units, not angular FWHM).
- * @param lfwhm   Output: lower-quartile FWHM estimate.
- * @param umask   Pixels with this bit set in mRData are excluded.
- * @param smask   Pixels without this bit set in mRData are excluded.
- * @param maxiter Maximum number of sigma-clipping iterations.
- * @return 0 on success; non-zero error codes for insufficient data (4), memory
- *         allocation failure (1), no valid pixels (2), degenerate bins (3), or
- *         sigma-clipping failure (5).
+ *   1. **Sampling & bin-width estimation:** Draw HISTOGRAM_SAMPLE_SIZE (100)
+ *      random pixels; compute percentiles at HISTOGRAM_LOWER_FRAC (50%) and
+ *      HISTOGRAM_UPPER_FRAC (90%) to estimate the dynamic range and bin width.
+ *
+ *   2. **Sigma-clipping setup:** Call sigma_clip() on all valid pixels to
+ *      obtain mean and standard deviation, excluding outliers beyond maxiter
+ *      iterations of the clipping loop.
+ *
+ *   3. **Histogram construction & refinement loop:** Build a 256-bin histogram
+ *      and test if bin boundaries fit the data:
+ *      - If bins too wide (lower < 1, upper > 255): double bin width, retry.
+ *      - If bins too narrow (peak span < 40 bins): halve bin width, retry.
+ *      - If bins acceptable: exit loop.
+ *      Maximum MAX_SIGMA_CLIP_RETRIES (5) attempts to prevent divergence.
+ *
+ *   4. **Mode finding:** Locate the histogram peak as the narrowest region
+ *      containing ~HISTOGRAM_PEAK_WIDTH_PCT (10%) of pixels; interpolate
+ *      bin boundaries using weighted centroid. Store peak location in *mode.
+ *
+ *   5. **FWHM estimation:** Find 25th and 75th percentiles (i.e., 50% of
+ *      pixels around the mode) via cumulative histogram; estimate FWHM as
+ *      the difference between these percentiles (a robust surrogate for
+ *      the Gaussian sigma of the noise distribution).
+ *
+ *   Mask filtering uses two bitmask parameters:
+ *   - umask (exclude bits): pixels with (mRData[i] & umask) != 0 are skipped.
+ *   - smask (select bits): pixels without (mRData[i] & smask) set are skipped.
+ *   Good pixels: umask=0x0, smask=0xffff. Semi-bad: umask=0xff, smask=0x8000.
+ *
+ *   Reference: Alard & Lupton (1998), Appendix; histogram-based estimators
+ *   are robust to outliers and provide unbiased FWHM estimates for PSF-convolved
+ *   noise (which is non-Gaussian due to correlation).
+ *
+ * @param data    Flat pixel array of the stamp region (size nPixX × nPixY).
+ * @param x0Reg   X-coordinate offset of the stamp within the full region (for mask lookup).
+ * @param y0Reg   Y-coordinate offset of the stamp within the full region.
+ * @param nPixX   Width of the stamp in pixels.
+ * @param nPixY   Height of the stamp in pixels.
+ * @param sum     Output: sum of all valid pixel values.
+ * @param mean    Output: mean of sigma-clipped pixels.
+ * @param median  Output: median (50th percentile) from histogram.
+ * @param mode    Output: mode (peak bin) from histogram, interpolated via
+ *                weighted centroid of bins near the peak.
+ * @param sd      Output: standard deviation (sigma) of sigma-clipped pixels.
+ * @param fwhm    Output: full-width half-maximum FWHM estimate (in pixel
+ *                value units, not angular FWHM); derived from 75th–25th
+ *                percentile range, robust to outliers.
+ * @param lfwhm   Output: lower-quartile FWHM estimate (25th percentile).
+ * @param umask   Bits to exclude: pixels with (mRData[pixel] & umask) != 0 are skipped.
+ * @param smask   Bits to select: pixels without (mRData[pixel] & smask) set are skipped.
+ * @param maxiter Maximum number of sigma-clipping iterations in step 2.
+ *
+ * @return 0 on success; error codes:
+ *   - 1: memory allocation failure or max retries exceeded
+ *   - 2: insufficient valid pixels (< HISTOGRAM_SAMPLE_SIZE) after masking
+ *   - 3: degenerate bin width (zero variance in data)
+ *   - 4: too few input pixels (nPixX*nPixY < HISTOGRAM_SAMPLE_SIZE)
+ *   - 5: sigma_clip() failed to converge
  */
 int getStampStats3(float *data,
                    int x0Reg, int y0Reg, int nPixX, int nPixY,
@@ -993,255 +1020,269 @@ int getStampStats3(float *data,
     
     extern int flcomp();
     
-    double   bin1,binsize,maxdens,moden;
-    double   sumx,sumxx,isd;
-    double   lower,upper,mode_bin, rdat;
-    int      mdat,npts;
-    int      bins[256],i,j,xr,yr;
-    int      index,imax=0,tries,ilower,iupper, repeat;
-    double   ssum;
-    int      goodcnt;
-    int      idum;
+    double   binLowerBound,binWidth,maxDensity,modeNormalized;
+    double   binSum,weightedBinSum,inverseStdev;
+    double   lowerPercentile,upperPercentile,modeBin, pixelValue;
+    int      maskData,totalPixelCount;
+    int      histogram[256],pixelIdx,rowIdx,randomX,randomY;
+    int      binIndex,maxDensityBinIdx=0,refinementAttempts,lowerBinIdx,upperBinIdx, continueRefinement;
+    double   absolutePixelSum;
+    int      validPixelCount;
+    int      randomSeed;
     float    *sdat;
     double   *work;
     
-    int      nstat=100;
-    float    ufstat=0.9;
-    float    mfstat=0.5;
+    int      nstat     = HISTOGRAM_SAMPLE_SIZE;
+    float    ufstat    = HISTOGRAM_UPPER_FRAC;
+    float    mfstat    = HISTOGRAM_LOWER_FRAC;
     
     
-    npts = nPixX * nPixY;
-    if (npts < nstat)
+    totalPixelCount = nPixX * nPixY;
+    if (totalPixelCount < nstat)
         return 4;
-    
+
     /* fprintf(stderr, "DOINK!  %d %d %f\n", x0Reg, y0Reg, data[0]); */
-    if ( !(sdat = (float *)calloc(npts, sizeof(float))) ||
+    if ( !(sdat = (float *)calloc(totalPixelCount, sizeof(float))) ||
          !(work = (double *)calloc(nstat, sizeof(double)))) {
         return (1);
     }
     
-    idum   = -666;  /* initialize random number generator with the devil's seed */
-    tries  = 0;     /* attempts at the histogram */
-    
-    goodcnt = 0;
-    /* pull 100 random enough values from array to estimate required bin sizes */
+    randomSeed   = RNG_SEED_MAGIC;  /* Numerical Recipes convention; triggers re-seeding */
+    refinementAttempts  = 0;     /* attempts at the histogram */
+
+    /* ====================================================================
+       SAMPLING PHASE: Estimate bin width from percentile range
+       ===================================================================== */
+    validPixelCount = 0;
+    /* pull HISTOGRAM_SAMPLE_SIZE random enough values to estimate required bin sizes */
     /* only do as many calls as there are points in the section! */
     /* NOTE : ignore anything with fillVal or zero */
-    for (i = 0; (i < nstat) && (goodcnt < npts); i++, goodcnt++) {
-        xr = (int)floor(ran1(&idum)*nPixX);
-        yr = (int)floor(ran1(&idum)*nPixY);
-        
+    for (pixelIdx = 0; (pixelIdx < nstat) && (validPixelCount < totalPixelCount); pixelIdx++, validPixelCount++) {
+        randomX = (int)floor(ran1(&randomSeed)*nPixX);
+        randomY = (int)floor(ran1(&randomSeed)*nPixY);
+
         /* here data is size rPixX, rPixY */
-        rdat = data[xr+yr*nPixX];
+        pixelValue = data[randomX+randomY*nPixX];
         /* region is rPixX, rPixY */
-        mdat = mRData[(xr+x0Reg)+(yr+y0Reg)*rPixX];
-        
-        if (((umask > 0) && (!(mdat & umask))) ||
-            ((smask > 0) &&   (mdat & smask))  ||
-            (fabs(rdat) <= ZEROVAL))
-            i--;
+        maskData = mRData[(randomX+x0Reg)+(randomY+y0Reg)*rPixX];
+
+        if (((umask > 0) && (!(maskData & umask))) ||
+            ((smask > 0) &&   (maskData & smask))  ||
+            (fabs(pixelValue) <= ZEROVAL))
+            pixelIdx--;
         else
-            work[i] = rdat;
+            work[pixelIdx] = pixelValue;
     }
-    qsort(work, i, sizeof(double), flcomp);
-    npts = i;
-    
-    binsize = (work[(int)(ufstat*npts)] - work[(int)(mfstat*npts)]) / (float)nstat; /* good estimate */
-    bin1    = work[(int)(mfstat*npts)] - 128. * binsize;    /* we use 256 bins */
+    qsort(work, pixelIdx, sizeof(double), flcomp);
+    totalPixelCount = pixelIdx;
+
+    binWidth = (work[(int)(ufstat*totalPixelCount)] - work[(int)(mfstat*totalPixelCount)]) / (float)nstat; /* good estimate */
+    binLowerBound    = work[(int)(mfstat*totalPixelCount)] - 128. * binWidth;    /* we use 256 bins */
     
     /*** DO ONLY ONCE! ***/
-    goodcnt = 0;
-    for (j = 0; j < nPixY; j++) {
-        for (i = 0; i < nPixX; i++) {
-            rdat = data[i+j*nPixX];
-            mdat = mRData[(i+x0Reg)+(j+y0Reg)*rPixX];
-            
-            /* fprintf(stderr, "BIGT %d %d %f : %d %d %d\n", i, j, rdat, i+x0Reg, j+y0Reg, mdat); */
+    validPixelCount = 0;
+    for (rowIdx = 0; rowIdx < nPixY; rowIdx++) {
+        for (pixelIdx = 0; pixelIdx < nPixX; pixelIdx++) {
+            pixelValue = data[pixelIdx+rowIdx*nPixX];
+            maskData = mRData[(pixelIdx+x0Reg)+(rowIdx+y0Reg)*rPixX];
+
+            /* fprintf(stderr, "BIGT %d %d %f : %d %d %d\n", pixelIdx, rowIdx, pixelValue, pixelIdx+x0Reg, rowIdx+y0Reg, maskData); */
             /* looks like it works.  that is, the image pixel values
-               i+x0Reg, j+y0Reg are the same as printed pixel values
-               i,j,rdat.  mask should work similarly */
-            
-            if (((umask > 0) && (!(mdat & umask))) ||
-                ((smask > 0) &&   (mdat & smask))  ||
-                (fabs(rdat) <= ZEROVAL))
+               pixelIdx+x0Reg, rowIdx+y0Reg are the same as printed pixel values
+               pixelIdx,rowIdx,pixelValue.  mask should work similarly */
+
+            if (((umask > 0) && (!(maskData & umask))) ||
+                ((smask > 0) &&   (maskData & smask))  ||
+                (fabs(pixelValue) <= ZEROVAL))
                 continue;
-            
-            if (rdat*0.0 != 0.0) {
-                mRData[(i+x0Reg)+(j+y0Reg)*rPixX] |= (FLAG_INPUT_ISBAD | FLAG_ISNAN);
-                /* fprintf(stderr, "OUCH %d %d %f %d\n", i+x0Reg, j+y0Reg, rdat, mdat); */
+
+            if (pixelValue*0.0 != 0.0) {
+                mRData[(pixelIdx+x0Reg)+(rowIdx+y0Reg)*rPixX] |= (FLAG_INPUT_ISBAD | FLAG_ISNAN);
+                /* fprintf(stderr, "OUCH %d %d %f %d\n", pixelIdx+x0Reg, rowIdx+y0Reg, pixelValue, maskData); */
                 continue;
             }
-            
+
             /* good pixels pass, so sigma clipping part here */
-            sdat[goodcnt++] = rdat;
+            sdat[validPixelCount++] = pixelValue;
         }
     }
-    if (sigma_clip(sdat, goodcnt, mean, sd, maxiter)) {
+
+    /* ====================================================================
+       SIGMA-CLIPPING PHASE: Obtain mean & std dev before histogram
+       ===================================================================== */
+    if (sigma_clip(sdat, validPixelCount, mean, sd, maxiter)) {
         free(sdat);
         free(work);
         return 5;
     }
     free(sdat);
-    
+
     /* save some speed */
-    isd = 1. / (*sd);
-    
-    /*** DO ONLY ONCE! ***/
-    
-    repeat = 1;
-    while (repeat) {
-        
-        if (tries >= 5) {
+    inverseStdev = 1. / (*sd);
+
+    /* ====================================================================
+       HISTOGRAM REFINEMENT LOOP: Adjust bin width until bounds are acceptable
+       ===================================================================== */
+    continueRefinement = 1;
+    while (continueRefinement) {
+
+        if (refinementAttempts >= MAX_SIGMA_CLIP_RETRIES) {
             /* too many attempts here - print message and exit*/
             /* DD fprintf(stderr, "     WARNING: 5 failed iterations in getStampStats2\n"); */
             free(work);
             return 1;
         }
-        
-        for (i=0; i<256; bins[i++]=0);
+
+        for (pixelIdx=0; pixelIdx<HISTOGRAM_NUM_BINS; histogram[pixelIdx++]=0);
         
         /* rezero sums if repeating */
-        ssum = sumx = sumxx = 0.;
-        goodcnt = 0;
-        
-        for (j = 0; j < nPixY; j++) {
-            for (i = 0; i < nPixX; i++) {
-                rdat = data[i+j*nPixX];
-                mdat = mRData[(i+x0Reg)+(j+y0Reg)*rPixX];
-                
-                if (((umask > 0) && (!(mdat & umask))) ||
-                    ((smask > 0) &&   (mdat & smask))  ||
-                    (fabs(rdat) <= ZEROVAL))
+        absolutePixelSum = binSum = weightedBinSum = 0.;
+        validPixelCount = 0;
+
+        for (rowIdx = 0; rowIdx < nPixY; rowIdx++) {
+            for (pixelIdx = 0; pixelIdx < nPixX; pixelIdx++) {
+                pixelValue = data[pixelIdx+rowIdx*nPixX];
+                maskData = mRData[(pixelIdx+x0Reg)+(rowIdx+y0Reg)*rPixX];
+
+                if (((umask > 0) && (!(maskData & umask))) ||
+                    ((smask > 0) &&   (maskData & smask))  ||
+                    (fabs(pixelValue) <= ZEROVAL))
                     continue;
-                
-                if (rdat*0.0 != 0.0) {
-                    mRData[(i+x0Reg)+(j+y0Reg)*rPixX] |= (FLAG_INPUT_ISBAD | FLAG_ISNAN);
+
+                if (pixelValue*0.0 != 0.0) {
+                    mRData[(pixelIdx+x0Reg)+(rowIdx+y0Reg)*rPixX] |= (FLAG_INPUT_ISBAD | FLAG_ISNAN);
                     continue;
                 }
-                
+
                 /* final sigma cut */
                 /* reject both high and low here */
-                if ((fabs(rdat - (*mean)) * isd) > statSig)
+                if ((fabs(pixelValue - (*mean)) * inverseStdev) > statSig)
                     continue;
-                
-                index = floor( (rdat-bin1)/binsize ) + 1;
-                index = (index < 0 ? 0 : index);
-                index = (index > 255 ? 255 : index);
-                
+
+                binIndex = floor( (pixelValue-binLowerBound)/binWidth ) + 1;
+                binIndex = (binIndex < 0 ? 0 : binIndex);
+                binIndex = (binIndex > 255 ? 255 : binIndex);
+
                 /* NOTE : the zero index is way overweighted since it contains everything
-                   below bin1.
+                   below binLowerBound.
                 */
-                bins[index]++;
-                
-                /* ssum is the sum of absolute value of pixels in the image */
-                ssum += fabs(rdat);
+                histogram[binIndex]++;
+
+                /* absolutePixelSum is the sum of absolute value of pixels in the image */
+                absolutePixelSum += fabs(pixelValue);
                 /*
-                  This is the number of pixels we are working with, not npts which
+                  This is the number of pixels we are working with, not totalPixelCount which
                   includes any zeroed or masked pixels.
                 */
-                goodcnt += 1;
-                
+                validPixelCount += 1;
+
             }
         }
-        
+
         /* get out of dodge! */
-        if (goodcnt == 0) {
+        if (validPixelCount == 0) {
             /* DD fprintf(stderr, "     WARNING: no stampStats2 data\n"); */
-            *mode = *median = work[(int)(mfstat*npts)];
+            *mode = *median = work[(int)(mfstat*totalPixelCount)];
             *fwhm = *lfwhm = 0.;
             free(work);
             return 2;
         }
-        
+
         /* quit here if the bins are degenerate */
-        if (binsize == 0.) {
+        if (binWidth == 0.) {
             /* DD fprintf(stderr, "     WARNING: no variation in stampStats2 data\n"); */
-            *mode = *median = work[(int)(mfstat*npts)];
+            *mode = *median = work[(int)(mfstat*totalPixelCount)];
             *fwhm = *lfwhm = 0.;
             free(work);
             return 3;
         }
-        
+
+        /* ====================================================================
+           MODE FINDING: Locate peak as narrowest region containing ~10% of data
+           ===================================================================== */
         /* find the mode - find narrowest region which holds ~10% of points*/
-        sumx = maxdens = 0.;
-        for (ilower = iupper = 1; iupper < 255; sumx -= bins[ilower++]) {
-            while ( (sumx < goodcnt/10.) && (iupper < 255) ) 
-                sumx += bins[iupper++];
-            
-            if (sumx / (iupper-ilower) > maxdens) {
-                maxdens = sumx / (iupper-ilower);
-                imax = ilower;
+        binSum = maxDensity = 0.;
+        for (lowerBinIdx = upperBinIdx = 1; upperBinIdx < 255; binSum -= histogram[lowerBinIdx++]) {
+            while ( (binSum < validPixelCount * HISTOGRAM_PEAK_WIDTH_PCT) && (upperBinIdx < 255) )
+                binSum += histogram[upperBinIdx++];
+
+            if (binSum / (upperBinIdx-lowerBinIdx) > maxDensity) {
+                maxDensity = binSum / (upperBinIdx-lowerBinIdx);
+                maxDensityBinIdx = lowerBinIdx;
             }
         }
         /* if it never got assigned... */
-        if (imax < 0 || imax > 255)
-            imax = 0;
-        
-        
+        if (maxDensityBinIdx < 0 || maxDensityBinIdx > 255)
+            maxDensityBinIdx = 0;
+
+
         /* try to interpolate between bins somewhat by finding weighted
            mean of the bins in the peak*/
-        /* NOTE : need <= here and above in case goodcnt is small (< 10) */
-        sumxx = sumx = 0.;
-        for (i = imax; (sumx < goodcnt/10.) && (i < 255); i++) {
-            sumx  += bins[i];
-            sumxx += i*bins[i];
+        /* NOTE : need <= here and above in case validPixelCount is small (< 10) */
+        weightedBinSum = binSum = 0.;
+        for (pixelIdx = maxDensityBinIdx; (binSum < validPixelCount/10.) && (pixelIdx < 255); pixelIdx++) {
+            binSum  += histogram[pixelIdx];
+            weightedBinSum += pixelIdx*histogram[pixelIdx];
         }
-        mode_bin = sumxx / sumx + 0.5; /*add 0.5 to give middle of bin*/
-        *mode = bin1 + binsize * (mode_bin - 1.);
-        
+        modeBin = weightedBinSum / binSum + 0.5; /*add 0.5 to give middle of bin*/
+        *mode = binLowerBound + binWidth * (modeBin - 1.);
+
         /*find the percentile of the mode*/
-        imax = floor(mode_bin);
-        for (i = 0, sumx = 0.; i < imax; sumx += bins[i++]);
-        sumx += bins[imax] * (mode_bin-imax); /*interpolate fractional bin*/
-        sumx /= goodcnt;
-        moden=sumx;
-        
+        maxDensityBinIdx = floor(modeBin);
+        for (pixelIdx = 0, binSum = 0.; pixelIdx < maxDensityBinIdx; binSum += histogram[pixelIdx++]);
+        binSum += histogram[maxDensityBinIdx] * (modeBin-maxDensityBinIdx); /*interpolate fractional bin*/
+        binSum /= validPixelCount;
+        modeNormalized=binSum;
+
+        /* ====================================================================
+           FWHM ESTIMATION: Find 25th–75th percentile range (robust noise σ estimate)
+           ===================================================================== */
         /* find the region around mode containing half the "noise" points,
            e.g. assume that the mode is 50th percentile of the noise */
-        lower = goodcnt * 0.25;
-        upper = goodcnt * 0.75; 
-        sumx = 0.;
-        for (i = 0; sumx < lower; sumx += bins[i++]);
-        lower = i - (sumx - lower) / bins[i-1];
-        for ( ; sumx < upper; sumx += bins[i++]);
-        upper = i - (sumx - upper) / bins[i-1];
-        
+        lowerPercentile = validPixelCount * (0.5 - HISTOGRAM_NOISE_HALF_PCT);  /* 25th percentile */
+        upperPercentile = validPixelCount * (0.5 + HISTOGRAM_NOISE_HALF_PCT);  /* 75th percentile */
+        binSum = 0.;
+        for (pixelIdx = 0; binSum < lowerPercentile; binSum += histogram[pixelIdx++]);
+        lowerPercentile = pixelIdx - (binSum - lowerPercentile) / histogram[pixelIdx-1];
+        for ( ; binSum < upperPercentile; binSum += histogram[pixelIdx++]);
+        upperPercentile = pixelIdx - (binSum - upperPercentile) / histogram[pixelIdx-1];
+
         /*now a few checks to make sure the histogram bins were chosen well*/
-        if ( (lower < 1.) || (upper > 255.) ) {
+        if ( (lowerPercentile < 1.) || (upperPercentile > 255.) ) {
             /*make the bins wider, about same center*/
-            bin1 -= 128. * binsize;
-            binsize *= 2.;
-            tries++;
-            repeat = 1;
-        } else if ( (upper-lower) < 40. ) {
+            binLowerBound -= 128. * binWidth;
+            binWidth *= 2.;
+            refinementAttempts++;
+            continueRefinement = 1;
+        } else if ( (upperPercentile-lowerPercentile) < 40. ) {
             /*make bins narrower for better precision*/
-            binsize /= 3.;
-            bin1 = *mode - 128. * binsize;
-            tries++;
-            repeat=1;;
+            binWidth /= 3.;
+            binLowerBound = *mode - 128. * binWidth;
+            refinementAttempts++;
+            continueRefinement=1;;
         } else
-            repeat = 0;
+            continueRefinement = 0;
         
         /* end of re-histogramming loop */
     }
     
-    *sum = ssum;
-    
+    *sum = absolutePixelSum;
+
     /* calculate the noise sd based on this distribution width
        the numerical constant converts the width to sd based on a
        gaussian noise distribution
     */
-    *fwhm = binsize * (upper - lower) / 1.35;
-    
+    *fwhm = binWidth * (upperPercentile - lowerPercentile) / 1.35;
+
     /*find the median*/
-    for (i = 0, sumx = 0; sumx < goodcnt/2.; sumx += bins[i++]);
-    *median = i - (sumx - goodcnt/2.) / bins[i-1];
-    
+    for (pixelIdx = 0, binSum = 0; binSum < validPixelCount/2.; binSum += histogram[pixelIdx++]);
+    *median = pixelIdx - (binSum - validPixelCount/2.) / histogram[pixelIdx-1];
+
     /* lower-quartile result - scale to sigma: */
-    *lfwhm = binsize * (*median - lower) * 2. / 1.35;
-    
-    *median = bin1 + binsize*(*median-1.);
-    
+    *lfwhm = binWidth * (*median - lowerPercentile) * 2. / 1.35;
+
+    *median = binLowerBound + binWidth*(*median-1.);
+
     free(work);
     return 0;
 }
@@ -1265,74 +1306,74 @@ int getStampStats3(float *data,
  *         one point remains.
  */
 int sigma_clip(float *data, int count, double *mean, double *stdev, int maxiter) {
-    int cnt, ncnt, i, iter;
-    char *smask;
-    double istdev;
-    float d;
-    
+    int acceptedCount, newAcceptedCount, dataIdx, iterationCount;
+    char *clipMask;
+    double inverseStdev;
+    float dataValue;
+
     if (count == 0) {
         *mean  = 0;
         *stdev = MAXVAL;
         return 1;
     }
-    
-    smask = (char *)calloc(count, sizeof(char));
-    /*for (i=0; i<count; i++) smask[i] = 0;*/
-    
-    cnt  = 0;
-    ncnt = count;
-    iter = 0;
-    
-    while ((ncnt != cnt) && (iter < maxiter)) {
-        cnt = ncnt;
-        
+
+    clipMask = (char *)calloc(count, sizeof(char));
+    /*for (dataIdx=0; dataIdx<count; dataIdx++) clipMask[dataIdx] = 0;*/
+
+    acceptedCount = 0;
+    newAcceptedCount = count;
+    iterationCount = 0;
+
+    while ((newAcceptedCount != acceptedCount) && (iterationCount < maxiter)) {
+        acceptedCount = newAcceptedCount;
+
         *mean  = 0;
         *stdev = 0;
-        for (i=0; i<count; i++) {
-            if (!(smask[i])) {
-                d       = data[i];
-                *mean  += d;
-                *stdev += d*d;
+        for (dataIdx=0; dataIdx<count; dataIdx++) {
+            if (!(clipMask[dataIdx])) {
+                dataValue       = data[dataIdx];
+                *mean  += dataValue;
+                *stdev += dataValue*dataValue;
             }
         }
-        
-        if (ncnt > 0) 
-            *mean /= ncnt;
+
+        if (newAcceptedCount > 0)
+            *mean /= newAcceptedCount;
         else {
             *mean  = 0;
             *stdev = MAXVAL;
-            free(smask);
+            free(clipMask);
             return 2;
         }
-        
-        if (ncnt > 1) {
-            *stdev = *stdev - ncnt * (*mean) * (*mean);
-            *stdev = sqrt(*stdev / (double)(ncnt - 1));
+
+        if (newAcceptedCount > 1) {
+            *stdev = *stdev - newAcceptedCount * (*mean) * (*mean);
+            *stdev = sqrt(*stdev / (double)(newAcceptedCount - 1));
         }
         else {
             *stdev = MAXVAL;
-            free(smask);
+            free(clipMask);
             return 3;
         }
-        
-        ncnt   = 0;
-        istdev = 1. / (*stdev);
-        for (i=0; i<count; i++) {
-            if (!(smask[i])) {
+
+        newAcceptedCount   = 0;
+        inverseStdev = 1. / (*stdev);
+        for (dataIdx=0; dataIdx<count; dataIdx++) {
+            if (!(clipMask[dataIdx])) {
                 /* reject high and low outliers */
-                if ((fabs(data[i] - (*mean)) * istdev) > statSig) {
-                    smask[i] = 1;
+                if ((fabs(data[dataIdx] - (*mean)) * inverseStdev) > statSig) {
+                    clipMask[dataIdx] = 1;
                 }
                 else {
-                    ncnt++;
+                    newAcceptedCount++;
                 }
             }
         }
-        iter += 1;
-        /*fprintf(stderr, "%d %d %f %f\n", cnt, ncnt, (*mean), (*stdev));*/
+        iterationCount += 1;
+        /*fprintf(stderr, "%d %d %f %f\n", acceptedCount, newAcceptedCount, (*mean), (*stdev));*/
     }
     /*fprintf(stderr, "\n");*/
-    free(smask);
+    free(clipMask);
     return 0;
 }
 
@@ -1359,36 +1400,36 @@ int sigma_clip(float *data, int count, double *mean, double *stdev, int maxiter)
  *         allocation failure.
  */
 float *calculateAvgNoise(float *image, int *mask, int nx, int ny, int size, int maskval, int doavg) {
-    int i, j, ii, jj, cnt;
+    int pixelX, pixelY, neighborColIdx, neighborRowIdx, validPixelCount;
     float *data, *outim;
     double mean, stdev;
-    
-    
+
+
     if ( !(data = (float *) calloc(size * size, sizeof(float))))
         return (NULL);
     if ( !(outim = (float *) calloc(nx * ny, sizeof(float))))
         return (NULL);
-    
-    for (j = ny; j--; ) {
-        for (i = nx; i--; ) {
-            
+
+    for (pixelY = ny; pixelY--; ) {
+        for (pixelX = nx; pixelX--; ) {
+
             /* take your average! */
-            cnt = 0;
-            for (jj = j - size; jj <= j + size; jj++) {
-                if ((jj < 0) || jj >= ny)
+            validPixelCount = 0;
+            for (neighborRowIdx = pixelY - size; neighborRowIdx <= pixelY + size; neighborRowIdx++) {
+                if ((neighborRowIdx < 0) || neighborRowIdx >= ny)
                     continue;
-                
-                for (ii = i - size; ii <= i + size; ii++) {
-                    if ((ii < 0) || ii >= nx)
+
+                for (neighborColIdx = pixelX - size; neighborColIdx <= pixelX + size; neighborColIdx++) {
+                    if ((neighborColIdx < 0) || neighborColIdx >= nx)
                         continue;
-                    
-                    if (!(mask[ii+jj*nx] & maskval))
-                        data[cnt++] = image[ii+jj*nx];
+
+                    if (!(mask[neighborColIdx+neighborRowIdx*nx] & maskval))
+                        data[validPixelCount++] = image[neighborColIdx+neighborRowIdx*nx];
                 }
             }
             /* we'll do no clipping */
-            sigma_clip(data, cnt, &mean, &stdev, 0);
-            outim[i+j*nx] = doavg ? mean : stdev;
+            sigma_clip(data, validPixelCount, &mean, &stdev, 0);
+            outim[pixelX+pixelY*nx] = doavg ? mean : stdev;
         }
     }
     free(data);
@@ -1410,21 +1451,21 @@ float *calculateAvgNoise(float *image, int *mask, int nx, int ny, int size, int 
  * @param nStamps  Number of stamps in the array.
  */
 void freeStampMem(stamp_struct *stamps, int nStamps) {
-    int i, j;
+    int stampIdx, vectorIdx;
     if (stamps) {
-        for (i = 0; i < nStamps; i++) {
-            for(j = 0; j < nCompKer + nBGVectors; j++) 
-                if (stamps[i].vectors[j]) free(stamps[i].vectors[j]);
-            if (stamps[i].vectors) free(stamps[i].vectors);
-            
-            for (j = 0; j < nC; j++) 
-                if (stamps[i].mat[j]) free(stamps[i].mat[j]);
-            if (stamps[i].mat) free(stamps[i].mat);
-            
-            if (stamps[i].krefArea) free(stamps[i].krefArea);
-            if (stamps[i].scprod) free(stamps[i].scprod);
-            if (stamps[i].xss) free(stamps[i].xss);
-            if (stamps[i].yss) free(stamps[i].yss);
+        for (stampIdx = 0; stampIdx < nStamps; stampIdx++) {
+            for(vectorIdx = 0; vectorIdx < nCompKer + nBGVectors; vectorIdx++)
+                if (stamps[stampIdx].vectors[vectorIdx]) free(stamps[stampIdx].vectors[vectorIdx]);
+            if (stamps[stampIdx].vectors) free(stamps[stampIdx].vectors);
+
+            for (vectorIdx = 0; vectorIdx < nC; vectorIdx++)
+                if (stamps[stampIdx].mat[vectorIdx]) free(stamps[stampIdx].mat[vectorIdx]);
+            if (stamps[stampIdx].mat) free(stamps[stampIdx].mat);
+
+            if (stamps[stampIdx].krefArea) free(stamps[stampIdx].krefArea);
+            if (stamps[stampIdx].scprod) free(stamps[stampIdx].scprod);
+            if (stamps[stampIdx].xss) free(stamps[stampIdx].xss);
+            if (stamps[stampIdx].yss) free(stamps[stampIdx].yss);
         }
     }
 }
@@ -1697,27 +1738,27 @@ void fits_get_kernel_btbl(fitsfile *kPtr, double **kernelSol, int nRegion) {
  * @param width  Dilation full-width in pixels; no-op if <= 0.
  */
 void spreadMask(int *mData, int width) {
-    
-    int i, j, k, l, ii, jj, w2;
-    
+
+    int imageCol, imageRow, horzOffset, vertOffset, ii, jj, w2;
+
     /* nothing to do! */
     if (width <= 0) {
         return;
     }
     w2 = width/2;
-    for (j = 0; j < rPixY; j++) {
-        for (i = 0; i < rPixX; i++) {
-            if (mData[i+rPixX*j] & FLAG_INPUT_ISBAD) {
-                for (k = -w2; k <= w2; k++) {
-                    ii = i + k;
+    for (imageRow = 0; imageRow < rPixY; imageRow++) {
+        for (imageCol = 0; imageCol < rPixX; imageCol++) {
+            if (mData[imageCol+rPixX*imageRow] & FLAG_INPUT_ISBAD) {
+                for (horzOffset = -w2; horzOffset <= w2; horzOffset++) {
+                    ii = imageCol + horzOffset;
                     if (ii < 0 || ii >= rPixX)
                         continue;
-                    
-                    for (l = -w2; l <= w2; l++) {
-                        jj = j + l;
+
+                    for (vertOffset = -w2; vertOffset <= w2; vertOffset++) {
+                        jj = imageRow + vertOffset;
                         if (jj < 0 || jj >= rPixY)
                             continue;
-                        
+
                         mData[ii+rPixX*jj] |= FLAG_OK_CONV * (!(mData[ii+rPixX*jj] & FLAG_INPUT_ISBAD));
                     }
                 }
@@ -1745,13 +1786,13 @@ void spreadMask(int *mData, int width) {
  * @param mData  Full-frame integer mask array; updated in place.
  */
 void makeInputMask(float *tData, float *iData, int *mData) {
-    
-    int i;
-    
-    for (i = rPixX*rPixY; i--; ){
-        mData[i] |= (FLAG_INPUT_ISBAD | FLAG_BAD_PIXVAL) * (tData[i] == fillVal  || iData[i] == fillVal);
-        mData[i] |= (FLAG_INPUT_ISBAD | FLAG_SAT_PIXEL)  * (tData[i] >= tUThresh || iData[i] >= iUThresh);
-        mData[i] |= (FLAG_INPUT_ISBAD | FLAG_LOW_PIXEL)  * (tData[i] <= tLThresh || iData[i] <= iLThresh);
+
+    int pixelIdx;
+
+    for (pixelIdx = rPixX*rPixY; pixelIdx--; ){
+        mData[pixelIdx] |= (FLAG_INPUT_ISBAD | FLAG_BAD_PIXVAL) * (tData[pixelIdx] == fillVal  || iData[pixelIdx] == fillVal);
+        mData[pixelIdx] |= (FLAG_INPUT_ISBAD | FLAG_SAT_PIXEL)  * (tData[pixelIdx] >= tUThresh || iData[pixelIdx] >= iUThresh);
+        mData[pixelIdx] |= (FLAG_INPUT_ISBAD | FLAG_LOW_PIXEL)  * (tData[pixelIdx] <= tLThresh || iData[pixelIdx] <= iLThresh);
     }
     
     spreadMask(mData, (int)(hwKernel*kfSpreadMask1));
@@ -2051,11 +2092,11 @@ int hp_fits_write_subset_int(fitsfile *fptr, long group, long naxis, long *naxes
  * @param nPixY  Height.
  */
 void fset(float *data, double value, int nPixX, int nPixY) {
-    int    i;
-    float *d;
-    d = data;
-    for (i = nPixX*nPixY; i--; )
-        *(d++) = value;
+    int    pixelIdx;
+    float *pixelPtr;
+    pixelPtr = data;
+    for (pixelIdx = nPixX*nPixY; pixelIdx--; )
+        *(pixelPtr++) = value;
 }
 
 /**
@@ -2067,11 +2108,11 @@ void fset(float *data, double value, int nPixX, int nPixY) {
  * @param nPixY  Height.
  */
 void dfset(double *data, double value, int nPixX, int nPixY) {
-    int     i;
-    double *d;
-    d = data;
-    for (i = nPixX*nPixY; i--; )
-        *(d++) = value;
+    int     pixelIdx;
+    double *pixelPtr;
+    pixelPtr = data;
+    for (pixelIdx = nPixX*nPixY; pixelIdx--; )
+        *(pixelPtr++) = value;
 }
 
 /**
@@ -2178,13 +2219,13 @@ double ran1(int *idum) {
  * @param n      Number of elements.
  */
 void quick_sort (double *list, int *index, int n) {
-    
-    int i;
+
+    int indexIdx;
     void quick_sort_1();
-    
-    for (i = 0; i < n; i++) index [i] = i;
+
+    for (indexIdx = 0; indexIdx < n; indexIdx++) index [indexIdx] = indexIdx;
     quick_sort_1 (list, index, 0, n-1);
-    
+
     return;
 }
 
@@ -2205,29 +2246,29 @@ void quick_sort (double *list, int *index, int n) {
  * @param right_end  Right boundary of the subarray to sort (inclusive).
  */
 void quick_sort_1(double *list, int *index, int left_end, int right_end) {
-    int i,j,temp;
-    double chosen;
-    
-    
-    chosen = list[index[(left_end + right_end)/2]];
-    i = left_end-1;
-    j = right_end+1;
-    
+    int rightIdx,leftIdx,tempIndex;
+    double pivotValue;
+
+
+    pivotValue = list[index[(left_end + right_end)/2]];
+    rightIdx = left_end-1;
+    leftIdx = right_end+1;
+
     for(;;) {
-        while(list [index[++i]] < chosen);
-        while(list [index[--j]] > chosen);
-        if (i < j){
-            temp=index [j];
-            index [j] = index [i];
-            index [i] = temp;}
-        else if (i == j) {
-            ++i; break;}
+        while(list [index[++rightIdx]] < pivotValue);
+        while(list [index[--leftIdx]] > pivotValue);
+        if (rightIdx < leftIdx){
+            tempIndex=index [leftIdx];
+            index [leftIdx] = index [rightIdx];
+            index [rightIdx] = tempIndex;}
+        else if (rightIdx == leftIdx) {
+            ++rightIdx; break;}
         else break;
-    } 
-    
-    if (left_end < j)  quick_sort_1 (list, index, left_end, j);
-    if (i < right_end) quick_sort_1 (list, index, i, right_end);
-    
+    }
+
+    if (left_end < leftIdx)  quick_sort_1 (list, index, left_end, leftIdx);
+    if (rightIdx < right_end) quick_sort_1 (list, index, rightIdx, right_end);
+
     return;
 }
 
@@ -2244,11 +2285,11 @@ void quick_sort_1(double *list, int *index, int left_end, int right_end) {
  * @return -1 if *x < *y, 0 if equal, 1 if *x > *y.
  */
 /**** comparison call for the qsort ****/
-int flcomp(x,y)
-     double *x,*y;
+int flcomp(xVal,yVal)
+     double *xVal,*yVal;
 {
-    if (*x>*y) return(1);
-    else if (*x==*y) return(0);
+    if (*xVal>*yVal) return(1);
+    else if (*xVal==*yVal) return(0);
     else return(-1);
 }
 

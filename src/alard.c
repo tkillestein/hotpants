@@ -36,15 +36,15 @@ code.
  * and model-evaluation call.
  */
 void getKernelVec() {
-    int ig, idegx, idegy, nvec;
+    int gaussIdx, idegx, idegy, nvec;
     int ren;
-    
+
     nvec = 0;
-    for (ig = 0; ig < ngauss; ig++) {
-        for (idegx = 0; idegx <= deg_fixe[ig]; idegx++) {
-            for (idegy = 0; idegy <= deg_fixe[ig]-idegx; idegy++) {
+    for (gaussIdx = 0; gaussIdx < ngauss; gaussIdx++) {
+        for (idegx = 0; idegx <= deg_fixe[gaussIdx]; idegx++) {
+            for (idegy = 0; idegy <= deg_fixe[gaussIdx]-idegx; idegy++) {
                 /* stores kernel weight mask for each order */
-                kernel_vec[nvec] = kernel_vector(nvec, idegx, idegy, ig, &ren);
+                kernel_vec[nvec] = kernel_vector(nvec, idegx, idegy, gaussIdx, &ren);
                 nvec++;
             }
         }
@@ -79,16 +79,16 @@ void getKernelVec() {
  *         substamp data).
  */
 int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
-    
-    int       ren = 0;
-    int       i,j,xi,yi,dx,dy,idegx,idegy,di,dj,nv,ig,nvec;
-    double    ax,ay,xf,yf;
+
+    int       renormalizeFlag = 0;
+    int       pixelX,pixelY,stampCenterX,stampCenterY,pixelOffsetX,pixelOffsetY,idegx,idegy,bgDegX,bgDegY,substampIndexX,substampIndexY,vectorCompIdx,gaussianCompIdx,vectorComponentIdx;
+    double    polyBasisX,polyBasisY,normalizedX,normalizedY;
     double *im;
-    float     rPixX2, rPixY2;
-    
-    rPixX2   = 0.5 * rPixX;
-    rPixY2   = 0.5 * rPixY;
-    
+    float     halfPixX, halfPixY;
+
+    halfPixX   = 0.5 * rPixX;
+    halfPixY   = 0.5 * rPixY;
+
     if (verbose >= 1)
         fprintf(stderr, "    xs  : %4i ys  : %4i sig: %6.3f sscnt: %4i nss: %4i \n",
                 stamp->x, stamp->y, stamp->chi2, stamp->sscnt, stamp->nss);
@@ -99,62 +99,84 @@ int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
             fprintf(stderr, "        Reject stamp\n");
         return 1;
     }
-    
-    nvec = 0;
-    for (ig = 0; ig < ngauss; ig++) {
-        for (idegx = 0; idegx <= deg_fixe[ig]; idegx++) {
-            for (idegy = 0; idegy <= deg_fixe[ig]-idegx; idegy++) {
-                
-                ren = 0;
-                dx = (idegx / 2) * 2 - idegx;
-                dy = (idegy / 2) * 2 - idegy;
-                if (dx == 0 && dy == 0 && nvec > 0)
-                    ren = 1;
-                
-                /* fill stamp->vectors[nvec] with convolved image */
+
+    /* ====================================================================
+       POLYNOMIAL BASIS CONSTRUCTION
+       ====================================================================
+       Iterate over kernel basis triplets (gaussianCompIdx, idegx, idegy):
+       - gaussianCompIdx: Gaussian component index [0, ngauss)
+       - idegx, idegy: polynomial degrees such that idegx + idegy <= deg_fixe[gaussianCompIdx]
+
+       This implements the triangular basis expansion:
+         K(x,y) = Sum_i c_i(x,y) * phi_i
+       where phi_i = exp(-(x^2+y^2)*sigma^2) * x^deg_x * y^deg_y
+
+       The counter vectorComponentIdx sequentially assigns indices to each (gaussianCompIdx, idegx, idegy)
+       triplet; these indices are used by xy_conv_stamp() to access precomputed
+       convolution responses stored in stamp->vectors[vectorComponentIdx].
+
+       Alard & Lupton (1998), Sect. 2: "The kernel is expanded as a sum of
+       Gaussian basis elements with polynomial spatial weighting."
+       Reference: https://iopscience.iop.org/article/10.1086/305984
+       ==================================================================== */
+    vectorComponentIdx = 0;
+    for (gaussianCompIdx = 0; gaussianCompIdx < ngauss; gaussianCompIdx++) {
+        for (idegx = 0; idegx <= deg_fixe[gaussianCompIdx]; idegx++) {
+            for (idegy = 0; idegy <= deg_fixe[gaussianCompIdx]-idegx; idegy++) {
+
+                renormalizeFlag = 0;
+                /* Detect odd-degree terms: (deg/2)*2 - deg evaluates to
+                   -1 if deg is odd, 0 if even. Used to trigger renormalization
+                   of even-parity basis functions (those with pixelOffsetX==0 && pixelOffsetY==0). */
+                pixelOffsetX = (idegx / 2) * 2 - idegx;
+                pixelOffsetY = (idegy / 2) * 2 - idegy;
+                if (pixelOffsetX == 0 && pixelOffsetY == 0 && vectorComponentIdx > 0)
+                    renormalizeFlag = 1;  /* Set renormalization flag for higher-order even-parity basis */
+
+                /* fill stamp->vectors[vectorComponentIdx] with convolved image */
                 /* image is convolved with functional form of kernel, fit later for amplitude */
-                xy_conv_stamp(stamp, imConv, nvec, ren);
-                ++nvec;
+                xy_conv_stamp(stamp, imConv, vectorComponentIdx, renormalizeFlag);
+                ++vectorComponentIdx;
             }
         }
     }
-    
+
     /* get the krefArea data */
     if (cutSStamp(stamp, imRef))
         return 1;
-    
-    /* fill stamp->vectors[nvec+++] with x^(bg) * y^(bg) for background fit */
-    xi = stamp->xss[stamp->sscnt];
-    yi = stamp->yss[stamp->sscnt];
-    di = xi - hwKSStamp;
-    dj = yi - hwKSStamp;
-    for (i = xi - hwKSStamp; i <= xi + hwKSStamp; i++) {
-        xf = (i - rPixX2) / rPixX2;
-        
-        for (j = yi - hwKSStamp; j <= yi + hwKSStamp; j++) {
-            /* fprintf(stderr, "%d %d %d %d %d %d\n", k, xi, yi,i, j, fwKSStamp); */
-            yf = (j - rPixY2) / rPixY2; 
-            
-            ax = 1.0;
-            nv = nvec;
-            for (idegx = 0; idegx <= bgOrder; idegx++) {
-                ay = 1.0; 
-                for (idegy = 0; idegy <= bgOrder - idegx; idegy++) {
-                    im = stamp->vectors[nv];
-                    im[i-di+fwKSStamp*(j-dj)] = ax * ay;
-                    ay *= yf;
-                    ++nv;
+
+    /* fill stamp->vectors[vectorComponentIdx+++] with x^(bg) * y^(bg) for background fit */
+    stampCenterX = stamp->xss[stamp->sscnt];
+    stampCenterY = stamp->yss[stamp->sscnt];
+    substampIndexX = stampCenterX - hwKSStamp;
+    substampIndexY = stampCenterY - hwKSStamp;
+    for (pixelX = stampCenterX - hwKSStamp; pixelX <= stampCenterX + hwKSStamp; pixelX++) {
+        normalizedX = (pixelX - halfPixX) / halfPixX;
+
+        for (pixelY = stampCenterY - hwKSStamp; pixelY <= stampCenterY + hwKSStamp; pixelY++) {
+            /* fprintf(stderr, "%d %d %d %d %d %d\n", k, stampCenterX, stampCenterY,pixelX, pixelY, fwKSStamp); */
+            normalizedY = (pixelY - halfPixY) / halfPixY;
+
+            polyBasisX = 1.0;
+            vectorCompIdx = vectorComponentIdx;
+            for (bgDegX = 0; bgDegX <= bgOrder; bgDegX++) {
+                polyBasisY = 1.0;
+                for (bgDegY = 0; bgDegY <= bgOrder - bgDegX; bgDegY++) {
+                    im = stamp->vectors[vectorCompIdx];
+                    im[pixelX-substampIndexX+fwKSStamp*(pixelY-substampIndexY)] = polyBasisX * polyBasisY;
+                    polyBasisY *= normalizedY;
+                    ++vectorCompIdx;
                 }
-                ax *= xf;
+                polyBasisX *= normalizedX;
             }
         }
     }
-    
+
     /* build stamp->mat from stamp->vectors */
     build_matrix0(stamp);
     /* build stamp->scprod from stamp->vectors and imRef */
     build_scprod0(stamp, imRef);
-    
+
     return 0;
 }
 
@@ -186,57 +208,61 @@ int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
  */
 double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren) {
     double    *vector=NULL,*kernel0=NULL;
-    int       i,j,k,dx,dy,ix;
-    double    sum_x,sum_y,x,qe;
-    
+    int       kernelRow,kernelCol,xFilterIdx,xParityCheck,yParityCheck,xKernelIdx,pixelIdx;
+    double    filterXSum,filterYSum,kernelPosition,gaussianVal;
+
     if (usePCA) {
         return kernel_vector_PCA(n, deg_x, deg_y, ig, ren);
     }
-    
+
     vector = (double *)malloc(fwKernel*fwKernel*sizeof(double));
-    dx = (deg_x / 2) * 2 - deg_x;
-    dy = (deg_y / 2) * 2 - deg_y;
-    sum_x = sum_y = 0.0;
+    /* Detect parity: (deg/2)*2 - deg = 0 if even, -1 if odd.
+       Odd-degree filters (xParityCheck != 0 || yParityCheck != 0) retain full normalization;
+       even-degree filters (xParityCheck==0 && yParityCheck==0) are normalized and (for n>0)
+       have the n=0 basis subtracted to form differential corrections. */
+    xParityCheck = (deg_x / 2) * 2 - deg_x;
+    yParityCheck = (deg_y / 2) * 2 - deg_y;
+    filterXSum = filterYSum = 0.0;
     *ren = 0;
-    
-    for (ix = 0; ix < fwKernel; ix++) {
-        x            = (double)(ix - hwKernel);
-        k            = ix+n*fwKernel;
-        qe           = exp(-x * x * sigma_gauss[ig]);
-        filter_x[k]  = qe * pow(x, deg_x);
-        filter_y[k]  = qe * pow(x, deg_y);
-        sum_x       += filter_x[k];
-        sum_y       += filter_y[k];
+
+    for (xKernelIdx = 0; xKernelIdx < fwKernel; xKernelIdx++) {
+        kernelPosition            = (double)(xKernelIdx - hwKernel);
+        xFilterIdx            = xKernelIdx+n*fwKernel;
+        gaussianVal           = exp(-kernelPosition * kernelPosition * sigma_gauss[ig]);
+        filter_x[xFilterIdx]  = gaussianVal * pow(kernelPosition, deg_x);
+        filter_y[xFilterIdx]  = gaussianVal * pow(kernelPosition, deg_y);
+        filterXSum       += filter_x[xFilterIdx];
+        filterYSum       += filter_y[xFilterIdx];
     }
-    
+
     if (n > 0)
         kernel0 = kernel_vec[0];
-    
-    sum_x = 1. / sum_x;
-    sum_y = 1. / sum_y;
-    
-    if (dx == 0 && dy == 0) {
-        for (ix = 0; ix < fwKernel; ix++) {
-            filter_x[ix+n*fwKernel] *= sum_x;
-            filter_y[ix+n*fwKernel] *= sum_y;
+
+    filterXSum = 1. / filterXSum;
+    filterYSum = 1. / filterYSum;
+
+    if (xParityCheck == 0 && yParityCheck == 0) {
+        for (xKernelIdx = 0; xKernelIdx < fwKernel; xKernelIdx++) {
+            filter_x[xKernelIdx+n*fwKernel] *= filterXSum;
+            filter_y[xKernelIdx+n*fwKernel] *= filterYSum;
         }
-        
-        for (i = 0; i < fwKernel; i++) {
-            for (j = 0; j < fwKernel; j++) {
-                vector[i+fwKernel*j] = filter_x[i+n*fwKernel] * filter_y[j+n*fwKernel];
+
+        for (kernelRow = 0; kernelRow < fwKernel; kernelRow++) {
+            for (kernelCol = 0; kernelCol < fwKernel; kernelCol++) {
+                vector[kernelRow+fwKernel*kernelCol] = filter_x[kernelRow+n*fwKernel] * filter_y[kernelCol+n*fwKernel];
             }
         }
-        
+
         if (n > 0) {
-            for (i = 0; i < fwKernel * fwKernel; i++) {
-                vector[i] -= kernel0[i];
+            for (pixelIdx = 0; pixelIdx < fwKernel * fwKernel; pixelIdx++) {
+                vector[pixelIdx] -= kernel0[pixelIdx];
             }
             *ren = 1;
         }
     } else {
-        for (i = 0; i < fwKernel; i++) {
-            for (j = 0; j < fwKernel; j++) {
-                vector[i+fwKernel*j] = filter_x[i+n*fwKernel] * filter_y[j+n*fwKernel];
+        for (kernelRow = 0; kernelRow < fwKernel; kernelRow++) {
+            for (kernelCol = 0; kernelCol < fwKernel; kernelCol++) {
+                vector[kernelRow+fwKernel*kernelCol] = filter_x[kernelRow+n*fwKernel] * filter_y[kernelCol+n*fwKernel];
             }
         }
     }
@@ -264,26 +290,26 @@ double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren) {
  */
 double *kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int *ren) {
     double    *vector=NULL,*kernel0=NULL;
-    int i,j;
-    
+    int xIdx,yIdx;
+
     vector = (double *)malloc(fwKernel*fwKernel*sizeof(double));
-    
-    for (i = 0; i < fwKernel; i++) {
-        for (j = 0; j < fwKernel; j++) {
-            vector[i+fwKernel*j] = PCA[n][i+fwKernel*j];
+
+    for (xIdx = 0; xIdx < fwKernel; xIdx++) {
+        for (yIdx = 0; yIdx < fwKernel; yIdx++) {
+            vector[xIdx+fwKernel*yIdx] = PCA[n][xIdx+fwKernel*yIdx];
         }
     }
-    
+
     if (n > 0)
         kernel0 = kernel_vec[0];
-    
+
     if (n > 0) {
-        for (i = 0; i < fwKernel * fwKernel; i++) {
-            vector[i] -= kernel0[i];
+        for (xIdx = 0; xIdx < fwKernel * fwKernel; xIdx++) {
+            vector[xIdx] -= kernel0[xIdx];
         }
         *ren = 1;
     }
-    
+
     return vector;
 }
 
@@ -291,10 +317,19 @@ double *kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int *ren) {
  * @brief Convolve the substamp region of an image with the n-th separable
  *        Gaussian-polynomial kernel basis function.
  *
- * @details Uses the separability of the Gaussian-polynomial filter to perform
+ * @details **Separability optimization:** Gaussian-polynomial filters are separable:
+ *   φ(x,y) = filter_x[x] * filter_y[y]
+ * where filter_x[k] = exp(-k^2*σ^2) * k^deg_x and similarly for filter_y.
+ *
+ * Standard 2D convolution costs O(k^2*n^2) FLOPs (k = kernel width, n = image dimension).
+ * Separable 1D passes reduce this to O(2*k*n^2), a speedup factor of k/2 (typically
+ * 5–10×). This is the primary reason HOTPANTS achieves real-time performance on
+ * large images.
+ *
+ * The implementation uses the separability of the Gaussian-polynomial filter to perform
  * the convolution in two 1-D passes (first along y, then along x), storing the
  * fwKSStamp×fwKSStamp result in stamp->vectors[n].  This is the performance-
- * critical inner loop (~60 % of total runtime according to the PROF file).
+ * critical inner loop (~60 % of total runtime according to profiling).
  *
  * If the renormalise flag @p ren is set (i.e. kernel_vector() returned ren=1
  * for this basis), the zeroth-basis convolved image stamp->vectors[0] is
@@ -302,6 +337,8 @@ double *kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int *ren) {
  * construction of the higher-order basis images.
  *
  * In PCA mode the call is forwarded to xy_conv_stamp_PCA().
+ *
+ * Reference: Alard & Lupton (1998), Sect. 2; classic signal-processing optimization.
  *
  * @param stamp  Stamp whose current substamp (stamp->sscnt) defines the pixel
  *               region to convolve.
@@ -312,47 +349,47 @@ double *kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int *ren) {
  *               convolution (renormalisation step for higher-order bases).
  */
 void xy_conv_stamp(stamp_struct *stamp, float *image, int n, int ren) {
-    int       i,j,xc,yc,xij,sub_width,xi,yi;
+    int       stampColIdx,stampRowIdx,kerOffsetX,kerOffsetY,xij,sub_width,xi,yi,imgColIdx,imgRowIdx,pixelIdx;
     double    *v0,*imc;
-    
-    
+
+
     if (usePCA) {
         xy_conv_stamp_PCA(stamp, image, n, ren);
         return;
     }
-    
+
     xi  = stamp->xss[stamp->sscnt];
     yi  = stamp->yss[stamp->sscnt];
     imc = stamp->vectors[n];
-    
+
     sub_width = fwKSStamp + fwKernel - 1;
-    
+
     /* pull area to convolve out of full reference image region */
     /* convolve with y filter */
-    for(i = xi - hwKSStamp - hwKernel; i <= xi + hwKSStamp + hwKernel; i++) {
-        for(j = yi - hwKSStamp; j <= yi + hwKSStamp; j++) {
-            xij = i - xi + sub_width / 2 + sub_width * (j - yi + hwKSStamp);
+    for(imgColIdx = xi - hwKSStamp - hwKernel; imgColIdx <= xi + hwKSStamp + hwKernel; imgColIdx++) {
+        for(imgRowIdx = yi - hwKSStamp; imgRowIdx <= yi + hwKSStamp; imgRowIdx++) {
+            xij = imgColIdx - xi + sub_width / 2 + sub_width * (imgRowIdx - yi + hwKSStamp);
             temp[xij] = 0.0;
-            for(yc = -hwKernel; yc <= hwKernel; yc++) {
-                temp[xij] += image[i+rPixX*(j+yc)] * filter_y[hwKernel-yc+n*fwKernel];
+            for(kerOffsetY = -hwKernel; kerOffsetY <= hwKernel; kerOffsetY++) {
+                temp[xij] += image[imgColIdx+rPixX*(imgRowIdx+kerOffsetY)] * filter_y[hwKernel-kerOffsetY+n*fwKernel];
             }
         }
     }
-    
+
     /* convolve with x filter */
-    for(j = -hwKSStamp; j <= hwKSStamp; j++) {
-        for(i = -hwKSStamp; i <= hwKSStamp;i++) {  
-            xij = i + hwKSStamp + fwKSStamp * (j + hwKSStamp);
+    for(stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp; stampRowIdx++) {
+        for(stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp;stampColIdx++) {
+            xij = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
             imc[xij] = 0.0;
-            for(xc = -hwKernel; xc <= hwKernel; xc++) {
-                imc[xij] += temp[i+xc+sub_width/2+sub_width*(j+hwKSStamp)] * filter_x[hwKernel-xc+n*fwKernel];
+            for(kerOffsetX = -hwKernel; kerOffsetX <= hwKernel; kerOffsetX++) {
+                imc[xij] += temp[stampColIdx+kerOffsetX+sub_width/2+sub_width*(stampRowIdx+hwKSStamp)] * filter_x[hwKernel-kerOffsetX+n*fwKernel];
             }
         }
     }
-    
+
     if (ren) {
         v0 = stamp->vectors[0];
-        for(i = 0; i < fwKSStamp * fwKSStamp; i++) imc[i] -= v0[i];
+        for(pixelIdx = 0; pixelIdx < fwKSStamp * fwKSStamp; pixelIdx++) imc[pixelIdx] -= v0[pixelIdx];
     }
     
     return;
@@ -376,33 +413,33 @@ void xy_conv_stamp(stamp_struct *stamp, float *image, int n, int ren) {
  *               convolution.
  */
 void xy_conv_stamp_PCA(stamp_struct *stamp, float *image, int n, int ren) {
-    
-    int       i,j,xc,yc,xij,xi,yi;
+
+    int       imgColIdx,imgRowIdx,kerOffsetX,kerOffsetY,xij,xi,yi,pixelIdx;
     double    *v0,*imc;
-    
+
     xi  = stamp->xss[stamp->sscnt];
     yi  = stamp->yss[stamp->sscnt];
     imc = stamp->vectors[n];
-    
+
     /* pull area to convolve out of full reference image region */
-    for(j = yi - hwKSStamp; j <= yi + hwKSStamp; j++) {
-        for(i = xi - hwKSStamp; i <= xi + hwKSStamp; i++) {
-            xij      = i - (xi - hwKSStamp) + fwKSStamp * (j - (yi - hwKSStamp));
+    for(imgRowIdx = yi - hwKSStamp; imgRowIdx <= yi + hwKSStamp; imgRowIdx++) {
+        for(imgColIdx = xi - hwKSStamp; imgColIdx <= xi + hwKSStamp; imgColIdx++) {
+            xij      = imgColIdx - (xi - hwKSStamp) + fwKSStamp * (imgRowIdx - (yi - hwKSStamp));
             imc[xij] = 0.;
-            
-            for(yc = -hwKernel; yc <= hwKernel; yc++) {
-                for(xc = -hwKernel; xc <= hwKernel; xc++) {
-                    imc[xij] += image[(i+xc)+rPixX*(j+yc)] * PCA[n][(xc+hwKernel) + fwKernel*(yc+hwKernel)];
+
+            for(kerOffsetY = -hwKernel; kerOffsetY <= hwKernel; kerOffsetY++) {
+                for(kerOffsetX = -hwKernel; kerOffsetX <= hwKernel; kerOffsetX++) {
+                    imc[xij] += image[(imgColIdx+kerOffsetX)+rPixX*(imgRowIdx+kerOffsetY)] * PCA[n][(kerOffsetX+hwKernel) + fwKernel*(kerOffsetY+hwKernel)];
                 }
             }
         }
     }
-    
+
     if (ren) {
         v0 = stamp->vectors[0];
-        for(i = 0; i < fwKSStamp * fwKSStamp; i++) imc[i] -= v0[i];
+        for(pixelIdx = 0; pixelIdx < fwKSStamp * fwKSStamp; pixelIdx++) imc[pixelIdx] -= v0[pixelIdx];
     }
-    
+
     return;
 }
 
@@ -426,32 +463,32 @@ void xy_conv_stamp_PCA(stamp_struct *stamp, float *image, int n, int ren) {
  *         fails.
  */
 static int solve_spd(double **a, int n, double *b) {
-    lapack_int info;
-    int i, j;
-    double *flat = (double *)malloc((size_t)n * n * sizeof(double));
-    double *rhs  = (double *)malloc((size_t)n * sizeof(double));
-    if (!flat || !rhs) { free(flat); free(rhs); return 1; }
+    lapack_int solveStatus;
+    int matrixRowIdx, matrixColIdx;
+    double *flatMatrix = (double *)malloc((size_t)n * n * sizeof(double));
+    double *rhsVector  = (double *)malloc((size_t)n * sizeof(double));
+    if (!flatMatrix || !rhsVector) { free(flatMatrix); free(rhsVector); return 1; }
 
-    for (i = 0; i < n; i++) {
-        for (j = 0; j < n; j++)
-            flat[i * n + j] = a[i + 1][j + 1];
-        rhs[i] = b[i + 1];
+    for (matrixRowIdx = 0; matrixRowIdx < n; matrixRowIdx++) {
+        for (matrixColIdx = 0; matrixColIdx < n; matrixColIdx++)
+            flatMatrix[matrixRowIdx * n + matrixColIdx] = a[matrixRowIdx + 1][matrixColIdx + 1];
+        rhsVector[matrixRowIdx] = b[matrixRowIdx + 1];
     }
 
-    info = LAPACKE_dpotrf(LAPACK_ROW_MAJOR, 'U', (lapack_int)n, flat, (lapack_int)n);
-    if (info == 0)
-        info = LAPACKE_dpotrs(LAPACK_ROW_MAJOR, 'U', (lapack_int)n, 1,
-                              flat, (lapack_int)n, rhs, 1);
-    if (info == 0)
-        for (i = 0; i < n; i++)
-            b[i + 1] = rhs[i];
+    solveStatus = LAPACKE_dpotrf(LAPACK_ROW_MAJOR, 'U', (lapack_int)n, flatMatrix, (lapack_int)n);
+    if (solveStatus == 0)
+        solveStatus = LAPACKE_dpotrs(LAPACK_ROW_MAJOR, 'U', (lapack_int)n, 1,
+                              flatMatrix, (lapack_int)n, rhsVector, 1);
+    if (solveStatus == 0)
+        for (matrixRowIdx = 0; matrixRowIdx < n; matrixRowIdx++)
+            b[matrixRowIdx + 1] = rhsVector[matrixRowIdx];
     else
-        fprintf(stderr, "WARNING: solve_spd failed (LAPACKE info=%d); "
-                "kernel solution may be unreliable\n", (int)info);
+        fprintf(stderr, "WARNING: solve_spd failed (LAPACKE status=%d); "
+                "kernel solution may be unreliable\n", (int)solveStatus);
 
-    free(flat);
-    free(rhs);
-    return (info != 0) ? 1 : 0;
+    free(flatMatrix);
+    free(rhsVector);
+    return (solveStatus != 0) ? 1 : 0;
 }
 
 /**
@@ -489,63 +526,63 @@ static int solve_spd(double **a, int n, double *b) {
  */
 void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise, double *kernelSol,
                double *meansigSubstamps, double *scatterSubstamps, int *NskippedSubstamps) {
-    
+
     double **matrix;
-    char check;
-    int i,mat_size;
+    char convergedFlag;
+    int matrixRowIdx,mat_size;
     int ncomp1, ncomp2, ncomp, nbg_vec;
-    
+
     ncomp1  = nCompKer - 1;
     ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     ncomp   = ncomp1 * ncomp2;
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
+
     mat_size   = ncomp1 * ncomp2 + nbg_vec + 1;
-    
+
     if (verbose >= 2) fprintf(stderr, " Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i \n",
                               mat_size, ncomp2, ncomp1, nbg_vec);
-    
+
     /* allocate fitting matrix */
     matrix = (double **)malloc((mat_size + 1)*sizeof(double *));
-    for (i = 0; i <= mat_size; i++) 
-        matrix[i] = (double *)malloc((mat_size + 1)*sizeof(double));
-    
+    for (matrixRowIdx = 0; matrixRowIdx <= mat_size; matrixRowIdx++)
+        matrix[matrixRowIdx] = (double *)malloc((mat_size + 1)*sizeof(double));
+
     /* allocate weight matrix */
     wxy = (double **)malloc(nS*sizeof(double *));
-    for (i = 0; i < nS; i++)
-        wxy[i] = (double *)malloc(ncomp2*sizeof(double));
-    
-    
-    
+    for (matrixRowIdx = 0; matrixRowIdx < nS; matrixRowIdx++)
+        wxy[matrixRowIdx] = (double *)malloc(ncomp2*sizeof(double));
+
+
+
     if (verbose>=2) fprintf(stderr, " Expanding Matrix For Full Fit\n");
     build_matrix(stamps, nS, matrix);
     build_scprod(stamps, nS, imRef, kernelSol);
-    
+
     solve_spd(matrix, mat_size, kernelSol);
 
     if (verbose>=2) fprintf(stderr, " Checking again\n");
-    check = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps);
+    convergedFlag = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps);
 
-    while(check) {
+    while(convergedFlag) {
 
         fprintf(stderr, "\n Re-Expanding Matrix\n");
         build_matrix(stamps, nS, matrix);
         build_scprod(stamps, nS, imRef, kernelSol);
 
         solve_spd(matrix, mat_size, kernelSol);
-        
-        fprintf(stderr, " Checking again\n");          
-        check = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps); 
+
+        fprintf(stderr, " Checking again\n");
+        convergedFlag = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps);
     }
     fprintf(stderr, " Sigma clipping of bad stamps converged, kernel determined\n");
-    
-    for (i = 0; i <= mat_size; i++)
-        free(matrix[i]);
-    for (i = 0; i < nS; i++)
-        free(wxy[i]);
+
+    for (matrixRowIdx = 0; matrixRowIdx <= mat_size; matrixRowIdx++)
+        free(matrix[matrixRowIdx]);
+    for (matrixRowIdx = 0; matrixRowIdx < nS; matrixRowIdx++)
+        free(wxy[matrixRowIdx]);
     free(matrix);
     free(wxy);
-    
+
     return;
 }
 
@@ -567,51 +604,52 @@ void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise
  *               the result is stored in stamp->mat.
  */
 void build_matrix0(stamp_struct *stamp) {
-    
-    int       i,j,pixStamp,k,i1,ivecbg=0;
+
+    int       kernelBasisIdx1,kernelBasisIdx2,pixStamp,pixelIdx,kernelBasisIdx,bgVectorIdx=0;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
     double    p0,q;
     double    **vec;
-    
+
     ncomp1   = nCompKer;
     ncomp2   = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     ncomp    = ncomp1 * ncomp2;
     nbg_vec  = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
+
     pixStamp = fwKSStamp * fwKSStamp;
-    
+
     vec      = stamp->vectors;
-    
+
     /* loop over the convolved images created by xy_conv_stamp() */
     /* each level represents ngauss and deg_gauss */
-    for (i = 0; i < ncomp1; i++) {
-        for (j = 0; j <= i; j++) {
+    for (kernelBasisIdx1 = 0; kernelBasisIdx1 < ncomp1; kernelBasisIdx1++) {
+        for (kernelBasisIdx2 = 0; kernelBasisIdx2 <= kernelBasisIdx1; kernelBasisIdx2++) {
             q = 0.0;
             /* integrate W_m1 and W_m2 (sum over all pixels) */
-            for (k = 0; k < pixStamp; k++) 
-                q += vec[i][k] * vec[j][k];
-            
+            for (pixelIdx = 0; pixelIdx < pixStamp; pixelIdx++)
+                q += vec[kernelBasisIdx1][pixelIdx] * vec[kernelBasisIdx2][pixelIdx];
+
             /* Q from Eqn 3. in Alard */
-            stamp->mat[i+1][j+1] = q;
+            stamp->mat[kernelBasisIdx1+1][kernelBasisIdx2+1] = q;
         }
     }
-    
-    for (i1 = 0; i1 < ncomp1; i1++) { 
-        ivecbg = ncomp1;
-        
+
+    for (kernelBasisIdx = 0; kernelBasisIdx < ncomp1; kernelBasisIdx++) {
+        /* bgVectorIdx = index into the background vector array (the constant background term) */
+        bgVectorIdx = ncomp1;
+
         p0 = 0.0;
         /* integrate convolved images and first order background (equals 1 everywhere!)*/
-        for (k = 0; k < pixStamp; k++)
-            p0 += vec[i1][k] * vec[ivecbg][k];
-        stamp->mat[ncomp1+1][i1+1] = p0;
-    }  
-    
+        for (pixelIdx = 0; pixelIdx < pixStamp; pixelIdx++)
+            p0 += vec[kernelBasisIdx][pixelIdx] * vec[bgVectorIdx][pixelIdx];
+        stamp->mat[ncomp1+1][kernelBasisIdx+1] = p0;
+    }
+
     /* integrate first order background with itself */
     /* NOTE : DON'T MASK K HERE - BACKGROUND! */
-    for (k = 0, q = 0.0; k < pixStamp; k++)
-        q += vec[ivecbg][k] * vec[ncomp1][k];
+    for (pixelIdx = 0, q = 0.0; pixelIdx < pixStamp; pixelIdx++)
+        q += vec[bgVectorIdx][pixelIdx] * vec[ncomp1][pixelIdx];
     stamp->mat[ncomp1+1][ncomp1+1] = q;
-    
+
     return;
 }
 
@@ -630,45 +668,45 @@ void build_matrix0(stamp_struct *stamp) {
  * @param image  Full-frame reference image (fitting target).
  */
 void build_scprod0(stamp_struct *stamp, float *image) {
-    
-    int       xc,yc,xi,yi,i1,k;
+
+    int       stampColIdx,stampRowIdx,xi,yi,kernelBasisIdx,pixelIdx;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
     double    p0,q;
     double **vec;
-    
+
     ncomp1  = nCompKer;
     ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     ncomp   = ncomp1 * ncomp2;
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
+
     vec = stamp->vectors;
     xi  = stamp->xss[stamp->sscnt];
     yi  = stamp->yss[stamp->sscnt];
-    
+
     /* Do eqn 4. in Alard */
-    
+
     /* Multiply each order's convolved image with reference image */
-    for (i1 = 0; i1 < ncomp1; i1++) {
+    for (kernelBasisIdx = 0; kernelBasisIdx < ncomp1; kernelBasisIdx++) {
         p0 = 0.0;
-        for (xc = -hwKSStamp; xc <= hwKSStamp; xc++) {
-            for (yc = -hwKSStamp; yc <= hwKSStamp; yc++) {
-                k   = xc + hwKSStamp + fwKSStamp * (yc + hwKSStamp);
-                p0 += vec[i1][k] * image[xc+xi+rPixX*(yc+yi)];
+        for (stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp; stampColIdx++) {
+            for (stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp; stampRowIdx++) {
+                pixelIdx   = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
+                p0 += vec[kernelBasisIdx][pixelIdx] * image[stampColIdx+xi+rPixX*(stampRowIdx+yi)];
             }
         }
-        stamp->scprod[i1+1] = p0;
+        stamp->scprod[kernelBasisIdx+1] = p0;
     }
-    
+
     /* Multiply first order background model with reference image */
     q = 0.0;
-    for (xc = -hwKSStamp; xc <= hwKSStamp; xc++) {
-        for (yc = -hwKSStamp; yc <= hwKSStamp; yc++) {
-            k  = xc + hwKSStamp + fwKSStamp * (yc + hwKSStamp);
-            q += vec[ncomp1][k] * image[xc+xi+rPixX*(yc+yi)];	 
+    for (stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp; stampColIdx++) {
+        for (stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp; stampRowIdx++) {
+            pixelIdx  = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
+            q += vec[ncomp1][pixelIdx] * image[stampColIdx+xi+rPixX*(stampRowIdx+yi)];
         }
     }
     stamp->scprod[ncomp1+1] = q;
-    
+
     return;
 }
 
@@ -703,200 +741,200 @@ void build_scprod0(stamp_struct *stamp, float *image) {
  *         global fit is not requested.
  */
 double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) {
-    
-    int    nComps,i,im,jm,mcnt1,mcnt2,mcnt3;
+
+    int    nComps,stampIdx,matrixRowIdx,matrixColIdx,meritCount1,meritCount2,meritCount3;
     double sum=0,kmean,kstdev;
     double merit1,merit2,merit3,sig1,sig2,sig3;
-    float *m1,*m2,*m3,*ks;
-    int    xc, yc, nks;
-    
+    float *meritValues1,*meritValues2,*meritValues3,*ks;
+    int    substampCenterX, substampCenterY, nks;
+
     double **matrix;
     int mat_size;
     int ncomp1, ncomp2, ncomp, nbg_vec;
-    
+
     int ntestStamps;
     double       *testKerSol = NULL;
     stamp_struct *testStamps = NULL;
-    
+
     /* kernel sum */
     ks  = (float *)calloc(nS, sizeof(float));
     nks = 0;
-    
+
     ncomp1  = nCompKer - 1;
     ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     ncomp   = ncomp1 * ncomp2;
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
     mat_size   = ncomp1 * ncomp2 + nbg_vec + 1;
-    
+
     if (verbose>=2) fprintf(stderr, " Mat_size0: %i ncomp2: %i ncomp1: %i nbg_vec: %i \n"
                             , mat_size, ncomp2, ncomp1, nbg_vec);
-    
+
     /* for inital fit */
     nComps      = nCompKer + 1;
-    
-    for (i = 0; i < nS; i++) {
-        
-        xc    = stamps[i].xss[stamps[i].sscnt];
-        yc    = stamps[i].yss[stamps[i].sscnt];
-        
+
+    for (stampIdx = 0; stampIdx < nS; stampIdx++) {
+
+        substampCenterX    = stamps[stampIdx].xss[stamps[stampIdx].sscnt];
+        substampCenterY    = stamps[stampIdx].yss[stamps[stampIdx].sscnt];
+
         /* extract check_mat to solve one particular stamp */
-        for (im = 1; im <= nComps; im++) {
-            check_vec[im] = stamps[i].scprod[im];
-            
-            for (jm = 1; jm <= im; jm++) {
-                check_mat[im][jm] = stamps[i].mat[im][jm];
-                check_mat[jm][im] = check_mat[im][jm];
+        for (matrixRowIdx = 1; matrixRowIdx <= nComps; matrixRowIdx++) {
+            check_vec[matrixRowIdx] = stamps[stampIdx].scprod[matrixRowIdx];
+
+            for (matrixColIdx = 1; matrixColIdx <= matrixRowIdx; matrixColIdx++) {
+                check_mat[matrixRowIdx][matrixColIdx] = stamps[stampIdx].mat[matrixRowIdx][matrixColIdx];
+                check_mat[matrixColIdx][matrixRowIdx] = check_mat[matrixRowIdx][matrixColIdx];
             }
         }
-        
+
         /* fit stamp, the constant kernel coefficients end up in check_vec */
         solve_spd(check_mat, nComps, check_vec);
-        
+
         /* find kernel sum */
         sum = check_vec[1];
-        check_stack[i] = sum;
-        stamps[i].norm = sum;
+        check_stack[stampIdx] = sum;
+        stamps[stampIdx].norm = sum;
         ks[nks++]      = sum;
-        
-        if (verbose >= 2) fprintf(stderr, "    # %d    xss: %4i yss: %4i  ksum: %f\n", i,
-                                  stamps[i].xss[stamps[i].sscnt],
-                                  stamps[i].yss[stamps[i].sscnt], sum);
+
+        if (verbose >= 2) fprintf(stderr, "    # %d    xss: %4i yss: %4i  ksum: %f\n", stampIdx,
+                                  stamps[stampIdx].xss[stamps[stampIdx].sscnt],
+                                  stamps[stampIdx].yss[stamps[stampIdx].sscnt], sum);
     }
-    
+
     sigma_clip(ks, nks, &kmean, &kstdev, 10);
-    
+
     fprintf(stderr, "    %.1f sigma clipped mean ksum : %.3f, stdev : %.3f, n : %i\n",
             kerSigReject, kmean, kstdev, nks);
-    
+
     /* so we need some way to reject bad stamps here in the first test,
        we decided to use kernel sum.  is there a better way?  part of
        the trick is that if some things are variable, you get different
        kernel sums, but the subtraction itself should come out ok. */
-    
+
     /* stamps.diff : delta ksum in sigma */
-    
+
     /* here we want to reject high sigma points on the HIGH and LOW
        side, since we want things with the same normalization */
-    for (i = 0; i < nS; i++) {
-        stamps[i].diff = fabs((stamps[i].norm - kmean) / kstdev);
+    for (stampIdx = 0; stampIdx < nS; stampIdx++) {
+        stamps[stampIdx].diff = fabs((stamps[stampIdx].norm - kmean) / kstdev);
     }
-    
+
     /*****************************************************
      * Global fit for kernel solution
      *****************************************************/
-    
+
     /* do only if necessary */
     if ((strncmp(forceConvolve, "b", 1)==0)) {
-        
+
         /* allocate fitting matrix */
         matrix = (double **)calloc((mat_size + 1), sizeof(double *));
-        for (i = 0; i <= mat_size; i++) 
-            matrix[i] = (double *)calloc((mat_size + 1), sizeof(double));
-        
+        for (stampIdx = 0; stampIdx <= mat_size; stampIdx++)
+            matrix[stampIdx] = (double *)calloc((mat_size + 1), sizeof(double));
+
         /* allocate weight matrix */
         wxy = (double **)calloc(nS, sizeof(double *));
-        for (i = 0; i < nS; i++)
-            wxy[i] = (double *)calloc(ncomp2, sizeof(double));
-        
+        for (stampIdx = 0; stampIdx < nS; stampIdx++)
+            wxy[stampIdx] = (double *)calloc(ncomp2, sizeof(double));
+
         /* first find out how many good stamps to allocate */
         ntestStamps = 0;
-        for (i = 0; i < nS; i++)
-            if (stamps[i].diff < kerSigReject) {
+        for (stampIdx = 0; stampIdx < nS; stampIdx++)
+            if (stamps[stampIdx].diff < kerSigReject) {
                 ntestStamps++;
             }
             else {
-                if (verbose >= 2) fprintf(stderr, "    # %d    skipping xss: %4i yss: %4i ksum: %f sigma: %f\n", i,
-                                          stamps[i].xss[stamps[i].sscnt],
-                                          stamps[i].yss[stamps[i].sscnt],
-                                          stamps[i].norm, stamps[i].diff);
+                if (verbose >= 2) fprintf(stderr, "    # %d    skipping xss: %4i yss: %4i ksum: %f sigma: %f\n", stampIdx,
+                                          stamps[stampIdx].xss[stamps[stampIdx].sscnt],
+                                          stamps[stampIdx].yss[stamps[stampIdx].sscnt],
+                                          stamps[stampIdx].norm, stamps[stampIdx].diff);
             }
-        
+
         /* then allocate test stamp structure */
         if(!(testStamps = (stamp_struct *)calloc(ntestStamps, sizeof(stamp_struct)))) {
-            printf("Cannot Allocate Test Stamp List\n"); 
+            printf("Cannot Allocate Test Stamp List\n");
             exit (1);
         }
         testKerSol = (double *)calloc((nCompTotal+1), sizeof(double));
-        
+
         /* and point test stamp structure to good stamps */
         ntestStamps = 0;
-        for (i = 0; i < nS; i++)
-            if (stamps[i].diff < kerSigReject)
-                testStamps[ntestStamps++] = stamps[i];
-        
+        for (stampIdx = 0; stampIdx < nS; stampIdx++)
+            if (stamps[stampIdx].diff < kerSigReject)
+                testStamps[ntestStamps++] = stamps[stampIdx];
+
         /* finally do fit */
         if (verbose >= 2) fprintf(stderr, " Expanding Test Matrix For Fit\n");
         build_matrix(testStamps, ntestStamps, matrix);
         build_scprod(testStamps, ntestStamps, imRef, testKerSol);
         solve_spd(matrix, mat_size, testKerSol);
-        
+
         /* get the kernel sum to normalize figures of merit! */
         kmean = make_kernel(0, 0, testKerSol);
-        
+
         /* determine figure of merit from good stamps */
-        
+
         /* average of sum (diff**2 / value), ~variance */
-        m1 = (float *)calloc(ntestStamps, sizeof(float));
-        
+        meritValues1 = (float *)calloc(ntestStamps, sizeof(float));
+
         /* standard deviation of pixel distribution */
-        m2 = (float *)calloc(ntestStamps, sizeof(float));
-        
+        meritValues2 = (float *)calloc(ntestStamps, sizeof(float));
+
         /* noise sd based on histogram distribution width */
-        m3 = (float *)calloc(ntestStamps, sizeof(float));
-        
-        mcnt1 = 0;
-        mcnt2 = 0;
-        mcnt3 = 0;
-        for (i = 0; i < ntestStamps; i++) {
-            
-            getStampSig(&testStamps[i], testKerSol, imNoise, &sig1, &sig2, &sig3);
-            
+        meritValues3 = (float *)calloc(ntestStamps, sizeof(float));
+
+        meritCount1 = 0;
+        meritCount2 = 0;
+        meritCount3 = 0;
+        for (stampIdx = 0; stampIdx < ntestStamps; stampIdx++) {
+
+            getStampSig(&testStamps[stampIdx], testKerSol, imNoise, &sig1, &sig2, &sig3);
+
             if ((sig1 != -1) && (sig1 <= MAXVAL)) {
-                m1[mcnt1++] = sig1;
+                meritValues1[meritCount1++] = sig1;
             }
             if ((sig2 != -1) && (sig2 <= MAXVAL)) {
-                m2[mcnt2++] = sig2;
+                meritValues2[meritCount2++] = sig2;
             }
             if ((sig3 != -1) && (sig3 <= MAXVAL)) {
-                m3[mcnt3++] = sig3;
+                meritValues3[meritCount3++] = sig3;
             }
         }
-        sigma_clip(m1, mcnt1, &merit1, &sig1, 10);
-        sigma_clip(m2, mcnt2, &merit2, &sig2, 10);
-        sigma_clip(m3, mcnt3, &merit3, &sig3, 10);
-        
+        sigma_clip(meritValues1, meritCount1, &merit1, &sig1, 10);
+        sigma_clip(meritValues2, meritCount2, &merit2, &sig2, 10);
+        sigma_clip(meritValues3, meritCount3, &merit3, &sig3, 10);
+
         /* normalize by kernel sum */
         merit1 /= kmean;
         merit2 /= kmean;
         merit3 /= kmean;
-        
+
         /* clean up this mess */
         if (testKerSol)	 free(testKerSol);
         if (testStamps)	 free(testStamps);
-        for (i = 0; i <= mat_size; i++)
-            free(matrix[i]);
-        for (i = 0; i < nS; i++)
-            free(wxy[i]);
+        for (stampIdx = 0; stampIdx <= mat_size; stampIdx++)
+            free(matrix[stampIdx]);
+        for (stampIdx = 0; stampIdx < nS; stampIdx++)
+            free(wxy[stampIdx]);
         free(matrix);
         free(wxy);
-        
-        free(m1);
-        free(m2);
-        free(m3);
+
+        free(meritValues1);
+        free(meritValues2);
+        free(meritValues3);
         free(ks);
-        
+
         /* average value of figures of merit across stamps */
         fprintf(stderr, "    <var_merit> = %.3f, <sd_merit> = %.3f, <hist_merit> = %.3f\n", merit1, merit2, merit3);
-        
+
         /* return what is asked for if possible, if not use backup */
         if (strncmp(figMerit, "v", 1)==0) {
-            if (mcnt1 > 0) {
+            if (meritCount1 > 0) {
                 return merit1;
             }
-            else if (mcnt2 > 0) {
+            else if (meritCount2 > 0) {
                 return merit2;
             }
-            else if (mcnt3 > 0) {
+            else if (meritCount3 > 0) {
                 return merit3;
             }
             else {
@@ -904,27 +942,27 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
             }
         }
         else if (strncmp(figMerit, "s", 1)==0) {
-            if (mcnt2 > 0) {
+            if (meritCount2 > 0) {
                 return merit2;
             }
-            else if (mcnt1 > 0) {
+            else if (meritCount1 > 0) {
                 return merit1;
             }
-            else if (mcnt3 > 0) {
+            else if (meritCount3 > 0) {
                 return merit3;
             }
             else {
                 return 666;
             }
         }
-        else if (strncmp(figMerit, "h", 1)==0) {      
-            if (mcnt3 > 0) {
+        else if (strncmp(figMerit, "h", 1)==0) {
+            if (meritCount3 > 0) {
                 return merit3;
             }
-            else if (mcnt1 > 0) {
+            else if (meritCount1 > 0) {
                 return merit1;
             }
-            else if (mcnt2 > 0) {
+            else if (meritCount2 > 0) {
                 return merit2;
             }
             else {
@@ -934,7 +972,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
     }
     else
         return 0;
-    
+
     return 0;
 }
 
@@ -1007,16 +1045,20 @@ void build_matrix_new(stamp_struct *stamps, int nS, double **matrix) {
         for (ideg1 = 0, a1 = 1.0; ideg1 <= kerOrder; ideg1++, a1 *= fx)
             for (ideg2 = 0, a2 = 1.0; ideg2 <= kerOrder - ideg1; ideg2++, a2 *= fy)
                 wxy[istamp][k++] = a1 * a2;
-        
+
         matrix0 = stamps[istamp].mat;
         for (i = 0; i < ncomp; i++) {
+            /* Decompose linear index i into (i1, i2):
+               i1 = which Gaussian component (0 to ncomp1-1)
+               i2 = which polynomial term within that component (0 to ncomp2-1) */
             i1 = i / ncomp2;
             i2 = i - i1 * ncomp2;
-            
+
             for (j = 0; j <= i; j++) {
+                /* Same decomposition for column index j */
                 j1 = j / ncomp2;
                 j2 = j - j1 * ncomp2;
-                
+
                 /* spatially weighted W_m1 and W_m2 integrals */
                 matrix[i+2][j+2] += wxy[istamp][i2] * wxy[istamp][j2] * matrix0[i1+2][j1+2];
             }
@@ -1095,119 +1137,125 @@ void build_matrix_new(stamp_struct *stamps, int nS, double **matrix) {
  *                zeroed on entry and filled on return.
  */
 void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
-    
-    int       mat_size,i,j,pixStamp,istamp,k,i1,i2,j1,j2,ibg,jbg,ivecbg,jj;
+
+    int       mat_size,matrixRowIdx,matrixColIdx,pixStamp,stampIdx,polyTermIdx,gaussianCompIdx1,polyTermWithinGaussianIdx1,gaussianCompIdx2,polyTermIdx2,polyTermWithinGaussianIdx2,bgTermIdx,bgTermColIdx,bgVectorIdx,matrixColCalcIdx;
+    int       polyTermIdx1;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
     double    **matrix0,p0,q;
     double    **vec;
     float     rPixX2, rPixY2;
-    
-    int ideg1, ideg2, xstamp, ystamp;
-    double a1, a2, fx, fy;
-    
+
+    int polyDegX, polyDegY, stampCenterX, stampCenterY;
+    double polyBasisX, polyBasisY, normalizedX, normalizedY;
+
     ncomp1  = nCompKer - 1;
     ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     ncomp   = ncomp1 * ncomp2;
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
+
     pixStamp = fwKSStamp * fwKSStamp;
     rPixX2   = 0.5 * rPixX;
     rPixY2   = 0.5 * rPixY;
-    
+
     mat_size = ncomp1 * ncomp2 + nbg_vec + 1;
     if (verbose >= 2) fprintf(stderr, " Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i \n",mat_size,ncomp2,ncomp1,nbg_vec);
-    
-    for(i = 0; i <= mat_size; i++)
-        for(j = 0; j <= mat_size; j++)
-            matrix[i][j] = 0.0;
-    
-    for(i = 0; i < nS; i++)
-        for(j = 0; j < ncomp2; j++)
-            wxy[i][j] = 0.0;
-    
-    for (istamp = 0; istamp < nS; istamp++) {
+
+    for(matrixRowIdx = 0; matrixRowIdx <= mat_size; matrixRowIdx++)
+        for(matrixColIdx = 0; matrixColIdx <= mat_size; matrixColIdx++)
+            matrix[matrixRowIdx][matrixColIdx] = 0.0;
+
+    for(stampIdx = 0; stampIdx < nS; stampIdx++)
+        for(polyTermIdx = 0; polyTermIdx < ncomp2; polyTermIdx++)
+            wxy[stampIdx][polyTermIdx] = 0.0;
+
+    for (stampIdx = 0; stampIdx < nS; stampIdx++) {
         /* skip over any bad stamps along the way */
-        while(stamps[istamp].sscnt >= stamps[istamp].nss) {
-            ++istamp; 
-            if (istamp >= nS) break;
+        while(stamps[stampIdx].sscnt >= stamps[stampIdx].nss) {
+            ++stampIdx;
+            if (stampIdx >= nS) break;
         }
-        if (istamp >= nS) break;
-        
-        vec    = stamps[istamp].vectors;
-        xstamp = stamps[istamp].xss[stamps[istamp].sscnt];
-        ystamp = stamps[istamp].yss[stamps[istamp].sscnt];
+        if (stampIdx >= nS) break;
+
+        vec    = stamps[stampIdx].vectors;
+        stampCenterX = stamps[stampIdx].xss[stamps[stampIdx].sscnt];
+        stampCenterY = stamps[stampIdx].yss[stamps[stampIdx].sscnt];
         /* RANGE FROM -1 to 1 */
-        fx     = (xstamp - rPixX2) / rPixX2; 
-        fy     = (ystamp - rPixY2) / rPixY2; 
-        
+        normalizedX     = (stampCenterX - rPixX2) / rPixX2;
+        normalizedY     = (stampCenterY - rPixY2) / rPixY2;
+
         /* build weight function *HERE* */
-        k  = 0;
-        a1 = 1.0;
-        for (ideg1 = 0; ideg1 <= kerOrder; ideg1++) {
-            a2 = 1.0;
-            for (ideg2 = 0; ideg2 <= kerOrder - ideg1; ideg2++) {
-                wxy[istamp][k++] = a1 * a2;
-                a2 *= fy;
+        polyTermIdx  = 0;
+        polyBasisX = 1.0;
+        for (polyDegX = 0; polyDegX <= kerOrder; polyDegX++) {
+            polyBasisY = 1.0;
+            for (polyDegY = 0; polyDegY <= kerOrder - polyDegX; polyDegY++) {
+                wxy[stampIdx][polyTermIdx++] = polyBasisX * polyBasisY;
+                polyBasisY *= normalizedY;
             }
-            a1 *= fx;
+            polyBasisX *= normalizedX;
         }
-        
-        matrix0 = stamps[istamp].mat;
-        for (i = 0; i < ncomp; i++) {
-            i1 = i / ncomp2;
-            i2 = i - i1 * ncomp2;
-            
-            for (j = 0; j <= i; j++) {
-                j1 = j / ncomp2;
-                j2 = j - j1 * ncomp2;
-                
+
+        matrix0 = stamps[stampIdx].mat;
+        for (polyTermIdx1 = 0; polyTermIdx1 < ncomp; polyTermIdx1++) {
+            /* Decompose linear index polyTermIdx1 into (gaussianCompIdx1, polyTermWithinGaussianIdx1):
+               gaussianCompIdx1 = which Gaussian component (0 to ncomp1-1)
+               polyTermWithinGaussianIdx1 = which polynomial term within that component (0 to ncomp2-1) */
+            gaussianCompIdx1 = polyTermIdx1 / ncomp2;
+            polyTermWithinGaussianIdx1 = polyTermIdx1 - gaussianCompIdx1 * ncomp2;
+
+            for (polyTermIdx2 = 0; polyTermIdx2 <= polyTermIdx1; polyTermIdx2++) {
+                /* Same decomposition for column index polyTermIdx2 */
+                gaussianCompIdx2 = polyTermIdx2 / ncomp2;
+                polyTermWithinGaussianIdx2 = polyTermIdx2 - gaussianCompIdx2 * ncomp2;
+
                 /* spatially weighted W_m1 and W_m2 integrals */
-                matrix[i+2][j+2] += wxy[istamp][i2] * wxy[istamp][j2] * matrix0[i1+2][j1+2];
+                matrix[(gaussianCompIdx1 * ncomp2 + polyTermWithinGaussianIdx1)+2][(gaussianCompIdx2 * ncomp2 + polyTermWithinGaussianIdx2)+2] += wxy[stampIdx][polyTermWithinGaussianIdx1] * wxy[stampIdx][polyTermWithinGaussianIdx2] * matrix0[gaussianCompIdx1+2][gaussianCompIdx2+2];
             }
         }
-        
+
         matrix[1][1] += matrix0[1][1];
-        for (i = 0; i < ncomp; i++) {
-            i1 = i / ncomp2;
-            i2 = i - i1 * ncomp2;
-            matrix[i+2][1] += wxy[istamp][i2] * matrix0[i1+2][1];
+        for (polyTermIdx1 = 0; polyTermIdx1 < ncomp; polyTermIdx1++) {
+            /* Index decomposition for background terms */
+            gaussianCompIdx1 = polyTermIdx1 / ncomp2;
+            polyTermWithinGaussianIdx1 = polyTermIdx1 - gaussianCompIdx1 * ncomp2;
+            matrix[(gaussianCompIdx1 * ncomp2 + polyTermWithinGaussianIdx1)+2][1] += wxy[stampIdx][polyTermWithinGaussianIdx1] * matrix0[gaussianCompIdx1+2][1];
         }
-        
-        for (ibg = 0; ibg < nbg_vec; ibg++) {
-            i = ncomp + ibg + 1;
-            ivecbg = ncomp1 + ibg + 1;
-            for (i1 = 1; i1 < ncomp1 + 1; i1++) { 
+
+        for (bgTermIdx = 0; bgTermIdx < nbg_vec; bgTermIdx++) {
+            polyTermIdx1 = ncomp + bgTermIdx + 1;
+            bgVectorIdx = ncomp1 + bgTermIdx + 1;
+            for (gaussianCompIdx1 = 1; gaussianCompIdx1 < ncomp1 + 1; gaussianCompIdx1++) {
                 p0 = 0.0;
-                
+
                 /* integrate convolved images over all order backgrounds */
-                for (k = 0; k < pixStamp; k++)
-                    p0 += vec[i1][k] * vec[ivecbg][k];
-                
+                for (polyTermIdx = 0; polyTermIdx < pixStamp; polyTermIdx++)
+                    p0 += vec[gaussianCompIdx1][polyTermIdx] * vec[bgVectorIdx][polyTermIdx];
+
                 /* spatially weighted image * background terms */
-                for (i2 = 0; i2 < ncomp2; i2++) {
-                    jj = (i1 - 1) * ncomp2 + i2 + 1;
-                    matrix[i+1][jj+1] += p0 * wxy[istamp][i2];
+                for (polyTermIdx2 = 0; polyTermIdx2 < ncomp2; polyTermIdx2++) {
+                    matrixColCalcIdx = (gaussianCompIdx1 - 1) * ncomp2 + polyTermIdx2 + 1;
+                    matrix[polyTermIdx1+1][matrixColCalcIdx+1] += p0 * wxy[stampIdx][polyTermIdx2];
                 }
             }
-            
+
             p0 = 0.0;
-            for (k = 0; k < pixStamp; k++)
-                p0 += vec[0][k] * vec[ivecbg][k];
-            matrix[i+1][1] += p0;
-            
+            for (polyTermIdx = 0; polyTermIdx < pixStamp; polyTermIdx++)
+                p0 += vec[0][polyTermIdx] * vec[bgVectorIdx][polyTermIdx];
+            matrix[polyTermIdx1+1][1] += p0;
+
             /* background * background */
-            for (jbg = 0;jbg <= ibg; jbg++) {
-                for (k = 0, q = 0.0; k < pixStamp; k++)
-                    q += vec[ivecbg][k] * vec[ncomp1+jbg+1][k];
-                matrix[i+1][ncomp+jbg+2] += q;
+            for (bgTermColIdx = 0;bgTermColIdx <= bgTermIdx; bgTermColIdx++) {
+                for (polyTermIdx = 0, q = 0.0; polyTermIdx < pixStamp; polyTermIdx++)
+                    q += vec[bgVectorIdx][polyTermIdx] * vec[ncomp1+bgTermColIdx+1][polyTermIdx];
+                matrix[polyTermIdx1+1][ncomp+bgTermColIdx+2] += q;
             }
         }
     }
-    
+
     /* fill lower half of matrix */
-    for (i = 0; i < mat_size; i++) {
-        for (j = 0; j <= i; j++) {
-            matrix[j+1][i+1] = matrix[i+1][j+1];
+    for (matrixRowIdx = 0; matrixRowIdx < mat_size; matrixRowIdx++) {
+        for (matrixColIdx = 0; matrixColIdx <= matrixRowIdx; matrixColIdx++) {
+            matrix[matrixColIdx+1][matrixRowIdx+1] = matrix[matrixRowIdx+1][matrixColIdx+1];
             /* fprintf(stderr, "matrix[%i][%i]: %lf\n", i,j,matrix[i+1][j+1]); */
         }
     }
@@ -1235,57 +1283,57 @@ void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
  *                   zeroed on entry, filled on return.
  */
 void build_scprod(stamp_struct *stamps, int nS, float *image, double *kernelSol) {
-    
-    int       istamp,xc,yc,xi,yi,i1,i2,k,ibg,i,ii;
+
+    int       stampIdx,stampColIdx,stampRowIdx,stampCenterX,stampCenterY,gaussianCompIdx,polyTermIdx,pixelIdx,bgVecIdx,solIdx,recomputedColIdx;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
-    double    p0,q;
-    double    **vec;
-    
+    double    scalarProduct,innerProduct;
+    double    **vectorArray;
+
     ncomp1  = nCompKer - 1;
     ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     ncomp   = ncomp1 * ncomp2;
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
-    
-    for (i = 0; i <= ncomp + nbg_vec + 1; i++)
-        kernelSol[i]=0.0;
-    
-    for (istamp = 0; istamp < nS; istamp++) {
+
+
+    for (solIdx = 0; solIdx <= ncomp + nbg_vec + 1; solIdx++)
+        kernelSol[solIdx]=0.0;
+
+    for (stampIdx = 0; stampIdx < nS; stampIdx++) {
         /* skip over any bad stamps along the way */
-        while(stamps[istamp].sscnt >= stamps[istamp].nss) {
-            ++istamp; 
-            if (istamp >= nS) break;
+        while(stamps[stampIdx].sscnt >= stamps[stampIdx].nss) {
+            ++stampIdx;
+            if (stampIdx >= nS) break;
         }
-        if (istamp >= nS) break;
-        
-        vec= stamps[istamp].vectors;
-        xi = stamps[istamp].xss[stamps[istamp].sscnt];
-        yi = stamps[istamp].yss[stamps[istamp].sscnt];
-        
-        p0 = stamps[istamp].scprod[1];
-        kernelSol[1] += p0;
-        
+        if (stampIdx >= nS) break;
+
+        vectorArray= stamps[stampIdx].vectors;
+        stampCenterX = stamps[stampIdx].xss[stamps[stampIdx].sscnt];
+        stampCenterY = stamps[stampIdx].yss[stamps[stampIdx].sscnt];
+
+        scalarProduct = stamps[stampIdx].scprod[1];
+        kernelSol[1] += scalarProduct;
+
         /* spatially weighted convolved image * ref image */
-        for (i1 = 1; i1 < ncomp1 + 1; i1++) {
-            p0 = stamps[istamp].scprod[i1+1];
-            for (i2 = 0; i2 < ncomp2; i2++) {
-                ii = (i1-1) * ncomp2 + i2 + 1;
+        for (gaussianCompIdx = 1; gaussianCompIdx < ncomp1 + 1; gaussianCompIdx++) {
+            scalarProduct = stamps[stampIdx].scprod[gaussianCompIdx+1];
+            for (polyTermIdx = 0; polyTermIdx < ncomp2; polyTermIdx++) {
+                recomputedColIdx = (gaussianCompIdx-1) * ncomp2 + polyTermIdx + 1;
                 /* no need for weighting here */
-                kernelSol[ii+1] += p0 * wxy[istamp][i2];
+                kernelSol[recomputedColIdx+1] += scalarProduct * wxy[stampIdx][polyTermIdx];
             }
         }
-        
+
         /* spatially weighted bg model convolved with ref image */
-        for (ibg = 0; ibg < nbg_vec; ibg++) {
-            q = 0.0;
-            for (xc = -hwKSStamp; xc <= hwKSStamp; xc++) {
-                for (yc = -hwKSStamp; yc <= hwKSStamp;yc++) {
-                    k  = xc + hwKSStamp + fwKSStamp * (yc + hwKSStamp);
-                    q += vec[ncomp1+ibg+1][k] * image[xc+xi+rPixX*(yc+yi)];
-                    
+        for (bgVecIdx = 0; bgVecIdx < nbg_vec; bgVecIdx++) {
+            innerProduct = 0.0;
+            for (stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp; stampColIdx++) {
+                for (stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp;stampRowIdx++) {
+                    pixelIdx  = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
+                    innerProduct += vectorArray[ncomp1+bgVecIdx+1][pixelIdx] * image[stampColIdx+stampCenterX+rPixX*(stampRowIdx+stampCenterY)];
+
                 }
             }
-            kernelSol[ncomp+ibg+2] += q;
+            kernelSol[ncomp+bgVecIdx+2] += innerProduct;
         }
     }
     return;
@@ -1309,37 +1357,37 @@ void build_scprod(stamp_struct *stamps, int nS, float *image, double *kernelSol)
  *                 if no valid pixels exist.
  */
 void getFinalStampSig(stamp_struct *stamp, float *imDiff, float *imNoise, double *sig) {
-    int i, j, idx, nsig=0;
-    int xRegion2, xRegion = stamp->xss[stamp->sscnt];
-    int yRegion2, yRegion = stamp->yss[stamp->sscnt];
-    float idat, indat;
-    
+    int colIdx, rowIdx, pixelIdx, validPixelCount=0;
+    int xPixel, xRegion = stamp->xss[stamp->sscnt];
+    int yPixel, yRegion = stamp->yss[stamp->sscnt];
+    float diffData, noiseInv;
+
     *sig = 0;
-    
-    for (j = 0; j < fwKSStamp; j++) {
-        yRegion2 = yRegion - hwKSStamp + j;
-        
-        for (i = 0; i < fwKSStamp; i++) {
-            xRegion2 = xRegion - hwKSStamp + i;
-            
-            idx   = xRegion2+rPixX*yRegion2;
-            idat  = imDiff[idx];
-            indat = 1. / imNoise[idx];
-            
+
+    for (rowIdx = 0; rowIdx < fwKSStamp; rowIdx++) {
+        yPixel = yRegion - hwKSStamp + rowIdx;
+
+        for (colIdx = 0; colIdx < fwKSStamp; colIdx++) {
+            xPixel = xRegion - hwKSStamp + colIdx;
+
+            pixelIdx   = xPixel+rPixX*yPixel;
+            diffData  = imDiff[pixelIdx];
+            noiseInv = 1. / imNoise[pixelIdx];
+
             /* this shouldn't be the case, but just in case... */
-            if (mRData[idx] & FLAG_INPUT_ISBAD)
+            if (mRData[pixelIdx] & FLAG_INPUT_ISBAD)
                 continue;
-            
-            nsig++;
-            *sig += idat * idat * indat * indat;
-            
+
+            validPixelCount++;
+            *sig += diffData * diffData * noiseInv * noiseInv;
+
         }
     }
-    if (nsig > 0) 
-        *sig /= nsig;
+    if (validPixelCount > 0)
+        *sig /= validPixelCount;
     else
         *sig = -1;
-    
+
     return;
 }
 
@@ -1366,69 +1414,69 @@ void getFinalStampSig(stamp_struct *stamp, float *imDiff, float *imNoise, double
  * @param sig3       Output: histogram FWHM metric.
  */
 void getStampSig(stamp_struct *stamp, double *kernelSol, float *imNoise, double *sig1, double *sig2, double *sig3) {
-    int i, j, idx, sscnt, nsig, xRegion, yRegion, xRegion2, yRegion2;
+    int colIdx, rowIdx, stampPixelIdx, substampIdx, validPixelCount, xRegion, yRegion, xPixel, yPixel;
     double cSum, cMean, cMedian, cMode, cLfwhm;
-    double *im, tdat, idat, ndat, diff, bg;
-    
+    double *referenceImage, templateData, imageData, noiseData, diffValue, bgValue;
+
     /* info */
-    sscnt   = stamp->sscnt;
-    xRegion = stamp->xss[sscnt];
-    yRegion = stamp->yss[sscnt];
-    
+    substampIdx   = stamp->sscnt;
+    xRegion = stamp->xss[substampIdx];
+    yRegion = stamp->yss[substampIdx];
+
     /* the comparison image */
-    im = stamp->krefArea;
+    referenceImage = stamp->krefArea;
     /* background from fit */
-    bg = get_background(xRegion, yRegion, kernelSol);
+    bgValue = get_background(xRegion, yRegion, kernelSol);
     /* temp contains the convolved image from fit, fwKSStamp x fwKSStamp */
-    make_model(stamp, kernelSol, temp); 
-    
+    make_model(stamp, kernelSol, temp);
+
     /* get sigma of stamp diff */
-    nsig = 0;
+    validPixelCount = 0;
     *sig1 = 0;
     *sig2 = 0;
     *sig3 = 0;
-    
-    for (j = 0; j < fwKSStamp; j++) {
-        yRegion2 = yRegion - hwKSStamp + j;
-        
-        for (i = 0; i < fwKSStamp; i++) {
-            xRegion2 = xRegion - hwKSStamp + i;
-            
-            idx  = i+j*fwKSStamp;
-            
-            tdat = temp[idx];
-            idat = im[idx];
-            ndat = imNoise[xRegion2+rPixX*yRegion2];
-            
-            diff = tdat - idat + bg;
-            
-            if ((mRData[xRegion2+rPixX*yRegion2] & FLAG_INPUT_ISBAD) || (fabs(idat) <= ZEROVAL)) {
+
+    for (rowIdx = 0; rowIdx < fwKSStamp; rowIdx++) {
+        yPixel = yRegion - hwKSStamp + rowIdx;
+
+        for (colIdx = 0; colIdx < fwKSStamp; colIdx++) {
+            xPixel = xRegion - hwKSStamp + colIdx;
+
+            stampPixelIdx  = colIdx+rowIdx*fwKSStamp;
+
+            templateData = temp[stampPixelIdx];
+            imageData = referenceImage[stampPixelIdx];
+            noiseData = imNoise[xPixel+rPixX*yPixel];
+
+            diffValue = templateData - imageData + bgValue;
+
+            if ((mRData[xPixel+rPixX*yPixel] & FLAG_INPUT_ISBAD) || (fabs(imageData) <= ZEROVAL)) {
                 continue;
             }
             else {
-                temp[idx] = diff;
+                temp[stampPixelIdx] = diffValue;
             }
-            
+
             /* check for NaN */
-            if ((tdat*0.0 != 0.0) || (idat*0.0 != 0.0)) {
-                mRData[xRegion2+rPixX*yRegion2] |= (FLAG_INPUT_ISBAD | FLAG_ISNAN);
+            if ((templateData*0.0 != 0.0) || (imageData*0.0 != 0.0)) {
+                mRData[xPixel+rPixX*yPixel] |= (FLAG_INPUT_ISBAD | FLAG_ISNAN);
                 continue;
             }
-            
-            nsig++;
-            *sig1 += diff * diff / ndat;
-            /*fprintf(stderr, "OK %d %d : %f %f %f\n", xRegion2, yRegion2, tdat, idat, ndat);*/
+
+            validPixelCount++;
+            *sig1 += diffValue * diffValue / noiseData;
+            /*fprintf(stderr, "OK %d %d : %f %f %f\n", xPixel, yPixel, templateData, imageData, noiseData);*/
         }
     }
-    if (nsig > 0) {
-        *sig1 /= nsig;
+    if (validPixelCount > 0) {
+        *sig1 /= validPixelCount;
         if (*sig1 >= MAXVAL)
             *sig1 = -1;
     }
     else
         *sig1 = -1;
-    
-    
+
+
     /* don't do think unless you need to! */
     if (strncmp(figMerit, "v", 1)!=0) {
         if (getStampStats3(temp, xRegion - hwKSStamp, yRegion - hwKSStamp, fwKSStamp, fwKSStamp,
@@ -1441,7 +1489,7 @@ void getStampSig(stamp_struct *stamp, double *kernelSol, float *imNoise, double 
         else if (*sig3 < 0 || *sig3 >= MAXVAL)
             *sig3 = -1;
     }
-    
+
     return;
 }
 
@@ -1477,106 +1525,106 @@ void getStampSig(stamp_struct *stamp, double *kernelSol, float *imNoise, double 
  *         converged.
  */
 char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *imRef, float *imNoise, double *meansigSubstamps, double *scatterSubstamps, int *NskippedSubstamps) {
-    
-    int    istamp,nss,scnt;
-    double sig,mean,stdev;
-    char   check;
+
+    int    stampIdx,validStampCount,goodStampCount;
+    double qualityMetric,mean,stdev;
+    char   needsReiteration;
     double sig1, sig2, sig3;
-    float  *ss;
-    
-    ss  = (float *)calloc(nS, sizeof(float));
-    nss = 0;
-    
-    sig = 0;
-    check = 0;
+    float  *qualityMetrics;
+
+    qualityMetrics  = (float *)calloc(nS, sizeof(float));
+    validStampCount = 0;
+
+    qualityMetric = 0;
+    needsReiteration = 0;
     mean = stdev = 0.0;
     *NskippedSubstamps=0;
-    
-    for (istamp = 0; istamp < nS; istamp++) {
-        
+
+    for (stampIdx = 0; stampIdx < nS; stampIdx++) {
+
         /* if was fit with a good legit substamp */
-        if (stamps[istamp].sscnt < stamps[istamp].nss) {
-            
-            getStampSig(&stamps[istamp], kernelSol, imNoise, &sig1, &sig2, &sig3);
-            
+        if (stamps[stampIdx].sscnt < stamps[stampIdx].nss) {
+
+            getStampSig(&stamps[stampIdx], kernelSol, imNoise, &sig1, &sig2, &sig3);
+
             if ((strncmp(figMerit, "v", 1)==0 && (sig1 == -1)) ||
                 (strncmp(figMerit, "s", 1)==0 && (sig2 == -1)) ||
                 (strncmp(figMerit, "h", 1)==0 && (sig3 == -1))) {
-                
+
                 /* something went wrong with this one... */
                 if (verbose>=2) fprintf(stderr, "\n    # %d    xss: %4i yss: %4i sig: %6.3f sscnt: %2i nss: %2i ITERATE substamp (BAD)\n",
-                                        istamp,
-                                        stamps[istamp].xss[stamps[istamp].sscnt],
-                                        stamps[istamp].yss[stamps[istamp].sscnt],
-                                        sig, stamps[istamp].sscnt, stamps[istamp].nss);
-                
-                stamps[istamp].sscnt++;
-                fillStamp(&stamps[istamp], imConv, imRef);
+                                        stampIdx,
+                                        stamps[stampIdx].xss[stamps[stampIdx].sscnt],
+                                        stamps[stampIdx].yss[stamps[stampIdx].sscnt],
+                                        qualityMetric, stamps[stampIdx].sscnt, stamps[stampIdx].nss);
+
+                stamps[stampIdx].sscnt++;
+                fillStamp(&stamps[stampIdx], imConv, imRef);
                 if (verbose>=2) fprintf(stderr, "\n");
-                
-                check = 1;
-                
+
+                needsReiteration = 1;
+
             } else {
                 if (strncmp(figMerit, "v", 1)==0)
-                    sig = sig1;
+                    qualityMetric = sig1;
                 else if (strncmp(figMerit, "s", 1)==0)
-                    sig = sig2;
+                    qualityMetric = sig2;
                 else if (strncmp(figMerit, "h", 1)==0)
-                    sig = sig3;
-                
+                    qualityMetric = sig3;
+
                 if (verbose>=2) fprintf(stderr, "    # %d    xss: %4i yss: %4i sig: %6.3f sscnt: %2i nss: %2i OK\n",
-                                        istamp,
-                                        stamps[istamp].xss[stamps[istamp].sscnt],
-                                        stamps[istamp].yss[stamps[istamp].sscnt],
-                                        sig, stamps[istamp].sscnt, stamps[istamp].nss);
-                
-                stamps[istamp].chi2 = sig;
-                ss[nss++]           = sig;
-                
+                                        stampIdx,
+                                        stamps[stampIdx].xss[stamps[stampIdx].sscnt],
+                                        stamps[stampIdx].yss[stamps[stampIdx].sscnt],
+                                        qualityMetric, stamps[stampIdx].sscnt, stamps[stampIdx].nss);
+
+                stamps[stampIdx].chi2 = qualityMetric;
+                qualityMetrics[validStampCount++]           = qualityMetric;
+
             }
         } else {
             (*NskippedSubstamps)++;
-            if (verbose>=2) fprintf(stderr, "    xs : %4i ys : %4i skipping... \n",stamps[istamp].x, stamps[istamp].y);
+            if (verbose>=2) fprintf(stderr, "    xs : %4i ys : %4i skipping... \n",stamps[stampIdx].x, stamps[stampIdx].y);
         }
     }
-    
-    sigma_clip(ss, nss, &mean, &stdev, 10);
+
+    sigma_clip(qualityMetrics, validStampCount, &mean, &stdev, 10);
     fprintf(stderr, "    Mean sig: %6.3f stdev: %6.3f\n", mean, stdev);
     fprintf(stderr, "    Iterating through stamps with sig > %.3f\n", mean + kerSigReject * stdev);
-    
+
     /* save the mean and scatter so that it can be saved in the fits header */
     (*meansigSubstamps)=mean;
     (*scatterSubstamps)=stdev;
-    
-    scnt = 0;
-    for (istamp = 0; istamp < nS; istamp++) {
+
+    goodStampCount = 0;
+    for (stampIdx = 0; stampIdx < nS; stampIdx++) {
         /* if currently represented by a good substamp */
-        if (stamps[istamp].sscnt < stamps[istamp].nss) {
-            
+        if (stamps[stampIdx].sscnt < stamps[stampIdx].nss) {
+
             /* no fabs() here, keep good stamps kerSigReject on the low side! */
-            if ((stamps[istamp].chi2 - mean) > kerSigReject * stdev) { 
+            if ((stamps[stampIdx].chi2 - mean) > kerSigReject * stdev) {
                 if (verbose>=2) fprintf(stderr, "\n    # %d    xss: %4i yss: %4i sig: %6.3f sscnt: %2i nss: %2i ITERATE substamp (poor sig)\n",
-                                        istamp,
-                                        stamps[istamp].xss[stamps[istamp].sscnt],
-                                        stamps[istamp].yss[stamps[istamp].sscnt],
-                                        stamps[istamp].chi2,
-                                        stamps[istamp].sscnt,stamps[istamp].nss);
-                
-                stamps[istamp].sscnt++;
-                scnt += (!(fillStamp(&stamps[istamp], imConv, imRef)));
+                                        stampIdx,
+                                        stamps[stampIdx].xss[stamps[stampIdx].sscnt],
+                                        stamps[stampIdx].yss[stamps[stampIdx].sscnt],
+                                        stamps[stampIdx].chi2,
+                                        stamps[stampIdx].sscnt,stamps[stampIdx].nss);
+
+                stamps[stampIdx].sscnt++;
+                goodStampCount += (!(fillStamp(&stamps[stampIdx], imConv, imRef)));
                 if (verbose>=2) fprintf(stderr, "\n");
-                
-                check = 1;
+
+                needsReiteration = 1;
             }
             else
-                scnt += 1;
+                goodStampCount += 1;
         }
     }
-    
-    fprintf(stderr, "    %d out of %d stamps remain\n", scnt, nS);
-    
-    free(ss);
-    return check;
+
+    fprintf(stderr, "    %d out of %d stamps remain\n", goodStampCount, nS);
+
+    free(qualityMetrics);
+    return needsReiteration;
 }
 
 /**
@@ -1595,38 +1643,38 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
  */
 static double make_kernel_local(int xi, int yi, double *kernelSol,
                                 double *lkernel, double *lkernel_coeffs) {
-    int    i1, k, ix, iy, i;
-    double ax, ay, sum_kernel;
-    double xf, yf;
+    int    gaussianCompIdx, solutionIdx, polyDegX, polyDegY, kernelPixelIdx;
+    double polyBasisX, polyBasisY, kernelSum;
+    double normalizedX, normalizedY;
 
-    k  = 2;
-    xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
-    yf = (yi - 0.5 * rPixY) / (0.5 * rPixY);
+    solutionIdx  = 2;
+    normalizedX = (xi - 0.5 * rPixX) / (0.5 * rPixX);
+    normalizedY = (yi - 0.5 * rPixY) / (0.5 * rPixY);
 
-    for (i1 = 1; i1 < nCompKer; i1++) {
-        lkernel_coeffs[i1] = 0.0;
-        ax = 1.0;
-        for (ix = 0; ix <= kerOrder; ix++) {
-            ay = 1.0;
-            for (iy = 0; iy <= kerOrder - ix; iy++) {
-                lkernel_coeffs[i1] += kernelSol[k++] * ax * ay;
-                ay *= yf;
+    for (gaussianCompIdx = 1; gaussianCompIdx < nCompKer; gaussianCompIdx++) {
+        lkernel_coeffs[gaussianCompIdx] = 0.0;
+        polyBasisX = 1.0;
+        for (polyDegX = 0; polyDegX <= kerOrder; polyDegX++) {
+            polyBasisY = 1.0;
+            for (polyDegY = 0; polyDegY <= kerOrder - polyDegX; polyDegY++) {
+                lkernel_coeffs[gaussianCompIdx] += kernelSol[solutionIdx++] * polyBasisX * polyBasisY;
+                polyBasisY *= normalizedY;
             }
-            ax *= xf;
+            polyBasisX *= normalizedX;
         }
     }
     lkernel_coeffs[0] = kernelSol[1];
 
-    for (i = 0; i < fwKernel * fwKernel; i++)
-        lkernel[i] = 0.0;
+    for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel; kernelPixelIdx++)
+        lkernel[kernelPixelIdx] = 0.0;
 
-    sum_kernel = 0.0;
-    for (i = 0; i < fwKernel * fwKernel; i++) {
-        for (i1 = 0; i1 < nCompKer; i1++)
-            lkernel[i] += lkernel_coeffs[i1] * kernel_vec[i1][i];
-        sum_kernel += lkernel[i];
+    kernelSum = 0.0;
+    for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel; kernelPixelIdx++) {
+        for (gaussianCompIdx = 0; gaussianCompIdx < nCompKer; gaussianCompIdx++)
+            lkernel[kernelPixelIdx] += lkernel_coeffs[gaussianCompIdx] * kernel_vec[gaussianCompIdx][kernelPixelIdx];
+        kernelSum += lkernel[kernelPixelIdx];
     }
-    return sum_kernel;
+    return kernelSum;
 }
 
 #ifdef USE_FFTW
@@ -2045,16 +2093,16 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
     return;
 #endif
 
-    int       i1,j1,i2,j2,nsteps_x,nsteps_y,i,j,i0,j0,ic,jc,ik,jk,nc,ni,mbit,dovar;
-    double    q, qv, kk, aks, uks;
+    int       kernelStepColIdx,kernelStepRowIdx,pixelWithinStepColIdx,pixelWithinStepRowIdx,nsteps_x,nsteps_y,pixelX,pixelY,kernelStepOriginX,kernelStepOriginY,kernelCenterColIdx,kernelCenterRowIdx,kernelArrayColIdx,kernelArrayRowIdx,neighborPixelIdx,outputPixelIdx,maskedPixelFlags,hasVarianceImage;
+    double    convolvedValue, convolvedVariance, kernelValue, absKernelSum, unmaskedKernelSum;
     float     *vData=NULL;
 
     if ((*variance) == NULL)
-        dovar = 0;
+        hasVarianceImage = 0;
     else
-        dovar = 1;
+        hasVarianceImage = 1;
 
-    if (dovar) {
+    if (hasVarianceImage) {
         if ( !(vData = (float *)calloc(xSize*ySize, sizeof(float)))) {
             return;
         }
@@ -2065,72 +2113,72 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
 
 #ifdef _OPENMP
     /* Each thread gets private copies of the loop indices and accumulators.
-       j1 is automatically private as the omp-for loop variable.
+       kernelStepRowIdx is automatically private as the omp-for loop variable.
        lkernel / lkernel_coeffs are allocated per-thread inside the parallel
        block so that concurrent make_kernel_local() calls are race-free. */
     #pragma omp parallel \
-        private(i1, i2, j2, i, j, i0, j0, ic, jc, ik, jk, nc, ni, mbit, q, qv, kk, aks, uks)
+        private(kernelStepColIdx, pixelWithinStepColIdx, pixelWithinStepRowIdx, pixelX, pixelY, kernelStepOriginX, kernelStepOriginY, kernelCenterColIdx, kernelCenterRowIdx, kernelArrayColIdx, kernelArrayRowIdx, neighborPixelIdx, outputPixelIdx, maskedPixelFlags, convolvedValue, convolvedVariance, kernelValue, absKernelSum, unmaskedKernelSum)
     {
         double *lkernel       = (double *)calloc(fwKernel * fwKernel, sizeof(double));
         double *lkernel_coeffs = (double *)calloc(nCompKer, sizeof(double));
 
         #pragma omp for schedule(dynamic)
-        for (j1 = 0; j1 < nsteps_y; j1++) {
-            j0 = j1 * kcStep + hwKernel;
+        for (kernelStepRowIdx = 0; kernelStepRowIdx < nsteps_y; kernelStepRowIdx++) {
+            kernelStepOriginY = kernelStepRowIdx * kcStep + hwKernel;
 
-            for (i1 = 0; i1 < nsteps_x; i1++) {
-                i0 = i1 * kcStep + hwKernel;
+            for (kernelStepColIdx = 0; kernelStepColIdx < nsteps_x; kernelStepColIdx++) {
+                kernelStepOriginX = kernelStepColIdx * kcStep + hwKernel;
 
-                make_kernel_local(i0 + hwKernel, j0 + hwKernel, kernelSol,
+                make_kernel_local(kernelStepOriginX + hwKernel, kernelStepOriginY + hwKernel, kernelSol,
                                   lkernel, lkernel_coeffs);
 
-                for (j2 = 0; j2 < kcStep; j2++) {
-                    j = j0 + j2;
-                    if (j >= ySize - hwKernel) break;
+                for (pixelWithinStepRowIdx = 0; pixelWithinStepRowIdx < kcStep; pixelWithinStepRowIdx++) {
+                    pixelY = kernelStepOriginY + pixelWithinStepRowIdx;
+                    if (pixelY >= ySize - hwKernel) break;
 
-                    for (i2 = 0; i2 < kcStep; i2++) {
-                        i = i0 + i2;
-                        if (i >= xSize - hwKernel) break;
+                    for (pixelWithinStepColIdx = 0; pixelWithinStepColIdx < kcStep; pixelWithinStepColIdx++) {
+                        pixelX = kernelStepOriginX + pixelWithinStepColIdx;
+                        if (pixelX >= xSize - hwKernel) break;
 
-                        ni = i + xSize * j;
-                        qv = q = aks = uks = 0.0;
-                        mbit = 0x0;
-                        for (jc = j - hwKernel; jc <= j + hwKernel; jc++) {
-                            jk = j - jc + hwKernel;
+                        outputPixelIdx = pixelX + xSize * pixelY;
+                        convolvedVariance = convolvedValue = absKernelSum = unmaskedKernelSum = 0.0;
+                        maskedPixelFlags = 0x0;
+                        for (kernelCenterRowIdx = pixelY - hwKernel; kernelCenterRowIdx <= pixelY + hwKernel; kernelCenterRowIdx++) {
+                            kernelArrayRowIdx = pixelY - kernelCenterRowIdx + hwKernel;
 
-                            for (ic = i - hwKernel; ic <= i + hwKernel; ic++) {
-                                ik = i - ic + hwKernel;
+                            for (kernelCenterColIdx = pixelX - hwKernel; kernelCenterColIdx <= pixelX + hwKernel; kernelCenterColIdx++) {
+                                kernelArrayColIdx = pixelX - kernelCenterColIdx + hwKernel;
 
-                                nc = ic + xSize * jc;
-                                kk = lkernel[ik + jk * fwKernel];
+                                neighborPixelIdx = kernelCenterColIdx + xSize * kernelCenterRowIdx;
+                                kernelValue = lkernel[kernelArrayColIdx + kernelArrayRowIdx * fwKernel];
 
-                                q    += image[nc] * kk;
-                                if (dovar) {
+                                convolvedValue    += image[neighborPixelIdx] * kernelValue;
+                                if (hasVarianceImage) {
                                     if (convolveVariance)
-                                        qv += (*variance)[nc] * kk;
+                                        convolvedVariance += (*variance)[neighborPixelIdx] * kernelValue;
                                     else
-                                        qv += (*variance)[nc] * kk * kk;
+                                        convolvedVariance += (*variance)[neighborPixelIdx] * kernelValue * kernelValue;
                                 }
 
-                                mbit |= cMask[nc];
-                                aks  += fabs(kk);
-                                if (!(cMask[nc] & FLAG_INPUT_ISBAD))
-                                    uks += fabs(kk);
+                                maskedPixelFlags |= cMask[neighborPixelIdx];
+                                absKernelSum  += fabs(kernelValue);
+                                if (!(cMask[neighborPixelIdx] & FLAG_INPUT_ISBAD))
+                                    unmaskedKernelSum += fabs(kernelValue);
                             }
                         }
 
-                        cRdata[ni] = q;
-                        if (dovar)
-                            vData[ni] = qv;
+                        cRdata[outputPixelIdx] = convolvedValue;
+                        if (hasVarianceImage)
+                            vData[outputPixelIdx] = convolvedVariance;
 
-                        mRData[ni] |= cMask[ni];
-                        mRData[ni] |= FLAG_OUTPUT_ISBAD * ((cMask[ni] & FLAG_INPUT_ISBAD) > 0);
+                        mRData[outputPixelIdx] |= cMask[outputPixelIdx];
+                        mRData[outputPixelIdx] |= FLAG_OUTPUT_ISBAD * ((cMask[outputPixelIdx] & FLAG_INPUT_ISBAD) > 0);
 
-                        if (mbit) {
-                            if ((uks / aks) < kerFracMask)
-                                mRData[ni] |= (FLAG_OUTPUT_ISBAD | FLAG_BAD_CONV);
+                        if (maskedPixelFlags) {
+                            if ((unmaskedKernelSum / absKernelSum) < kerFracMask)
+                                mRData[outputPixelIdx] |= (FLAG_OUTPUT_ISBAD | FLAG_BAD_CONV);
                             else
-                                mRData[ni] |= FLAG_OK_CONV;
+                                mRData[outputPixelIdx] |= FLAG_OK_CONV;
                         }
                     }
                 }
@@ -2141,66 +2189,66 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
         free(lkernel_coeffs);
     }
 #else
-    for (j1 = 0; j1 < nsteps_y; j1++) {
-        j0 = j1 * kcStep + hwKernel;
+    for (kernelStepRowIdx = 0; kernelStepRowIdx < nsteps_y; kernelStepRowIdx++) {
+        kernelStepOriginY = kernelStepRowIdx * kcStep + hwKernel;
 
-        for(i1 = 0; i1 < nsteps_x; i1++) {
-            i0 = i1 * kcStep + hwKernel;
+        for(kernelStepColIdx = 0; kernelStepColIdx < nsteps_x; kernelStepColIdx++) {
+            kernelStepOriginX = kernelStepColIdx * kcStep + hwKernel;
 
-            make_kernel(i0 + hwKernel, j0 + hwKernel, kernelSol);
+            make_kernel(kernelStepOriginX + hwKernel, kernelStepOriginY + hwKernel, kernelSol);
 
-            for (j2 = 0; j2 < kcStep; j2++) {
-                j = j0 + j2;
-                if ( j >= ySize - hwKernel) break;
+            for (pixelWithinStepRowIdx = 0; pixelWithinStepRowIdx < kcStep; pixelWithinStepRowIdx++) {
+                pixelY = kernelStepOriginY + pixelWithinStepRowIdx;
+                if ( pixelY >= ySize - hwKernel) break;
 
-                for (i2 = 0; i2 < kcStep; i2++) {
-                    i = i0 + i2;
-                    if (i >= xSize - hwKernel) break;
+                for (pixelWithinStepColIdx = 0; pixelWithinStepColIdx < kcStep; pixelWithinStepColIdx++) {
+                    pixelX = kernelStepOriginX + pixelWithinStepColIdx;
+                    if (pixelX >= xSize - hwKernel) break;
 
-                    ni = i+xSize*j;
-                    qv = q = aks = uks = 0.0;
-                    mbit = 0x0;
-                    for (jc = j - hwKernel; jc <= j + hwKernel; jc++) {
-                        jk = j - jc + hwKernel;
+                    outputPixelIdx = pixelX+xSize*pixelY;
+                    convolvedVariance = convolvedValue = absKernelSum = unmaskedKernelSum = 0.0;
+                    maskedPixelFlags = 0x0;
+                    for (kernelCenterRowIdx = pixelY - hwKernel; kernelCenterRowIdx <= pixelY + hwKernel; kernelCenterRowIdx++) {
+                        kernelArrayRowIdx = pixelY - kernelCenterRowIdx + hwKernel;
 
-                        for (ic = i - hwKernel; ic <= i + hwKernel; ic++) {
-                            ik = i - ic + hwKernel;
+                        for (kernelCenterColIdx = pixelX - hwKernel; kernelCenterColIdx <= pixelX + hwKernel; kernelCenterColIdx++) {
+                            kernelArrayColIdx = pixelX - kernelCenterColIdx + hwKernel;
 
-                            nc = ic+xSize*jc;
-                            kk = kernel[ik+jk*fwKernel];
+                            neighborPixelIdx = kernelCenterColIdx+xSize*kernelCenterRowIdx;
+                            kernelValue = kernel[kernelArrayColIdx+kernelArrayRowIdx*fwKernel];
 
-                            q     += image[nc] * kk;
-                            if (dovar) {
+                            convolvedValue     += image[neighborPixelIdx] * kernelValue;
+                            if (hasVarianceImage) {
                                 if (convolveVariance)
-                                    qv += (*variance)[nc] * kk;
+                                    convolvedVariance += (*variance)[neighborPixelIdx] * kernelValue;
                                 else
-                                    qv += (*variance)[nc] * kk * kk;
+                                    convolvedVariance += (*variance)[neighborPixelIdx] * kernelValue * kernelValue;
                             }
 
-                            mbit  |= cMask[nc];
-                            aks   += fabs(kk);
-                            if (!(cMask[nc] & FLAG_INPUT_ISBAD)) {
-                                uks += fabs(kk);
+                            maskedPixelFlags  |= cMask[neighborPixelIdx];
+                            absKernelSum   += fabs(kernelValue);
+                            if (!(cMask[neighborPixelIdx] & FLAG_INPUT_ISBAD)) {
+                                unmaskedKernelSum += fabs(kernelValue);
                             }
                         }
                     }
 
-                    cRdata[ni]   = q;
-                    if (dovar)
-                        vData[ni] = qv;
+                    cRdata[outputPixelIdx]   = convolvedValue;
+                    if (hasVarianceImage)
+                        vData[outputPixelIdx] = convolvedVariance;
 
                     /* mask propagation changed in 5.1.9 */
-                    /* mRData[ni]  |= mbit; */
-                    /* mRData[ni]  |= FLAG_OK_CONV      * (mbit > 0);*/
-                    mRData[ni]  |= cMask[ni];
-                    mRData[ni]  |= FLAG_OUTPUT_ISBAD * ((cMask[ni] & FLAG_INPUT_ISBAD) > 0);
+                    /* mRData[outputPixelIdx]  |= maskedPixelFlags; */
+                    /* mRData[outputPixelIdx]  |= FLAG_OK_CONV      * (maskedPixelFlags > 0);*/
+                    mRData[outputPixelIdx]  |= cMask[outputPixelIdx];
+                    mRData[outputPixelIdx]  |= FLAG_OUTPUT_ISBAD * ((cMask[outputPixelIdx] & FLAG_INPUT_ISBAD) > 0);
 
-                    if (mbit) {
-                        if ((uks / aks) < kerFracMask) {
-                            mRData[ni] |= (FLAG_OUTPUT_ISBAD | FLAG_BAD_CONV);
+                    if (maskedPixelFlags) {
+                        if ((unmaskedKernelSum / absKernelSum) < kerFracMask) {
+                            mRData[outputPixelIdx] |= (FLAG_OUTPUT_ISBAD | FLAG_BAD_CONV);
                         }
                         else {
-                            mRData[ni] |= FLAG_OK_CONV;
+                            mRData[outputPixelIdx] |= FLAG_OK_CONV;
                         }
                     }
 
@@ -2209,7 +2257,7 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
         }
     }
 #endif
-    if (dovar) {
+    if (hasVarianceImage) {
         free(*variance);
         *variance = vData;
     }
@@ -2237,41 +2285,42 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
  *         factor at this position).
  */
 double make_kernel(int xi, int yi, double *kernelSol) {
-    
-    int    i1,k,ix,iy,i;
-    double ax,ay,sum_kernel;
-    double xf, yf;
-    
-    k  = 2;
+
+    int    gaussianCompIdx,solutionIdx,polyDegX,polyDegY,kernelPixelIdx;
+    int    pixelCompIdx;
+    double polyBasisX,polyBasisY,kernelSum;
+    double normalizedX, normalizedY;
+
+    solutionIdx  = 2;
     /* RANGE FROM -1 to 1 */
-    xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
-    yf = (yi - 0.5 * rPixY) / (0.5 * rPixY);
-    
-    for (i1 = 1; i1 < nCompKer; i1++) {
-        kernel_coeffs[i1] = 0.0;
-        ax = 1.0;
-        for (ix = 0; ix <= kerOrder; ix++) {
-            ay = 1.0;
-            for (iy = 0; iy <= kerOrder - ix; iy++) {
-                kernel_coeffs[i1] += kernelSol[k++] * ax * ay;
-                ay *= yf;
+    normalizedX = (xi - 0.5 * rPixX) / (0.5 * rPixX);
+    normalizedY = (yi - 0.5 * rPixY) / (0.5 * rPixY);
+
+    for (gaussianCompIdx = 1; gaussianCompIdx < nCompKer; gaussianCompIdx++) {
+        kernel_coeffs[gaussianCompIdx] = 0.0;
+        polyBasisX = 1.0;
+        for (polyDegX = 0; polyDegX <= kerOrder; polyDegX++) {
+            polyBasisY = 1.0;
+            for (polyDegY = 0; polyDegY <= kerOrder - polyDegX; polyDegY++) {
+                kernel_coeffs[gaussianCompIdx] += kernelSol[solutionIdx++] * polyBasisX * polyBasisY;
+                polyBasisY *= normalizedY;
             }
-            ax *= xf;
+            polyBasisX *= normalizedX;
         }
     }
-    kernel_coeffs[0] = kernelSol[1]; 
-    
-    for (i = 0; i < fwKernel * fwKernel; i++)
-        kernel[i] = 0.0;
-    
-    sum_kernel = 0.0;
-    for (i = 0; i < fwKernel * fwKernel; i++) {
-        for (i1 = 0; i1 < nCompKer; i1++) {
-            kernel[i] += kernel_coeffs[i1] * kernel_vec[i1][i];
+    kernel_coeffs[0] = kernelSol[1];
+
+    for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel; kernelPixelIdx++)
+        kernel[kernelPixelIdx] = 0.0;
+
+    kernelSum = 0.0;
+    for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel; kernelPixelIdx++) {
+        for (pixelCompIdx = 0; pixelCompIdx < nCompKer; pixelCompIdx++) {
+            kernel[kernelPixelIdx] += kernel_coeffs[pixelCompIdx] * kernel_vec[pixelCompIdx][kernelPixelIdx];
         }
-        sum_kernel += kernel[i];    
+        kernelSum += kernel[kernelPixelIdx];
     }
-    return sum_kernel;
+    return kernelSum;
 }
 
 /**
@@ -2291,28 +2340,28 @@ double make_kernel(int xi, int yi, double *kernelSol) {
  * @return Background value at (xi, yi) in data units.
  */
 double get_background(int xi, int yi, double *kernelSol) {
-    
-    double  background,ax,ay,xf,yf;
-    int     i,j,k;
-    int     ncompBG;
-    
-    ncompBG = (nCompKer - 1) * ( ((kerOrder + 1) * (kerOrder + 2)) / 2 ) + 1;
-    
+
+    double  background,polyBasisX,polyBasisY,normalizedX,normalizedY;
+    int     polyDegX,polyDegY,solutionIdx;
+    int     backgroundComponentOffset;
+
+    backgroundComponentOffset = (nCompKer - 1) * ( ((kerOrder + 1) * (kerOrder + 2)) / 2 ) + 1;
+
     background = 0.0;
-    k          = 1;
+    solutionIdx     = 1;
     /* RANGE FROM -1 to 1 */
-    xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
-    yf = (yi - 0.5 * rPixY) / (0.5 * rPixY);
-    
-    ax=1.0;
-    for (i = 0; i <= bgOrder; i++) {
-        ay = 1.0; 
-        for (j = 0; j <= bgOrder - i; j++) {
-            background += kernelSol[ncompBG+k++] * ax * ay;
-            /* fprintf(stderr, "bg: %d %d %d %d %f %f %f\n", xi, yi, i, j, ax, ay, kernelSol[ncompBG+k-1]); */
-            ay *= yf;
+    normalizedX = (xi - 0.5 * rPixX) / (0.5 * rPixX);
+    normalizedY = (yi - 0.5 * rPixY) / (0.5 * rPixY);
+
+    polyBasisX=1.0;
+    for (polyDegX = 0; polyDegX <= bgOrder; polyDegX++) {
+        polyBasisY = 1.0;
+        for (polyDegY = 0; polyDegY <= bgOrder - polyDegX; polyDegY++) {
+            background += kernelSol[backgroundComponentOffset+solutionIdx++] * polyBasisX * polyBasisY;
+            /* fprintf(stderr, "bg: %d %d %d %d %f %f %f\n", xi, yi, polyDegX, polyDegY, polyBasisX, polyBasisY, kernelSol[backgroundComponentOffset+solutionIdx-1]); */
+            polyBasisY *= normalizedY;
         }
-        ax *= xf;
+        polyBasisX *= normalizedX;
     }
     return background;
 }
@@ -2336,45 +2385,45 @@ double get_background(int xi, int yi, double *kernelSol) {
  *                   model prediction (pre-allocated by caller).
  */
 void make_model(stamp_struct *stamp, double *kernelSol, float *csModel) {
-    
-    int       i1,k,ix,iy,i,xi,yi;
-    double    ax,ay,coeff;
+
+    int       gaussianCompIdx,solutionIdx,polyDegX,polyDegY,stampPixelIdx,stampCenterX,stampCenterY;
+    double    polyBasisX,polyBasisY,polynomialCoeff;
     double    *vector;
-    float     rPixX2, rPixY2;
-    double    xf, yf;
-    
-    rPixX2   = 0.5 * rPixX;
-    rPixY2   = 0.5 * rPixY;
-    
-    xi = stamp->xss[stamp->sscnt];
-    yi = stamp->yss[stamp->sscnt];
-    
+    float     halfPixX, halfPixY;
+    double    normalizedX, normalizedY;
+
+    halfPixX   = 0.5 * rPixX;
+    halfPixY   = 0.5 * rPixY;
+
+    stampCenterX = stamp->xss[stamp->sscnt];
+    stampCenterY = stamp->yss[stamp->sscnt];
+
     /* RANGE FROM -1 to 1 */
-    xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
-    yf = (yi - 0.5 * rPixY) / (0.5 * rPixY);
-    
-    for (i = 0; i < fwKSStamp * fwKSStamp; i++) csModel[i] = 0.0;
-    
+    normalizedX = (stampCenterX - 0.5 * rPixX) / (0.5 * rPixX);
+    normalizedY = (stampCenterY - 0.5 * rPixY) / (0.5 * rPixY);
+
+    for (stampPixelIdx = 0; stampPixelIdx < fwKSStamp * fwKSStamp; stampPixelIdx++) csModel[stampPixelIdx] = 0.0;
+
     vector = stamp->vectors[0];
-    coeff  = kernelSol[1];
-    for (i = 0; i < fwKSStamp * fwKSStamp; i++) csModel[i] += coeff * vector[i];
-    
-    k=2;
-    for (i1 = 1; i1 < nCompKer; i1++) {
-        vector = stamp->vectors[i1];
-        coeff  = 0.0; 
-        ax     = 1.0;
-        for (ix = 0; ix <= kerOrder; ix++) {
-            ay = 1.0;
-            for (iy = 0; iy <= kerOrder - ix; iy++) {
-                coeff += kernelSol[k++] * ax * ay;
-                ay *= yf;
+    polynomialCoeff  = kernelSol[1];
+    for (stampPixelIdx = 0; stampPixelIdx < fwKSStamp * fwKSStamp; stampPixelIdx++) csModel[stampPixelIdx] += polynomialCoeff * vector[stampPixelIdx];
+
+    solutionIdx=2;
+    for (gaussianCompIdx = 1; gaussianCompIdx < nCompKer; gaussianCompIdx++) {
+        vector = stamp->vectors[gaussianCompIdx];
+        polynomialCoeff  = 0.0;
+        polyBasisX     = 1.0;
+        for (polyDegX = 0; polyDegX <= kerOrder; polyDegX++) {
+            polyBasisY = 1.0;
+            for (polyDegY = 0; polyDegY <= kerOrder - polyDegX; polyDegY++) {
+                polynomialCoeff += kernelSol[solutionIdx++] * polyBasisX * polyBasisY;
+                polyBasisY *= normalizedY;
             }
-            ax *= xf;
+            polyBasisX *= normalizedX;
         }
-        
-        for (i = 0; i < fwKSStamp * fwKSStamp; i++) {
-            csModel[i] += coeff*vector[i];
+
+        for (stampPixelIdx = 0; stampPixelIdx < fwKSStamp * fwKSStamp; stampPixelIdx++) {
+            csModel[stampPixelIdx] += polynomialCoeff*vector[stampPixelIdx];
         }
     }
     return;

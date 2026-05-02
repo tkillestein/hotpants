@@ -4,3 +4,4 @@ __pycache__/
 *.o
 .venv/
 build/
+*.gch
