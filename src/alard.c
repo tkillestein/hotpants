@@ -1356,37 +1356,37 @@ void build_scprod(stamp_struct *stamps, int nS, float *image, double *kernelSol)
  *                 if no valid pixels exist.
  */
 void getFinalStampSig(stamp_struct *stamp, float *imDiff, float *imNoise, double *sig) {
-    int i, j, idx, nsig=0;
-    int xRegion2, xRegion = stamp->xss[stamp->sscnt];
-    int yRegion2, yRegion = stamp->yss[stamp->sscnt];
-    float idat, indat;
-    
+    int colIdx, rowIdx, pixelIdx, validPixelCount=0;
+    int xPixel, xRegion = stamp->xss[stamp->sscnt];
+    int yPixel, yRegion = stamp->yss[stamp->sscnt];
+    float diffData, noiseInv;
+
     *sig = 0;
-    
-    for (j = 0; j < fwKSStamp; j++) {
-        yRegion2 = yRegion - hwKSStamp + j;
-        
-        for (i = 0; i < fwKSStamp; i++) {
-            xRegion2 = xRegion - hwKSStamp + i;
-            
-            idx   = xRegion2+rPixX*yRegion2;
-            idat  = imDiff[idx];
-            indat = 1. / imNoise[idx];
-            
+
+    for (rowIdx = 0; rowIdx < fwKSStamp; rowIdx++) {
+        yPixel = yRegion - hwKSStamp + rowIdx;
+
+        for (colIdx = 0; colIdx < fwKSStamp; colIdx++) {
+            xPixel = xRegion - hwKSStamp + colIdx;
+
+            pixelIdx   = xPixel+rPixX*yPixel;
+            diffData  = imDiff[pixelIdx];
+            noiseInv = 1. / imNoise[pixelIdx];
+
             /* this shouldn't be the case, but just in case... */
-            if (mRData[idx] & FLAG_INPUT_ISBAD)
+            if (mRData[pixelIdx] & FLAG_INPUT_ISBAD)
                 continue;
-            
-            nsig++;
-            *sig += idat * idat * indat * indat;
-            
+
+            validPixelCount++;
+            *sig += diffData * diffData * noiseInv * noiseInv;
+
         }
     }
-    if (nsig > 0) 
-        *sig /= nsig;
+    if (validPixelCount > 0)
+        *sig /= validPixelCount;
     else
         *sig = -1;
-    
+
     return;
 }
 
@@ -2383,45 +2383,45 @@ double get_background(int xi, int yi, double *kernelSol) {
  *                   model prediction (pre-allocated by caller).
  */
 void make_model(stamp_struct *stamp, double *kernelSol, float *csModel) {
-    
-    int       i1,k,ix,iy,i,xi,yi;
+
+    int       kernelCompIdx,solIdx,polyDegX,polyDegY,stampPixelIdx,xi,yi;
     double    ax,ay,coeff;
     double    *vector;
     float     rPixX2, rPixY2;
     double    xf, yf;
-    
+
     rPixX2   = 0.5 * rPixX;
     rPixY2   = 0.5 * rPixY;
-    
+
     xi = stamp->xss[stamp->sscnt];
     yi = stamp->yss[stamp->sscnt];
-    
+
     /* RANGE FROM -1 to 1 */
     xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
     yf = (yi - 0.5 * rPixY) / (0.5 * rPixY);
-    
-    for (i = 0; i < fwKSStamp * fwKSStamp; i++) csModel[i] = 0.0;
-    
+
+    for (stampPixelIdx = 0; stampPixelIdx < fwKSStamp * fwKSStamp; stampPixelIdx++) csModel[stampPixelIdx] = 0.0;
+
     vector = stamp->vectors[0];
     coeff  = kernelSol[1];
-    for (i = 0; i < fwKSStamp * fwKSStamp; i++) csModel[i] += coeff * vector[i];
-    
-    k=2;
-    for (i1 = 1; i1 < nCompKer; i1++) {
-        vector = stamp->vectors[i1];
-        coeff  = 0.0; 
+    for (stampPixelIdx = 0; stampPixelIdx < fwKSStamp * fwKSStamp; stampPixelIdx++) csModel[stampPixelIdx] += coeff * vector[stampPixelIdx];
+
+    solIdx=2;
+    for (kernelCompIdx = 1; kernelCompIdx < nCompKer; kernelCompIdx++) {
+        vector = stamp->vectors[kernelCompIdx];
+        coeff  = 0.0;
         ax     = 1.0;
-        for (ix = 0; ix <= kerOrder; ix++) {
+        for (polyDegX = 0; polyDegX <= kerOrder; polyDegX++) {
             ay = 1.0;
-            for (iy = 0; iy <= kerOrder - ix; iy++) {
-                coeff += kernelSol[k++] * ax * ay;
+            for (polyDegY = 0; polyDegY <= kerOrder - polyDegX; polyDegY++) {
+                coeff += kernelSol[solIdx++] * ax * ay;
                 ay *= yf;
             }
             ax *= xf;
         }
-        
-        for (i = 0; i < fwKSStamp * fwKSStamp; i++) {
-            csModel[i] += coeff*vector[i];
+
+        for (stampPixelIdx = 0; stampPixelIdx < fwKSStamp * fwKSStamp; stampPixelIdx++) {
+            csModel[stampPixelIdx] += coeff*vector[stampPixelIdx];
         }
     }
     return;
