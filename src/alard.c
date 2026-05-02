@@ -81,7 +81,7 @@ void getKernelVec() {
 int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
     
     int       ren = 0;
-    int       i,j,xi,yi,dx,dy,idegx,idegy,di,dj,nv,ig,nvec;
+    int       pixelX,pixelY,xi,yi,dx,dy,idegx,idegy,bgDegX,bgDegY,di,dj,nv,ig,nvec;
     double    ax,ay,xf,yf;
     double *im;
     float     rPixX2, rPixY2;
@@ -150,20 +150,20 @@ int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
     yi = stamp->yss[stamp->sscnt];
     di = xi - hwKSStamp;
     dj = yi - hwKSStamp;
-    for (i = xi - hwKSStamp; i <= xi + hwKSStamp; i++) {
-        xf = (i - rPixX2) / rPixX2;
-        
-        for (j = yi - hwKSStamp; j <= yi + hwKSStamp; j++) {
-            /* fprintf(stderr, "%d %d %d %d %d %d\n", k, xi, yi,i, j, fwKSStamp); */
-            yf = (j - rPixY2) / rPixY2; 
-            
+    for (pixelX = xi - hwKSStamp; pixelX <= xi + hwKSStamp; pixelX++) {
+        xf = (pixelX - rPixX2) / rPixX2;
+
+        for (pixelY = yi - hwKSStamp; pixelY <= yi + hwKSStamp; pixelY++) {
+            /* fprintf(stderr, "%d %d %d %d %d %d\n", k, xi, yi,pixelX, pixelY, fwKSStamp); */
+            yf = (pixelY - rPixY2) / rPixY2;
+
             ax = 1.0;
             nv = nvec;
-            for (idegx = 0; idegx <= bgOrder; idegx++) {
-                ay = 1.0; 
-                for (idegy = 0; idegy <= bgOrder - idegx; idegy++) {
+            for (bgDegX = 0; bgDegX <= bgOrder; bgDegX++) {
+                ay = 1.0;
+                for (bgDegY = 0; bgDegY <= bgOrder - bgDegX; bgDegY++) {
                     im = stamp->vectors[nv];
-                    im[i-di+fwKSStamp*(j-dj)] = ax * ay;
+                    im[pixelX-di+fwKSStamp*(pixelY-dj)] = ax * ay;
                     ay *= yf;
                     ++nv;
                 }
