@@ -59,6 +59,7 @@ EXTERN int       doSum, inclNoiseImage, inclSigmaImage, inclConvImage, noClobber
 EXTERN int       doKerInfo, outShort, outNShort;
 EXTERN float     outBzero, outBscale, outNiBzero, outNiBscale;
 EXTERN int       convolveVariance;
+EXTERN int       nThread;
 EXTERN int       usePCA, fwKernelPCA;
 EXTERN float     **PCA;
 
