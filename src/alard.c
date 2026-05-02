@@ -2341,27 +2341,27 @@ double make_kernel(int xi, int yi, double *kernelSol) {
  */
 double get_background(int xi, int yi, double *kernelSol) {
 
-    double  background,ax,ay,xf,yf;
-    int     polyDegX,polyDegY,solIdx;
-    int     ncompBG;
+    double  background,polyBasisX,polyBasisY,normalizedX,normalizedY;
+    int     polyDegX,polyDegY,solutionIdx;
+    int     backgroundComponentOffset;
 
-    ncompBG = (nCompKer - 1) * ( ((kerOrder + 1) * (kerOrder + 2)) / 2 ) + 1;
+    backgroundComponentOffset = (nCompKer - 1) * ( ((kerOrder + 1) * (kerOrder + 2)) / 2 ) + 1;
 
     background = 0.0;
-    solIdx     = 1;
+    solutionIdx     = 1;
     /* RANGE FROM -1 to 1 */
-    xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
-    yf = (yi - 0.5 * rPixY) / (0.5 * rPixY);
+    normalizedX = (xi - 0.5 * rPixX) / (0.5 * rPixX);
+    normalizedY = (yi - 0.5 * rPixY) / (0.5 * rPixY);
 
-    ax=1.0;
+    polyBasisX=1.0;
     for (polyDegX = 0; polyDegX <= bgOrder; polyDegX++) {
-        ay = 1.0;
+        polyBasisY = 1.0;
         for (polyDegY = 0; polyDegY <= bgOrder - polyDegX; polyDegY++) {
-            background += kernelSol[ncompBG+solIdx++] * ax * ay;
-            /* fprintf(stderr, "bg: %d %d %d %d %f %f %f\n", xi, yi, polyDegX, polyDegY, ax, ay, kernelSol[ncompBG+solIdx-1]); */
-            ay *= yf;
+            background += kernelSol[backgroundComponentOffset+solutionIdx++] * polyBasisX * polyBasisY;
+            /* fprintf(stderr, "bg: %d %d %d %d %f %f %f\n", xi, yi, polyDegX, polyDegY, polyBasisX, polyBasisY, kernelSol[backgroundComponentOffset+solutionIdx-1]); */
+            polyBasisY *= normalizedY;
         }
-        ax *= xf;
+        polyBasisX *= normalizedX;
     }
     return background;
 }
