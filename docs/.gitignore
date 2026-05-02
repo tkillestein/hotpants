@@ -1,0 +1,7 @@
+# Sphinx build artifacts
+_build/
+_doxygen/
+
+# Python cache
+__pycache__/
+*.pyc

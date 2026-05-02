@@ -13,6 +13,16 @@ A fast, production-grade tool for image differencing. HOTPANTS fits a spatially-
 
 ---
 
+## Documentation
+
+📖 **[Full Documentation](https://tkillestein.github.io/hotpants/)** on GitHub Pages
+- API reference (C)
+- Installation and quick-start guides
+- PSF matching strategy and tuning
+- Algorithm overview and references
+
+---
+
 ## Features
 
 - **Fast convolution** — FFT-accelerated via FFTW3 for large images

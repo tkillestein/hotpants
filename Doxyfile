@@ -1,0 +1,32 @@
+# Doxygen configuration for HOTPANTS
+# Generates XML output for Breathe integration with Sphinx
+
+PROJECT_NAME           = "HOTPANTS"
+PROJECT_NUMBER         = "0.0.1"
+PROJECT_BRIEF          = "High Order Transform of PSF ANd Template Subtraction"
+
+INPUT                  = alard.c functions.c functions.h
+FILE_PATTERNS          = *.c *.h
+RECURSIVE              = NO
+
+OUTPUT_DIRECTORY       = docs/_doxygen
+XML_OUTPUT             = xml
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO
+
+# Enable Markdown support in comments
+USE_MDFILE_AS_MAINPAGE =
+MARKDOWN_SUPPORT       = YES
+
+# Optimize for Breathe: minimize noise
+GENERATE_TREEVIEW      = NO
+DISABLE_INDEX          = YES
+FULL_SIDEBAR           = NO
+HTML_DYNAMIC_SECTIONS  = NO
