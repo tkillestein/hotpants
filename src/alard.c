@@ -1525,106 +1525,106 @@ void getStampSig(stamp_struct *stamp, double *kernelSol, float *imNoise, double 
  *         converged.
  */
 char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *imRef, float *imNoise, double *meansigSubstamps, double *scatterSubstamps, int *NskippedSubstamps) {
-    
-    int    istamp,nss,scnt;
-    double sig,mean,stdev;
-    char   check;
+
+    int    stampIdx,validStampCount,goodStampCount;
+    double qualityMetric,mean,stdev;
+    char   needsReiteration;
     double sig1, sig2, sig3;
-    float  *ss;
-    
-    ss  = (float *)calloc(nS, sizeof(float));
-    nss = 0;
-    
-    sig = 0;
-    check = 0;
+    float  *qualityMetrics;
+
+    qualityMetrics  = (float *)calloc(nS, sizeof(float));
+    validStampCount = 0;
+
+    qualityMetric = 0;
+    needsReiteration = 0;
     mean = stdev = 0.0;
     *NskippedSubstamps=0;
-    
-    for (istamp = 0; istamp < nS; istamp++) {
-        
+
+    for (stampIdx = 0; stampIdx < nS; stampIdx++) {
+
         /* if was fit with a good legit substamp */
-        if (stamps[istamp].sscnt < stamps[istamp].nss) {
-            
-            getStampSig(&stamps[istamp], kernelSol, imNoise, &sig1, &sig2, &sig3);
-            
+        if (stamps[stampIdx].sscnt < stamps[stampIdx].nss) {
+
+            getStampSig(&stamps[stampIdx], kernelSol, imNoise, &sig1, &sig2, &sig3);
+
             if ((strncmp(figMerit, "v", 1)==0 && (sig1 == -1)) ||
                 (strncmp(figMerit, "s", 1)==0 && (sig2 == -1)) ||
                 (strncmp(figMerit, "h", 1)==0 && (sig3 == -1))) {
-                
+
                 /* something went wrong with this one... */
                 if (verbose>=2) fprintf(stderr, "\n    # %d    xss: %4i yss: %4i sig: %6.3f sscnt: %2i nss: %2i ITERATE substamp (BAD)\n",
-                                        istamp,
-                                        stamps[istamp].xss[stamps[istamp].sscnt],
-                                        stamps[istamp].yss[stamps[istamp].sscnt],
-                                        sig, stamps[istamp].sscnt, stamps[istamp].nss);
-                
-                stamps[istamp].sscnt++;
-                fillStamp(&stamps[istamp], imConv, imRef);
+                                        stampIdx,
+                                        stamps[stampIdx].xss[stamps[stampIdx].sscnt],
+                                        stamps[stampIdx].yss[stamps[stampIdx].sscnt],
+                                        qualityMetric, stamps[stampIdx].sscnt, stamps[stampIdx].nss);
+
+                stamps[stampIdx].sscnt++;
+                fillStamp(&stamps[stampIdx], imConv, imRef);
                 if (verbose>=2) fprintf(stderr, "\n");
-                
-                check = 1;
-                
+
+                needsReiteration = 1;
+
             } else {
                 if (strncmp(figMerit, "v", 1)==0)
-                    sig = sig1;
+                    qualityMetric = sig1;
                 else if (strncmp(figMerit, "s", 1)==0)
-                    sig = sig2;
+                    qualityMetric = sig2;
                 else if (strncmp(figMerit, "h", 1)==0)
-                    sig = sig3;
-                
+                    qualityMetric = sig3;
+
                 if (verbose>=2) fprintf(stderr, "    # %d    xss: %4i yss: %4i sig: %6.3f sscnt: %2i nss: %2i OK\n",
-                                        istamp,
-                                        stamps[istamp].xss[stamps[istamp].sscnt],
-                                        stamps[istamp].yss[stamps[istamp].sscnt],
-                                        sig, stamps[istamp].sscnt, stamps[istamp].nss);
-                
-                stamps[istamp].chi2 = sig;
-                ss[nss++]           = sig;
-                
+                                        stampIdx,
+                                        stamps[stampIdx].xss[stamps[stampIdx].sscnt],
+                                        stamps[stampIdx].yss[stamps[stampIdx].sscnt],
+                                        qualityMetric, stamps[stampIdx].sscnt, stamps[stampIdx].nss);
+
+                stamps[stampIdx].chi2 = qualityMetric;
+                qualityMetrics[validStampCount++]           = qualityMetric;
+
             }
         } else {
             (*NskippedSubstamps)++;
-            if (verbose>=2) fprintf(stderr, "    xs : %4i ys : %4i skipping... \n",stamps[istamp].x, stamps[istamp].y);
+            if (verbose>=2) fprintf(stderr, "    xs : %4i ys : %4i skipping... \n",stamps[stampIdx].x, stamps[stampIdx].y);
         }
     }
-    
-    sigma_clip(ss, nss, &mean, &stdev, 10);
+
+    sigma_clip(qualityMetrics, validStampCount, &mean, &stdev, 10);
     fprintf(stderr, "    Mean sig: %6.3f stdev: %6.3f\n", mean, stdev);
     fprintf(stderr, "    Iterating through stamps with sig > %.3f\n", mean + kerSigReject * stdev);
-    
+
     /* save the mean and scatter so that it can be saved in the fits header */
     (*meansigSubstamps)=mean;
     (*scatterSubstamps)=stdev;
-    
-    scnt = 0;
-    for (istamp = 0; istamp < nS; istamp++) {
+
+    goodStampCount = 0;
+    for (stampIdx = 0; stampIdx < nS; stampIdx++) {
         /* if currently represented by a good substamp */
-        if (stamps[istamp].sscnt < stamps[istamp].nss) {
-            
+        if (stamps[stampIdx].sscnt < stamps[stampIdx].nss) {
+
             /* no fabs() here, keep good stamps kerSigReject on the low side! */
-            if ((stamps[istamp].chi2 - mean) > kerSigReject * stdev) { 
+            if ((stamps[stampIdx].chi2 - mean) > kerSigReject * stdev) {
                 if (verbose>=2) fprintf(stderr, "\n    # %d    xss: %4i yss: %4i sig: %6.3f sscnt: %2i nss: %2i ITERATE substamp (poor sig)\n",
-                                        istamp,
-                                        stamps[istamp].xss[stamps[istamp].sscnt],
-                                        stamps[istamp].yss[stamps[istamp].sscnt],
-                                        stamps[istamp].chi2,
-                                        stamps[istamp].sscnt,stamps[istamp].nss);
-                
-                stamps[istamp].sscnt++;
-                scnt += (!(fillStamp(&stamps[istamp], imConv, imRef)));
+                                        stampIdx,
+                                        stamps[stampIdx].xss[stamps[stampIdx].sscnt],
+                                        stamps[stampIdx].yss[stamps[stampIdx].sscnt],
+                                        stamps[stampIdx].chi2,
+                                        stamps[stampIdx].sscnt,stamps[stampIdx].nss);
+
+                stamps[stampIdx].sscnt++;
+                goodStampCount += (!(fillStamp(&stamps[stampIdx], imConv, imRef)));
                 if (verbose>=2) fprintf(stderr, "\n");
-                
-                check = 1;
+
+                needsReiteration = 1;
             }
             else
-                scnt += 1;
+                goodStampCount += 1;
         }
     }
-    
-    fprintf(stderr, "    %d out of %d stamps remain\n", scnt, nS);
-    
-    free(ss);
-    return check;
+
+    fprintf(stderr, "    %d out of %d stamps remain\n", goodStampCount, nS);
+
+    free(qualityMetrics);
+    return needsReiteration;
 }
 
 /**
