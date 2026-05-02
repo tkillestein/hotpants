@@ -463,32 +463,32 @@ void xy_conv_stamp_PCA(stamp_struct *stamp, float *image, int n, int ren) {
  *         fails.
  */
 static int solve_spd(double **a, int n, double *b) {
-    lapack_int info;
-    int i, j;
-    double *flat = (double *)malloc((size_t)n * n * sizeof(double));
-    double *rhs  = (double *)malloc((size_t)n * sizeof(double));
-    if (!flat || !rhs) { free(flat); free(rhs); return 1; }
+    lapack_int solveStatus;
+    int matrixRowIdx, matrixColIdx;
+    double *flatMatrix = (double *)malloc((size_t)n * n * sizeof(double));
+    double *rhsVector  = (double *)malloc((size_t)n * sizeof(double));
+    if (!flatMatrix || !rhsVector) { free(flatMatrix); free(rhsVector); return 1; }
 
-    for (i = 0; i < n; i++) {
-        for (j = 0; j < n; j++)
-            flat[i * n + j] = a[i + 1][j + 1];
-        rhs[i] = b[i + 1];
+    for (matrixRowIdx = 0; matrixRowIdx < n; matrixRowIdx++) {
+        for (matrixColIdx = 0; matrixColIdx < n; matrixColIdx++)
+            flatMatrix[matrixRowIdx * n + matrixColIdx] = a[matrixRowIdx + 1][matrixColIdx + 1];
+        rhsVector[matrixRowIdx] = b[matrixRowIdx + 1];
     }
 
-    info = LAPACKE_dpotrf(LAPACK_ROW_MAJOR, 'U', (lapack_int)n, flat, (lapack_int)n);
-    if (info == 0)
-        info = LAPACKE_dpotrs(LAPACK_ROW_MAJOR, 'U', (lapack_int)n, 1,
-                              flat, (lapack_int)n, rhs, 1);
-    if (info == 0)
-        for (i = 0; i < n; i++)
-            b[i + 1] = rhs[i];
+    solveStatus = LAPACKE_dpotrf(LAPACK_ROW_MAJOR, 'U', (lapack_int)n, flatMatrix, (lapack_int)n);
+    if (solveStatus == 0)
+        solveStatus = LAPACKE_dpotrs(LAPACK_ROW_MAJOR, 'U', (lapack_int)n, 1,
+                              flatMatrix, (lapack_int)n, rhsVector, 1);
+    if (solveStatus == 0)
+        for (matrixRowIdx = 0; matrixRowIdx < n; matrixRowIdx++)
+            b[matrixRowIdx + 1] = rhsVector[matrixRowIdx];
     else
-        fprintf(stderr, "WARNING: solve_spd failed (LAPACKE info=%d); "
-                "kernel solution may be unreliable\n", (int)info);
+        fprintf(stderr, "WARNING: solve_spd failed (LAPACKE status=%d); "
+                "kernel solution may be unreliable\n", (int)solveStatus);
 
-    free(flat);
-    free(rhs);
-    return (info != 0) ? 1 : 0;
+    free(flatMatrix);
+    free(rhsVector);
+    return (solveStatus != 0) ? 1 : 0;
 }
 
 /**
