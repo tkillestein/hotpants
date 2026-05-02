@@ -1209,7 +1209,7 @@ void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
                 polyTermWithinGaussianIdx2 = polyTermIdx2 - gaussianCompIdx2 * ncomp2;
 
                 /* spatially weighted W_m1 and W_m2 integrals */
-                matrix[polyTermWithinGaussianIdx1+2][polyTermWithinGaussianIdx2+2] += wxy[stampIdx][polyTermWithinGaussianIdx1] * wxy[stampIdx][polyTermWithinGaussianIdx2] * matrix0[gaussianCompIdx1+2][gaussianCompIdx2+2];
+                matrix[(gaussianCompIdx1 * ncomp2 + polyTermWithinGaussianIdx1)+2][(gaussianCompIdx2 * ncomp2 + polyTermWithinGaussianIdx2)+2] += wxy[stampIdx][polyTermWithinGaussianIdx1] * wxy[stampIdx][polyTermWithinGaussianIdx2] * matrix0[gaussianCompIdx1+2][gaussianCompIdx2+2];
             }
         }
 
@@ -1218,7 +1218,7 @@ void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
             /* Index decomposition for background terms */
             gaussianCompIdx1 = polyTermIdx1 / ncomp2;
             polyTermWithinGaussianIdx1 = polyTermIdx1 - gaussianCompIdx1 * ncomp2;
-            matrix[polyTermWithinGaussianIdx1+2][1] += wxy[stampIdx][polyTermWithinGaussianIdx1] * matrix0[gaussianCompIdx1+2][1];
+            matrix[(gaussianCompIdx1 * ncomp2 + polyTermWithinGaussianIdx1)+2][1] += wxy[stampIdx][polyTermWithinGaussianIdx1] * matrix0[gaussianCompIdx1+2][1];
         }
 
         for (bgTermIdx = 0; bgTermIdx < nbg_vec; bgTermIdx++) {
