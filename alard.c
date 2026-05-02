@@ -5,6 +5,9 @@
 #include<stdlib.h>
 #include<fitsio.h>
 #include<lapacke.h>
+#ifdef USE_FFTW
+#include<fftw3.h>
+#endif
 
 #include "defaults.h"
 #include "globals.h"
@@ -1627,6 +1630,353 @@ static double make_kernel_local(int xi, int yi, double *kernelSol,
     return sum_kernel;
 }
 
+#ifdef USE_FFTW
+/**
+ * @brief Round n up to the smallest integer >= n whose only prime factors
+ *        are 2, 3, or 5.  Such sizes have fast FFTW r2c/c2r plans.
+ */
+static int next_fftw_size(int n) {
+    int m;
+    for (;;) {
+        m = n;
+        while (m % 2 == 0) m /= 2;
+        while (m % 3 == 0) m /= 3;
+        while (m % 5 == 0) m /= 5;
+        if (m == 1) return n;
+        n++;
+    }
+}
+
+/**
+ * @brief FFT-accelerated implementation of spatial_convolve().
+ *
+ * @details Uses the linearity of convolution to restructure the spatially-
+ * varying kernel as a small set of fixed-kernel convolutions followed by a
+ * per-pixel polynomial-weighted sum (Alard & Lupton 1998, §2):
+ *
+ *   K(x,y) = Σᵢ cᵢ(x,y)·φᵢ
+ *
+ * Writing cᵢ(x,y) = Σⱼ aᵢⱼ·Pⱼ(x,y) and grouping by polynomial term j:
+ *
+ *   output(x,y) = kernelSol[1] · (I⊗φ₀)[x,y]
+ *               + Σⱼ Pⱼ(x,y) · (I⊗effKernelⱼ)[x,y]
+ *
+ * where effKernelⱼ = Σᵢ kernelSol[2+(i-1)·ncomp2+j] · φᵢ.
+ *
+ * This requires only 1+ncomp2 FFT convolutions (7 for default kerOrder=2)
+ * instead of nCompKer ≈ 50.  Memory cost: (1+ncomp2)·xSize·ySize·sizeof(float).
+ *
+ * FFTW plan creation is serialised via #pragma omp critical(fftw_plan);
+ * plan execution and the pixel-sum loop are parallelised with OpenMP.
+ * CFITSIO is not called here; all FITS I/O occurs in main.c.
+ *
+ * Pixel values are produced by the FFT path.  Mask propagation and variance
+ * are computed by the same block-centre direct loop used in spatial_convolve(),
+ * with the pixel accumulation (q +=) removed since cRdata is already filled.
+ *
+ * @param image      Full-frame input image (region pixel buffer).
+ * @param variance   Pointer to variance image; updated in-place if non-NULL.
+ * @param xSize      Region width in pixels.
+ * @param ySize      Region height in pixels.
+ * @param kernelSol  Kernel solution vector from fitKernel().
+ * @param cRdata     Output convolved image (pre-allocated by caller).
+ * @param cMask      Input pixel mask for mask propagation.
+ */
+static void spatial_convolve_fft(float *image, float **variance,
+                                  int xSize, int ySize,
+                                  double *kernelSol,
+                                  float *cRdata, int *cMask) {
+    /* --- variable declarations (all at top for safe goto use) --- */
+    int    ncomp2, nEffConv, fft_nx, fft_ny, nc_fft;
+    int    i, j, p, ik, jk, ii, jj, xp, yp, ni, ix, iy;
+    int    i1, i2, j2, i0, j0, j1, nsteps_x_loc, nsteps_y_loc;
+    int    ic, jc, nc, mbit, dovar, cidx;
+    double ax, ay, out, xf, yf, kk, aks, uks, qv, norm, rPixX2, rPixY2;
+    double *effKernel, *real_buf, *lkernel, *lkernel_coeffs;
+    fftw_complex *img_fft, *ker_fft;
+    fftw_plan plan_fwd, plan_inv;
+    float **effConv, *vData;
+
+    effKernel     = NULL; real_buf = NULL;
+    lkernel       = NULL; lkernel_coeffs = NULL;
+    img_fft       = NULL; ker_fft  = NULL;
+    plan_fwd      = NULL; plan_inv = NULL;
+    effConv       = NULL; vData    = NULL;
+
+    ncomp2   = ((kerOrder + 1) * (kerOrder + 2)) / 2;
+    nEffConv = 1 + ncomp2;
+    dovar    = (*variance != NULL);
+
+    if (dovar) {
+        vData = (float *)calloc((size_t)xSize * ySize, sizeof(float));
+        if (!vData) {
+            fprintf(stderr, "spatial_convolve_fft: out of memory (vData)\n");
+            return;
+        }
+    }
+
+    /* --- FFT dimensions: pad to avoid circular wrap-around --- */
+    fft_nx = next_fftw_size(xSize + fwKernel - 1);
+    fft_ny = next_fftw_size(ySize + fwKernel - 1);
+    nc_fft = fft_nx * (fft_ny / 2 + 1);
+
+    real_buf  = (double *)fftw_malloc((size_t)fft_nx * fft_ny * sizeof(double));
+    img_fft   = (fftw_complex *)fftw_malloc((size_t)nc_fft * sizeof(fftw_complex));
+    ker_fft   = (fftw_complex *)fftw_malloc((size_t)nc_fft * sizeof(fftw_complex));
+    effKernel = (double *)malloc((size_t)fwKernel * fwKernel * sizeof(double));
+
+    if (!real_buf || !img_fft || !ker_fft || !effKernel) {
+        fprintf(stderr, "spatial_convolve_fft: out of memory (FFT buffers)\n");
+        goto cleanup_fft;
+    }
+
+    effConv = (float **)calloc((size_t)nEffConv, sizeof(float *));
+    if (!effConv) {
+        fprintf(stderr, "spatial_convolve_fft: out of memory (effConv)\n");
+        goto cleanup_fft;
+    }
+    for (i = 0; i < nEffConv; i++) {
+        effConv[i] = (float *)malloc((size_t)xSize * ySize * sizeof(float));
+        if (!effConv[i]) {
+            fprintf(stderr, "spatial_convolve_fft: out of memory (effConv[%d])\n", i);
+            goto cleanup_fft;
+        }
+    }
+
+    /* --- Create FFTW plans (not thread-safe: serialise with critical) --- */
+#ifdef _OPENMP
+    #pragma omp critical(fftw_plan)
+#endif
+    {
+        /* FFTW_ESTIMATE avoids timing runs, keeping plan creation fast. */
+        plan_fwd = fftw_plan_dft_r2c_2d(fft_ny, fft_nx,
+                                         real_buf, ker_fft, FFTW_ESTIMATE);
+        plan_inv = fftw_plan_dft_c2r_2d(fft_ny, fft_nx,
+                                         ker_fft, real_buf, FFTW_ESTIMATE);
+    }
+    if (!plan_fwd || !plan_inv) {
+        fprintf(stderr, "spatial_convolve_fft: FFTW plan creation failed\n");
+        goto cleanup_fft;
+    }
+
+    /* --- FFT the image once; save spectrum in img_fft --- */
+    memset(real_buf, 0, (size_t)fft_nx * fft_ny * sizeof(double));
+    for (yp = 0; yp < ySize; yp++)
+        for (xp = 0; xp < xSize; xp++)
+            real_buf[xp + fft_nx * yp] = image[xp + xSize * yp];
+
+    fftw_execute_dft_r2c(plan_fwd, real_buf, ker_fft);
+    memcpy(img_fft, ker_fft, (size_t)nc_fft * sizeof(fftw_complex));
+
+    /* --- Compute nEffConv effective basis convolutions ---
+     * j == -1 : constant term  -> effConv[0]
+     * j == 0..ncomp2-1 : poly terms -> effConv[1..ncomp2] */
+    for (j = -1; j < ncomp2; j++) {
+        cidx = j + 1;
+
+        memset(effKernel, 0, (size_t)fwKernel * fwKernel * sizeof(double));
+        if (j < 0) {
+            /* constant term: kernelSol[1] * kernel_vec[0] */
+            for (p = 0; p < fwKernel * fwKernel; p++)
+                effKernel[p] = kernelSol[1] * kernel_vec[0][p];
+        } else {
+            /* poly term j: Σᵢ kernelSol[2+(i-1)*ncomp2+j] * kernel_vec[i] */
+            for (i1 = 1; i1 < nCompKer; i1++) {
+                double a = kernelSol[2 + (i1 - 1) * ncomp2 + j];
+                for (p = 0; p < fwKernel * fwKernel; p++)
+                    effKernel[p] += a * kernel_vec[i1][p];
+            }
+        }
+
+        /* Circularly shift kernel centre to (0,0) for linear convolution */
+        memset(real_buf, 0, (size_t)fft_nx * fft_ny * sizeof(double));
+        for (jk = 0; jk < fwKernel; jk++) {
+            jj = ((jk - hwKernel) % fft_ny + fft_ny) % fft_ny;
+            for (ik = 0; ik < fwKernel; ik++) {
+                ii = ((ik - hwKernel) % fft_nx + fft_nx) % fft_nx;
+                real_buf[ii + fft_nx * jj] = effKernel[ik + fwKernel * jk];
+            }
+        }
+
+        /* FFT kernel, pointwise multiply with image spectrum, IFFT.
+         * Use flat double* arithmetic: C99 _Complex and double[2] both store
+         * real at offset 0 and imaginary at offset 1 (C99 §6.2.5). */
+        fftw_execute_dft_r2c(plan_fwd, real_buf, ker_fft);
+        {
+            double *kd = (double *)ker_fft;
+            const double *id = (const double *)img_fft;
+            double reval, imval;
+            for (p = 0; p < nc_fft; p++) {
+                reval       = kd[2*p]*id[2*p]   - kd[2*p+1]*id[2*p+1];
+                imval       = kd[2*p]*id[2*p+1] + kd[2*p+1]*id[2*p];
+                kd[2*p]     = reval;
+                kd[2*p+1]   = imval;
+            }
+        }
+        fftw_execute_dft_c2r(plan_inv, ker_fft, real_buf);
+
+        /* Normalise (FFTW does not normalise) and store valid region */
+        norm = 1.0 / ((double)fft_nx * fft_ny);
+        for (yp = 0; yp < ySize; yp++)
+            for (xp = 0; xp < xSize; xp++)
+                effConv[cidx][xp + xSize * yp] =
+                    (float)(real_buf[xp + fft_nx * yp] * norm);
+    }
+
+    /* --- Destroy plans and release spectral buffers --- */
+#ifdef _OPENMP
+    #pragma omp critical(fftw_plan)
+#endif
+    {
+        fftw_destroy_plan(plan_fwd); plan_fwd = NULL;
+        fftw_destroy_plan(plan_inv); plan_inv = NULL;
+    }
+    fftw_free(real_buf); real_buf = NULL;
+    fftw_free(img_fft);  img_fft  = NULL;
+    fftw_free(ker_fft);  ker_fft  = NULL;
+    free(effKernel);     effKernel = NULL;
+
+    /* --- Pixel-wise weighted sum (OpenMP parallel over output pixels) ---
+     * output(x,y) = effConv[0][ni]
+     *             + Σⱼ Pⱼ(xf,yf) * effConv[j+1][ni]
+     * where Pⱼ = xf^ix * yf^iy in the same (ix,iy) order as make_kernel_local.
+     * Each ni = xp + xSize*yp is unique; no data race on cRdata or mRData. */
+    rPixX2 = 0.5 * xSize;
+    rPixY2 = 0.5 * ySize;
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) collapse(2) \
+        private(ni, xf, yf, out, ax, ay, j, ix, iy)
+#endif
+    for (yp = hwKernel; yp < ySize - hwKernel; yp++) {
+        for (xp = hwKernel; xp < xSize - hwKernel; xp++) {
+            ni  = xp + xSize * yp;
+            xf  = (xp - rPixX2) / rPixX2;
+            yf  = (yp - rPixY2) / rPixY2;
+
+            out = effConv[0][ni];
+            j   = 0;
+            ax  = 1.0;
+            for (ix = 0; ix <= kerOrder; ix++) {
+                ay = 1.0;
+                for (iy = 0; iy <= kerOrder - ix; iy++) {
+                    out += ax * ay * effConv[j + 1][ni];
+                    ay  *= yf;
+                    j++;
+                }
+                ax *= xf;
+            }
+            cRdata[ni] = (float)out;
+        }
+    }
+
+    /* --- Free effective convolution images --- */
+    for (i = 0; i < nEffConv; i++) { free(effConv[i]); effConv[i] = NULL; }
+    free(effConv); effConv = NULL;
+
+    /* --- Mask propagation + variance: block-centre direct loop ---
+     * Structurally identical to the non-OMP path in spatial_convolve() with
+     * the pixel accumulation (q +=) removed; cRdata is already filled above.
+     * Variance is propagated exactly as in the original. */
+    lkernel        = (double *)calloc((size_t)fwKernel * fwKernel, sizeof(double));
+    lkernel_coeffs = (double *)calloc((size_t)nCompKer,             sizeof(double));
+    if (!lkernel || !lkernel_coeffs) {
+        fprintf(stderr, "spatial_convolve_fft: out of memory (mask loop)\n");
+        goto cleanup_fft;
+    }
+
+    nsteps_x_loc = (int)ceil((double)xSize / (double)kcStep);
+    nsteps_y_loc = (int)ceil((double)ySize / (double)kcStep);
+
+    for (j1 = 0; j1 < nsteps_y_loc; j1++) {
+        j0 = j1 * kcStep + hwKernel;
+
+        for (i = 0; i < nsteps_x_loc; i++) {
+            i0 = i * kcStep + hwKernel;
+
+            make_kernel_local(i0 + hwKernel, j0 + hwKernel, kernelSol,
+                              lkernel, lkernel_coeffs);
+
+            for (j2 = 0; j2 < kcStep; j2++) {
+                j = j0 + j2;
+                if (j >= ySize - hwKernel) break;
+
+                for (i2 = 0; i2 < kcStep; i2++) {
+                    i1 = i0 + i2;
+                    if (i1 >= xSize - hwKernel) break;
+
+                    ni   = i1 + xSize * j;
+                    qv   = aks = uks = 0.0;
+                    mbit = 0x0;
+
+                    for (jc = j - hwKernel; jc <= j + hwKernel; jc++) {
+                        jk = j - jc + hwKernel;
+                        for (ic = i1 - hwKernel; ic <= i1 + hwKernel; ic++) {
+                            ik = i1 - ic + hwKernel;
+                            nc = ic + xSize * jc;
+                            kk = lkernel[ik + jk * fwKernel];
+
+                            if (dovar) {
+                                if (convolveVariance)
+                                    qv += (*variance)[nc] * kk;
+                                else
+                                    qv += (*variance)[nc] * kk * kk;
+                            }
+
+                            mbit |= cMask[nc];
+                            aks  += fabs(kk);
+                            if (!(cMask[nc] & FLAG_INPUT_ISBAD))
+                                uks += fabs(kk);
+                        }
+                    }
+
+                    if (dovar) vData[ni] = (float)qv;
+
+                    mRData[ni] |= cMask[ni];
+                    mRData[ni] |= FLAG_OUTPUT_ISBAD * ((cMask[ni] & FLAG_INPUT_ISBAD) > 0);
+
+                    if (mbit) {
+                        if ((uks / aks) < kerFracMask)
+                            mRData[ni] |= (FLAG_OUTPUT_ISBAD | FLAG_BAD_CONV);
+                        else
+                            mRData[ni] |= FLAG_OK_CONV;
+                    }
+                }
+            }
+        }
+    }
+
+    free(lkernel);        lkernel        = NULL;
+    free(lkernel_coeffs); lkernel_coeffs = NULL;
+
+    if (dovar) {
+        free(*variance);
+        *variance = vData;
+        vData = NULL;
+    }
+    return;
+
+cleanup_fft:
+#ifdef _OPENMP
+    #pragma omp critical(fftw_plan)
+#endif
+    {
+        if (plan_fwd) { fftw_destroy_plan(plan_fwd); plan_fwd = NULL; }
+        if (plan_inv) { fftw_destroy_plan(plan_inv); plan_inv = NULL; }
+    }
+    if (real_buf)  { fftw_free(real_buf);  real_buf  = NULL; }
+    if (img_fft)   { fftw_free(img_fft);   img_fft   = NULL; }
+    if (ker_fft)   { fftw_free(ker_fft);   ker_fft   = NULL; }
+    if (effKernel) { free(effKernel);      effKernel = NULL; }
+    if (effConv) {
+        for (i = 0; i < nEffConv; i++) free(effConv[i]);
+        free(effConv); effConv = NULL;
+    }
+    if (lkernel)        { free(lkernel);        lkernel        = NULL; }
+    if (lkernel_coeffs) { free(lkernel_coeffs); lkernel_coeffs = NULL; }
+    free(vData); vData = NULL;
+}
+#endif /* USE_FFTW */
+
 /**
  * @brief Convolve an entire image with the spatially-varying kernel, updating
  *        the output image and propagating the pixel mask.
@@ -1666,6 +2016,10 @@ static double make_kernel_local(int xi, int yi, double *kernelSol,
  * @param cMask      Input pixel mask array used for mask propagation.
  */
 void spatial_convolve(float *image, float **variance, int xSize, int ySize, double *kernelSol, float *cRdata, int *cMask) {
+#ifdef USE_FFTW
+    spatial_convolve_fft(image, variance, xSize, ySize, kernelSol, cRdata, cMask);
+    return;
+#endif
 
     int       i1,j1,i2,j2,nsteps_x,nsteps_y,i,j,i0,j0,ic,jc,ik,jk,nc,ni,mbit,dovar;
     double    q, qv, kk, aks, uks;

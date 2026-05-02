@@ -30,6 +30,15 @@ LIBDIR        =  /usr/lib/x86_64-linux-gnu
 COPTS = -funroll-loops -O3 -ansi -std=c99 -pedantic-errors -Wall -I$(CFITSIOINCDIR) -D_GNU_SOURCE -fopenmp
 LIBS  = -L$(LIBDIR) -lm -lcfitsio -llapacke -llapack -lblas
 
+# Optional FFT convolution via FFTW3.  Build with: make hotpants FFTW=1
+# Override FFTWINCDIR/FFTWLIBDIR if headers/library are in non-standard paths.
+FFTWINCDIR ?= /usr/include
+FFTWLIBDIR ?= /usr/lib/x86_64-linux-gnu
+ifeq ($(FFTW),1)
+  COPTS += -DUSE_FFTW -I$(FFTWINCDIR)
+  LIBS  += -L$(FFTWLIBDIR) -lfftw3
+endif
+
 # compiler
 CC    = gcc
 
