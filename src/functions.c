@@ -1306,74 +1306,74 @@ int getStampStats3(float *data,
  *         one point remains.
  */
 int sigma_clip(float *data, int count, double *mean, double *stdev, int maxiter) {
-    int cnt, ncnt, i, iter;
-    char *smask;
-    double istdev;
-    float d;
-    
+    int acceptedCount, newAcceptedCount, dataIdx, iterationCount;
+    char *clipMask;
+    double inverseStdev;
+    float dataValue;
+
     if (count == 0) {
         *mean  = 0;
         *stdev = MAXVAL;
         return 1;
     }
-    
-    smask = (char *)calloc(count, sizeof(char));
-    /*for (i=0; i<count; i++) smask[i] = 0;*/
-    
-    cnt  = 0;
-    ncnt = count;
-    iter = 0;
-    
-    while ((ncnt != cnt) && (iter < maxiter)) {
-        cnt = ncnt;
-        
+
+    clipMask = (char *)calloc(count, sizeof(char));
+    /*for (dataIdx=0; dataIdx<count; dataIdx++) clipMask[dataIdx] = 0;*/
+
+    acceptedCount = 0;
+    newAcceptedCount = count;
+    iterationCount = 0;
+
+    while ((newAcceptedCount != acceptedCount) && (iterationCount < maxiter)) {
+        acceptedCount = newAcceptedCount;
+
         *mean  = 0;
         *stdev = 0;
-        for (i=0; i<count; i++) {
-            if (!(smask[i])) {
-                d       = data[i];
-                *mean  += d;
-                *stdev += d*d;
+        for (dataIdx=0; dataIdx<count; dataIdx++) {
+            if (!(clipMask[dataIdx])) {
+                dataValue       = data[dataIdx];
+                *mean  += dataValue;
+                *stdev += dataValue*dataValue;
             }
         }
-        
-        if (ncnt > 0) 
-            *mean /= ncnt;
+
+        if (newAcceptedCount > 0)
+            *mean /= newAcceptedCount;
         else {
             *mean  = 0;
             *stdev = MAXVAL;
-            free(smask);
+            free(clipMask);
             return 2;
         }
-        
-        if (ncnt > 1) {
-            *stdev = *stdev - ncnt * (*mean) * (*mean);
-            *stdev = sqrt(*stdev / (double)(ncnt - 1));
+
+        if (newAcceptedCount > 1) {
+            *stdev = *stdev - newAcceptedCount * (*mean) * (*mean);
+            *stdev = sqrt(*stdev / (double)(newAcceptedCount - 1));
         }
         else {
             *stdev = MAXVAL;
-            free(smask);
+            free(clipMask);
             return 3;
         }
-        
-        ncnt   = 0;
-        istdev = 1. / (*stdev);
-        for (i=0; i<count; i++) {
-            if (!(smask[i])) {
+
+        newAcceptedCount   = 0;
+        inverseStdev = 1. / (*stdev);
+        for (dataIdx=0; dataIdx<count; dataIdx++) {
+            if (!(clipMask[dataIdx])) {
                 /* reject high and low outliers */
-                if ((fabs(data[i] - (*mean)) * istdev) > statSig) {
-                    smask[i] = 1;
+                if ((fabs(data[dataIdx] - (*mean)) * inverseStdev) > statSig) {
+                    clipMask[dataIdx] = 1;
                 }
                 else {
-                    ncnt++;
+                    newAcceptedCount++;
                 }
             }
         }
-        iter += 1;
-        /*fprintf(stderr, "%d %d %f %f\n", cnt, ncnt, (*mean), (*stdev));*/
+        iterationCount += 1;
+        /*fprintf(stderr, "%d %d %f %f\n", acceptedCount, newAcceptedCount, (*mean), (*stdev));*/
     }
     /*fprintf(stderr, "\n");*/
-    free(smask);
+    free(clipMask);
     return 0;
 }
 
