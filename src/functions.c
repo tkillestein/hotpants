@@ -1037,12 +1037,12 @@ int getStampStats3(float *data,
     float    mfstat    = HISTOGRAM_LOWER_FRAC;
     
     
-    npts = nPixX * nPixY;
-    if (npts < nstat)
+    totalPixelCount = nPixX * nPixY;
+    if (totalPixelCount < nstat)
         return 4;
-    
+
     /* fprintf(stderr, "DOINK!  %d %d %f\n", x0Reg, y0Reg, data[0]); */
-    if ( !(sdat = (float *)calloc(npts, sizeof(float))) ||
+    if ( !(sdat = (float *)calloc(totalPixelCount, sizeof(float))) ||
          !(work = (double *)calloc(nstat, sizeof(double)))) {
         return (1);
     }
