@@ -1137,124 +1137,125 @@ void build_matrix_new(stamp_struct *stamps, int nS, double **matrix) {
  *                zeroed on entry and filled on return.
  */
 void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
-    
-    int       mat_size,i,j,pixStamp,istamp,k,i1,i2,j1,j2,ibg,jbg,ivecbg,jj;
+
+    int       mat_size,matrixRowIdx,matrixColIdx,pixStamp,stampIdx,polyTermIdx,gaussianCompIdx1,polyTermWithinGaussianIdx1,gaussianCompIdx2,polyTermIdx2,polyTermWithinGaussianIdx2,bgTermIdx,bgTermColIdx,bgVectorIdx,matrixColCalcIdx;
+    int       polyTermIdx1;
     int       ncomp1, ncomp2, ncomp, nbg_vec;
     double    **matrix0,p0,q;
     double    **vec;
     float     rPixX2, rPixY2;
-    
-    int ideg1, ideg2, xstamp, ystamp;
-    double a1, a2, fx, fy;
-    
+
+    int polyDegX, polyDegY, stampCenterX, stampCenterY;
+    double polyBasisX, polyBasisY, normalizedX, normalizedY;
+
     ncomp1  = nCompKer - 1;
     ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     ncomp   = ncomp1 * ncomp2;
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
+
     pixStamp = fwKSStamp * fwKSStamp;
     rPixX2   = 0.5 * rPixX;
     rPixY2   = 0.5 * rPixY;
-    
+
     mat_size = ncomp1 * ncomp2 + nbg_vec + 1;
     if (verbose >= 2) fprintf(stderr, " Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i \n",mat_size,ncomp2,ncomp1,nbg_vec);
-    
-    for(i = 0; i <= mat_size; i++)
-        for(j = 0; j <= mat_size; j++)
-            matrix[i][j] = 0.0;
-    
-    for(i = 0; i < nS; i++)
-        for(j = 0; j < ncomp2; j++)
-            wxy[i][j] = 0.0;
-    
-    for (istamp = 0; istamp < nS; istamp++) {
-        /* skip over any bad stamps along the way */
-        while(stamps[istamp].sscnt >= stamps[istamp].nss) {
-            ++istamp; 
-            if (istamp >= nS) break;
-        }
-        if (istamp >= nS) break;
-        
-        vec    = stamps[istamp].vectors;
-        xstamp = stamps[istamp].xss[stamps[istamp].sscnt];
-        ystamp = stamps[istamp].yss[stamps[istamp].sscnt];
-        /* RANGE FROM -1 to 1 */
-        fx     = (xstamp - rPixX2) / rPixX2; 
-        fy     = (ystamp - rPixY2) / rPixY2; 
-        
-        /* build weight function *HERE* */
-        k  = 0;
-        a1 = 1.0;
-        for (ideg1 = 0; ideg1 <= kerOrder; ideg1++) {
-            a2 = 1.0;
-            for (ideg2 = 0; ideg2 <= kerOrder - ideg1; ideg2++) {
-                wxy[istamp][k++] = a1 * a2;
-                a2 *= fy;
-            }
-            a1 *= fx;
-        }
-        
-        matrix0 = stamps[istamp].mat;
-        for (i = 0; i < ncomp; i++) {
-            /* Decompose linear index i into (i1, i2):
-               i1 = which Gaussian component (0 to ncomp1-1)
-               i2 = which polynomial term within that component (0 to ncomp2-1) */
-            i1 = i / ncomp2;
-            i2 = i - i1 * ncomp2;
 
-            for (j = 0; j <= i; j++) {
-                /* Same decomposition for column index j */
-                j1 = j / ncomp2;
-                j2 = j - j1 * ncomp2;
+    for(matrixRowIdx = 0; matrixRowIdx <= mat_size; matrixRowIdx++)
+        for(matrixColIdx = 0; matrixColIdx <= mat_size; matrixColIdx++)
+            matrix[matrixRowIdx][matrixColIdx] = 0.0;
+
+    for(stampIdx = 0; stampIdx < nS; stampIdx++)
+        for(polyTermIdx = 0; polyTermIdx < ncomp2; polyTermIdx++)
+            wxy[stampIdx][polyTermIdx] = 0.0;
+
+    for (stampIdx = 0; stampIdx < nS; stampIdx++) {
+        /* skip over any bad stamps along the way */
+        while(stamps[stampIdx].sscnt >= stamps[stampIdx].nss) {
+            ++stampIdx;
+            if (stampIdx >= nS) break;
+        }
+        if (stampIdx >= nS) break;
+
+        vec    = stamps[stampIdx].vectors;
+        stampCenterX = stamps[stampIdx].xss[stamps[stampIdx].sscnt];
+        stampCenterY = stamps[stampIdx].yss[stamps[stampIdx].sscnt];
+        /* RANGE FROM -1 to 1 */
+        normalizedX     = (stampCenterX - rPixX2) / rPixX2;
+        normalizedY     = (stampCenterY - rPixY2) / rPixY2;
+
+        /* build weight function *HERE* */
+        polyTermIdx  = 0;
+        polyBasisX = 1.0;
+        for (polyDegX = 0; polyDegX <= kerOrder; polyDegX++) {
+            polyBasisY = 1.0;
+            for (polyDegY = 0; polyDegY <= kerOrder - polyDegX; polyDegY++) {
+                wxy[stampIdx][polyTermIdx++] = polyBasisX * polyBasisY;
+                polyBasisY *= normalizedY;
+            }
+            polyBasisX *= normalizedX;
+        }
+
+        matrix0 = stamps[stampIdx].mat;
+        for (polyTermIdx1 = 0; polyTermIdx1 < ncomp; polyTermIdx1++) {
+            /* Decompose linear index polyTermIdx1 into (gaussianCompIdx1, polyTermWithinGaussianIdx1):
+               gaussianCompIdx1 = which Gaussian component (0 to ncomp1-1)
+               polyTermWithinGaussianIdx1 = which polynomial term within that component (0 to ncomp2-1) */
+            gaussianCompIdx1 = polyTermIdx1 / ncomp2;
+            polyTermWithinGaussianIdx1 = polyTermIdx1 - gaussianCompIdx1 * ncomp2;
+
+            for (polyTermIdx2 = 0; polyTermIdx2 <= polyTermIdx1; polyTermIdx2++) {
+                /* Same decomposition for column index polyTermIdx2 */
+                gaussianCompIdx2 = polyTermIdx2 / ncomp2;
+                polyTermWithinGaussianIdx2 = polyTermIdx2 - gaussianCompIdx2 * ncomp2;
 
                 /* spatially weighted W_m1 and W_m2 integrals */
-                matrix[i+2][j+2] += wxy[istamp][i2] * wxy[istamp][j2] * matrix0[i1+2][j1+2];
+                matrix[polyTermWithinGaussianIdx1+2][polyTermWithinGaussianIdx2+2] += wxy[stampIdx][polyTermWithinGaussianIdx1] * wxy[stampIdx][polyTermWithinGaussianIdx2] * matrix0[gaussianCompIdx1+2][gaussianCompIdx2+2];
             }
         }
 
         matrix[1][1] += matrix0[1][1];
-        for (i = 0; i < ncomp; i++) {
+        for (polyTermIdx1 = 0; polyTermIdx1 < ncomp; polyTermIdx1++) {
             /* Index decomposition for background terms */
-            i1 = i / ncomp2;
-            i2 = i - i1 * ncomp2;
-            matrix[i+2][1] += wxy[istamp][i2] * matrix0[i1+2][1];
+            gaussianCompIdx1 = polyTermIdx1 / ncomp2;
+            polyTermWithinGaussianIdx1 = polyTermIdx1 - gaussianCompIdx1 * ncomp2;
+            matrix[polyTermWithinGaussianIdx1+2][1] += wxy[stampIdx][polyTermWithinGaussianIdx1] * matrix0[gaussianCompIdx1+2][1];
         }
-        
-        for (ibg = 0; ibg < nbg_vec; ibg++) {
-            i = ncomp + ibg + 1;
-            ivecbg = ncomp1 + ibg + 1;
-            for (i1 = 1; i1 < ncomp1 + 1; i1++) { 
+
+        for (bgTermIdx = 0; bgTermIdx < nbg_vec; bgTermIdx++) {
+            polyTermIdx1 = ncomp + bgTermIdx + 1;
+            bgVectorIdx = ncomp1 + bgTermIdx + 1;
+            for (gaussianCompIdx1 = 1; gaussianCompIdx1 < ncomp1 + 1; gaussianCompIdx1++) {
                 p0 = 0.0;
-                
+
                 /* integrate convolved images over all order backgrounds */
-                for (k = 0; k < pixStamp; k++)
-                    p0 += vec[i1][k] * vec[ivecbg][k];
-                
+                for (polyTermIdx = 0; polyTermIdx < pixStamp; polyTermIdx++)
+                    p0 += vec[gaussianCompIdx1][polyTermIdx] * vec[bgVectorIdx][polyTermIdx];
+
                 /* spatially weighted image * background terms */
-                for (i2 = 0; i2 < ncomp2; i2++) {
-                    jj = (i1 - 1) * ncomp2 + i2 + 1;
-                    matrix[i+1][jj+1] += p0 * wxy[istamp][i2];
+                for (polyTermIdx2 = 0; polyTermIdx2 < ncomp2; polyTermIdx2++) {
+                    matrixColCalcIdx = (gaussianCompIdx1 - 1) * ncomp2 + polyTermIdx2 + 1;
+                    matrix[polyTermIdx1+1][matrixColCalcIdx+1] += p0 * wxy[stampIdx][polyTermIdx2];
                 }
             }
-            
+
             p0 = 0.0;
-            for (k = 0; k < pixStamp; k++)
-                p0 += vec[0][k] * vec[ivecbg][k];
-            matrix[i+1][1] += p0;
-            
+            for (polyTermIdx = 0; polyTermIdx < pixStamp; polyTermIdx++)
+                p0 += vec[0][polyTermIdx] * vec[bgVectorIdx][polyTermIdx];
+            matrix[polyTermIdx1+1][1] += p0;
+
             /* background * background */
-            for (jbg = 0;jbg <= ibg; jbg++) {
-                for (k = 0, q = 0.0; k < pixStamp; k++)
-                    q += vec[ivecbg][k] * vec[ncomp1+jbg+1][k];
-                matrix[i+1][ncomp+jbg+2] += q;
+            for (bgTermColIdx = 0;bgTermColIdx <= bgTermIdx; bgTermColIdx++) {
+                for (polyTermIdx = 0, q = 0.0; polyTermIdx < pixStamp; polyTermIdx++)
+                    q += vec[bgVectorIdx][polyTermIdx] * vec[ncomp1+bgTermColIdx+1][polyTermIdx];
+                matrix[polyTermIdx1+1][ncomp+bgTermColIdx+2] += q;
             }
         }
     }
-    
+
     /* fill lower half of matrix */
-    for (i = 0; i < mat_size; i++) {
-        for (j = 0; j <= i; j++) {
-            matrix[j+1][i+1] = matrix[i+1][j+1];
+    for (matrixRowIdx = 0; matrixRowIdx < mat_size; matrixRowIdx++) {
+        for (matrixColIdx = 0; matrixColIdx <= matrixRowIdx; matrixColIdx++) {
+            matrix[matrixColIdx+1][matrixRowIdx+1] = matrix[matrixRowIdx+1][matrixColIdx+1];
             /* fprintf(stderr, "matrix[%i][%i]: %lf\n", i,j,matrix[i+1][j+1]); */
         }
     }
