@@ -1,9 +1,7 @@
 #include<assert.h>
 #include<stdio.h>
 #include<string.h>
-#include<strings.h>
 #include<math.h>
-#include<malloc.h>
 #include<stdlib.h>
 #include<fitsio.h>
 
@@ -36,14 +34,16 @@ int main(int argc, char **argv) {
     mask = D_MASK;
     fillVal = D_FILLVAL;
 
-    sprintf(help, "Usage : maskim [options]\n");
-    sprintf(help, "%sRequired options:\n", help);
-    sprintf(help, "%s   [-inim fitsfile]  : input image\n", help);
-    sprintf(help, "%s   [-maskim fitsfile]: corresponding mask image\n", help);
-    sprintf(help, "%s   [-outim fitsfile] : output masked image\n\n", help);
-    sprintf(help, "%sOptions:\n", help);
-    sprintf(help, "%s   [-fi fillval]    : Value of filled pixels (%.3f)\n", help, fillVal);
-    sprintf(help, "%s   [-mask hex]      : Mask for bad pixels (0x%x)\n", help, mask);
+#define HELP_APPEND(fmt, ...) snprintf(help + strlen(help), sizeof(help) - strlen(help), fmt, ##__VA_ARGS__)
+    snprintf(help, sizeof(help), "Usage : maskim [options]\n");
+    HELP_APPEND("Required options:\n");
+    HELP_APPEND("   [-inim fitsfile]  : input image\n");
+    HELP_APPEND("   [-maskim fitsfile]: corresponding mask image\n");
+    HELP_APPEND("   [-outim fitsfile] : output masked image\n\n");
+    HELP_APPEND("Options:\n");
+    HELP_APPEND("   [-fi fillval]    : Value of filled pixels (%.3f)\n", fillVal);
+    HELP_APPEND("   [-mask hex]      : Mask for bad pixels (0x%x)\n", mask);
+#undef HELP_APPEND
 
     /* read in command options. j counts # of required args given */
     for (iarg = 1; iarg < argc; iarg++) {
@@ -122,7 +122,7 @@ int main(int argc, char **argv) {
             iRData[i] = fillVal;
 
     /* reuse mptr and help */
-    sprintf(help, "!%s", outim);
+    snprintf(help, sizeof(help), "!%s", outim);
     if (fits_create_template(&mPtr, help, inim, &status) ||
         fits_write_img(mPtr, TFLOAT, 1, nPix, iRData, &status) ||
         fits_close_file(mPtr, &status) ||

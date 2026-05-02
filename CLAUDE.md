@@ -107,7 +107,7 @@ CMake auto-detects CFITSIO, OpenBLAS, FFTW3, and OpenMP. Optional flags:
 - FFTW3 (`-lfftw3`, optional) — FFT-accelerated convolution.
 - OpenMP (`-fopenmp`, optional) — multi-threading support.
 
-**Compiler flags:** `-O3 -march=native -funroll-loops -std=c99 -pedantic-errors -Wall`
+**Compiler flags:** `-O3 -march=native -funroll-loops -std=c17 -Wall`
 
 Use `-march=native` for SIMD optimisations on the build host; omit for portable binaries.
 
@@ -254,5 +254,5 @@ as well, but requires careful handling of integer/binary mask semantics.
 
 - ✓ **CMake** build system; cleanly detects CFITSIO, OpenBLAS, FFTW3, and
   OpenMP. See `CMakeLists.txt`.
-- Compiler flags: `-O3 -march=native -funroll-loops -std=c99` (enable SIMD
+- Compiler flags: `-O3 -march=native -funroll-loops -std=c17` (enable SIMD
   optimisations with `-march=native` for portable binaries on target systems).

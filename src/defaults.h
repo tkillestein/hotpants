@@ -73,3 +73,7 @@
 #define D_VERBOSE       1       /* levels of verbosity, 0, 1, 2 */
 #define D_CONVVAR       0       /* instead of convolving noise, convolve variance.  ker vs ker**2 */
 #define D_NTHREAD       1       /* number of threads to use for calculating regions - will be limited to nrx*nry */
+
+/* Compile-time guards for type-size assumptions (C11/C17 _Static_assert) */
+_Static_assert(sizeof(float)  == 4, "CFITSIO BITPIX=-32 I/O assumes 4-byte float");
+_Static_assert(sizeof(double) == 8, "LAPACK/BLAS routines assume 8-byte double");

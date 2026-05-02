@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(hotpants VERSION 5.1.11 LANGUAGES C)
 
-set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 add_compile_options(-funroll-loops -O3 -Wall -D_GNU_SOURCE)
