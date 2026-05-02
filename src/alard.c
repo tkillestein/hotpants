@@ -2386,44 +2386,44 @@ double get_background(int xi, int yi, double *kernelSol) {
  */
 void make_model(stamp_struct *stamp, double *kernelSol, float *csModel) {
 
-    int       kernelCompIdx,solIdx,polyDegX,polyDegY,stampPixelIdx,xi,yi;
-    double    ax,ay,coeff;
+    int       gaussianCompIdx,solutionIdx,polyDegX,polyDegY,stampPixelIdx,stampCenterX,stampCenterY;
+    double    polyBasisX,polyBasisY,polynomialCoeff;
     double    *vector;
-    float     rPixX2, rPixY2;
-    double    xf, yf;
+    float     halfPixX, halfPixY;
+    double    normalizedX, normalizedY;
 
-    rPixX2   = 0.5 * rPixX;
-    rPixY2   = 0.5 * rPixY;
+    halfPixX   = 0.5 * rPixX;
+    halfPixY   = 0.5 * rPixY;
 
-    xi = stamp->xss[stamp->sscnt];
-    yi = stamp->yss[stamp->sscnt];
+    stampCenterX = stamp->xss[stamp->sscnt];
+    stampCenterY = stamp->yss[stamp->sscnt];
 
     /* RANGE FROM -1 to 1 */
-    xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
-    yf = (yi - 0.5 * rPixY) / (0.5 * rPixY);
+    normalizedX = (stampCenterX - 0.5 * rPixX) / (0.5 * rPixX);
+    normalizedY = (stampCenterY - 0.5 * rPixY) / (0.5 * rPixY);
 
     for (stampPixelIdx = 0; stampPixelIdx < fwKSStamp * fwKSStamp; stampPixelIdx++) csModel[stampPixelIdx] = 0.0;
 
     vector = stamp->vectors[0];
-    coeff  = kernelSol[1];
-    for (stampPixelIdx = 0; stampPixelIdx < fwKSStamp * fwKSStamp; stampPixelIdx++) csModel[stampPixelIdx] += coeff * vector[stampPixelIdx];
+    polynomialCoeff  = kernelSol[1];
+    for (stampPixelIdx = 0; stampPixelIdx < fwKSStamp * fwKSStamp; stampPixelIdx++) csModel[stampPixelIdx] += polynomialCoeff * vector[stampPixelIdx];
 
-    solIdx=2;
-    for (kernelCompIdx = 1; kernelCompIdx < nCompKer; kernelCompIdx++) {
-        vector = stamp->vectors[kernelCompIdx];
-        coeff  = 0.0;
-        ax     = 1.0;
+    solutionIdx=2;
+    for (gaussianCompIdx = 1; gaussianCompIdx < nCompKer; gaussianCompIdx++) {
+        vector = stamp->vectors[gaussianCompIdx];
+        polynomialCoeff  = 0.0;
+        polyBasisX     = 1.0;
         for (polyDegX = 0; polyDegX <= kerOrder; polyDegX++) {
-            ay = 1.0;
+            polyBasisY = 1.0;
             for (polyDegY = 0; polyDegY <= kerOrder - polyDegX; polyDegY++) {
-                coeff += kernelSol[solIdx++] * ax * ay;
-                ay *= yf;
+                polynomialCoeff += kernelSol[solutionIdx++] * polyBasisX * polyBasisY;
+                polyBasisY *= normalizedY;
             }
-            ax *= xf;
+            polyBasisX *= normalizedX;
         }
 
         for (stampPixelIdx = 0; stampPixelIdx < fwKSStamp * fwKSStamp; stampPixelIdx++) {
-            csModel[stampPixelIdx] += coeff*vector[stampPixelIdx];
+            csModel[stampPixelIdx] += polynomialCoeff*vector[stampPixelIdx];
         }
     }
     return;
