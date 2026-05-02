@@ -899,39 +899,39 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
  * @param smask    Pixels without this bit set in mRData are excluded (0 disables).
  */
 void getNoiseStats3(float *data, float *noise, double *nnorm, int *nncount, int umask, int smask) {
-    
-    double nsum=0;
-    int i, n=0, mdat;
-    float ddat=0, ndat=0;
-    
-    
-    for (i = rPixX*rPixY; i--; ) {
-        ddat = data[i];
-        mdat = mRData[i];
-        
+
+    double noiseWeightedSum=0;
+    int pixelIdx, validPixelCount=0, maskData;
+    float dataValue=0, noiseInv=0;
+
+
+    for (pixelIdx = rPixX*rPixY; pixelIdx--; ) {
+        dataValue = data[pixelIdx];
+        maskData = mRData[pixelIdx];
+
         /*
-          fprintf(stderr, "CAW %d %f %f %f %d %d %d %d\n", n, nsum, ddat, ndat, mdat,
-	      ((umask > 0) && (!(mdat & umask))),
-	      ((smask > 0) &&   (mdat & smask)),
-	      (ddat == fillVal) || (fabs(ddat) <= ZEROVAL));
+          fprintf(stderr, "CAW %d %f %f %f %d %d %d %d\n", validPixelCount, noiseWeightedSum, dataValue, noiseInv, maskData,
+          ((umask > 0) && (!(maskData & umask))),
+          ((smask > 0) &&   (maskData & smask)),
+          (dataValue == fillVal) || (fabs(dataValue) <= ZEROVAL));
         */
-        
-        if (((umask > 0) && (!(mdat & umask))) ||
-            ((smask > 0) &&   (mdat & smask))  ||
-            (fabs(ddat) <= ZEROVAL))
+
+        if (((umask > 0) && (!(maskData & umask))) ||
+            ((smask > 0) &&   (maskData & smask))  ||
+            (fabs(dataValue) <= ZEROVAL))
             continue;
-        
-        ndat  = 1. / noise[i];
-        
-        n    += 1;
-        nsum += ddat*ddat * ndat*ndat;
+
+        noiseInv  = 1. / noise[pixelIdx];
+
+        validPixelCount    += 1;
+        noiseWeightedSum += dataValue*dataValue * noiseInv*noiseInv;
     }
-    if (n > 1) {
-        *nncount = n;
-        *nnorm   = nsum / (float)n;
+    if (validPixelCount > 1) {
+        *nncount = validPixelCount;
+        *nnorm   = noiseWeightedSum / (float)validPixelCount;
     }
     else {
-        *nncount = n;
+        *nncount = validPixelCount;
         *nnorm   = MAXVAL;
     }
     return;
