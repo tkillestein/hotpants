@@ -458,20 +458,20 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
 void cutStamp(float *data, float *refArea, int dxLen, int xMin, int yMin,
               int xMax, int yMax, stamp_struct *stamp) {
     
-    int i, j;
+    int srcCol, srcRow;
     int x, y;
     int sxLen;
-    
+
     sxLen = xMax - xMin + 1;
-    /* NOTE, use j <= yMax here, not j < yMax, include yMax point */
-    for (j = yMin; j <= yMax; j++) {
-        y = j - yMin;
-        
-        for (i = xMin; i <= xMax; i++) {
-            x = i - xMin;
-            
-            refArea[x+y*sxLen] = data[i+j*dxLen];
-            /*fprintf(stderr, "%d %d %d %d %f\n", x, y, i, j, data[i+j*dxLen]); */
+    /* NOTE, use srcRow <= yMax here, not srcRow < yMax, include yMax point */
+    for (srcRow = yMin; srcRow <= yMax; srcRow++) {
+        y = srcRow - yMin;
+
+        for (srcCol = xMin; srcCol <= xMax; srcCol++) {
+            x = srcCol - xMin;
+
+            refArea[x+y*sxLen] = data[srcCol+srcRow*dxLen];
+            /*fprintf(stderr, "%d %d %d %d %f\n", x, y, srcCol, srcRow, data[srcCol+srcRow*dxLen]); */
         }
     }
     stamp->x0 = xMin;
@@ -500,8 +500,8 @@ void cutStamp(float *data, float *refArea, int dxLen, int xMin, int yMin,
  * @return 0 on success, 1 if the stamp is out of valid substamps.
  */
 int cutSStamp(stamp_struct *stamp, float *iData) {
-    
-    int i, j, k, nss, sscnt;
+
+    int substampCol, substampRow, k, nss, sscnt;
     int x, y, dy, xStamp, yStamp;
     float dpt;
     double sum = 0.;
@@ -531,16 +531,16 @@ int cutSStamp(stamp_struct *stamp, float *iData) {
     if (verbose >= 1)
         fprintf(stderr, "    xss : %4i yss : %4i\n", stamp->xss[sscnt], stamp->yss[sscnt]);
     
-    for (j = yStamp - hwKSStamp; j <= yStamp + hwKSStamp; j++) {
-        y  = j - (yStamp - hwKSStamp);
-        dy = j + stamp->y0;
-        
-        for (i = xStamp - hwKSStamp; i <= xStamp + hwKSStamp; i++) {
-            x = i - (xStamp - hwKSStamp);
-            
-            k   = i+stamp->x0 + rPixX*dy;
+    for (substampRow = yStamp - hwKSStamp; substampRow <= yStamp + hwKSStamp; substampRow++) {
+        y  = substampRow - (yStamp - hwKSStamp);
+        dy = substampRow + stamp->y0;
+
+        for (substampCol = xStamp - hwKSStamp; substampCol <= xStamp + hwKSStamp; substampCol++) {
+            x = substampCol - (xStamp - hwKSStamp);
+
+            k   = substampCol+stamp->x0 + rPixX*dy;
             dpt = iData[k];
-            
+
             stamp->krefArea[x+y*fwKSStamp] = dpt;
             sum += (mRData[k] & FLAG_INPUT_ISBAD) ? 0 : fabs(dpt);
         }
