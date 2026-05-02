@@ -1738,27 +1738,27 @@ void fits_get_kernel_btbl(fitsfile *kPtr, double **kernelSol, int nRegion) {
  * @param width  Dilation full-width in pixels; no-op if <= 0.
  */
 void spreadMask(int *mData, int width) {
-    
-    int i, j, k, l, ii, jj, w2;
-    
+
+    int imageCol, imageRow, horzOffset, vertOffset, ii, jj, w2;
+
     /* nothing to do! */
     if (width <= 0) {
         return;
     }
     w2 = width/2;
-    for (j = 0; j < rPixY; j++) {
-        for (i = 0; i < rPixX; i++) {
-            if (mData[i+rPixX*j] & FLAG_INPUT_ISBAD) {
-                for (k = -w2; k <= w2; k++) {
-                    ii = i + k;
+    for (imageRow = 0; imageRow < rPixY; imageRow++) {
+        for (imageCol = 0; imageCol < rPixX; imageCol++) {
+            if (mData[imageCol+rPixX*imageRow] & FLAG_INPUT_ISBAD) {
+                for (horzOffset = -w2; horzOffset <= w2; horzOffset++) {
+                    ii = imageCol + horzOffset;
                     if (ii < 0 || ii >= rPixX)
                         continue;
-                    
-                    for (l = -w2; l <= w2; l++) {
-                        jj = j + l;
+
+                    for (vertOffset = -w2; vertOffset <= w2; vertOffset++) {
+                        jj = imageRow + vertOffset;
                         if (jj < 0 || jj >= rPixY)
                             continue;
-                        
+
                         mData[ii+rPixX*jj] |= FLAG_OK_CONV * (!(mData[ii+rPixX*jj] & FLAG_INPUT_ISBAD));
                     }
                 }
