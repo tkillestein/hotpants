@@ -180,7 +180,7 @@ MIT License, 2013–2026. See [LICENSE](LICENSE).
 
 ## Citation
 
-If you use HOTPANTS in research, please cite:
+If you use HOTPANTS in research, please cite the original algorithm and this implementation:
 
 ```bibtex
 @article{Alard1998,
@@ -191,6 +191,14 @@ If you use HOTPANTS in research, please cite:
   pages = {325},
   year = {1998},
   doi = {10.1086/305984}
+}
+
+@misc{Becker2015,
+  author = {Becker, A. C.},
+  title = {HOTPANTS: High Order Transform of PSF ANd Template Subtraction},
+  year = {2015},
+  url = {https://ascl.net/1504.004},
+  note = {Astrophysics Source Code Library, record ascl:1504.004}
 }
 ```
 
