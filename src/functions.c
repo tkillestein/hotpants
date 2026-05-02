@@ -1400,36 +1400,36 @@ int sigma_clip(float *data, int count, double *mean, double *stdev, int maxiter)
  *         allocation failure.
  */
 float *calculateAvgNoise(float *image, int *mask, int nx, int ny, int size, int maskval, int doavg) {
-    int i, j, ii, jj, cnt;
+    int pixelX, pixelY, neighborColIdx, neighborRowIdx, validPixelCount;
     float *data, *outim;
     double mean, stdev;
-    
-    
+
+
     if ( !(data = (float *) calloc(size * size, sizeof(float))))
         return (NULL);
     if ( !(outim = (float *) calloc(nx * ny, sizeof(float))))
         return (NULL);
-    
-    for (j = ny; j--; ) {
-        for (i = nx; i--; ) {
-            
+
+    for (pixelY = ny; pixelY--; ) {
+        for (pixelX = nx; pixelX--; ) {
+
             /* take your average! */
-            cnt = 0;
-            for (jj = j - size; jj <= j + size; jj++) {
-                if ((jj < 0) || jj >= ny)
+            validPixelCount = 0;
+            for (neighborRowIdx = pixelY - size; neighborRowIdx <= pixelY + size; neighborRowIdx++) {
+                if ((neighborRowIdx < 0) || neighborRowIdx >= ny)
                     continue;
-                
-                for (ii = i - size; ii <= i + size; ii++) {
-                    if ((ii < 0) || ii >= nx)
+
+                for (neighborColIdx = pixelX - size; neighborColIdx <= pixelX + size; neighborColIdx++) {
+                    if ((neighborColIdx < 0) || neighborColIdx >= nx)
                         continue;
-                    
-                    if (!(mask[ii+jj*nx] & maskval))
-                        data[cnt++] = image[ii+jj*nx];
+
+                    if (!(mask[neighborColIdx+neighborRowIdx*nx] & maskval))
+                        data[validPixelCount++] = image[neighborColIdx+neighborRowIdx*nx];
                 }
             }
             /* we'll do no clipping */
-            sigma_clip(data, cnt, &mean, &stdev, 0);
-            outim[i+j*nx] = doavg ? mean : stdev;
+            sigma_clip(data, validPixelCount, &mean, &stdev, 0);
+            outim[pixelX+pixelY*nx] = doavg ? mean : stdev;
         }
     }
     free(data);
