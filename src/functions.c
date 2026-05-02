@@ -2092,11 +2092,11 @@ int hp_fits_write_subset_int(fitsfile *fptr, long group, long naxis, long *naxes
  * @param nPixY  Height.
  */
 void fset(float *data, double value, int nPixX, int nPixY) {
-    int    i;
-    float *d;
-    d = data;
-    for (i = nPixX*nPixY; i--; )
-        *(d++) = value;
+    int    pixelIdx;
+    float *pixelPtr;
+    pixelPtr = data;
+    for (pixelIdx = nPixX*nPixY; pixelIdx--; )
+        *(pixelPtr++) = value;
 }
 
 /**
@@ -2108,11 +2108,11 @@ void fset(float *data, double value, int nPixX, int nPixY) {
  * @param nPixY  Height.
  */
 void dfset(double *data, double value, int nPixX, int nPixY) {
-    int     i;
-    double *d;
-    d = data;
-    for (i = nPixX*nPixY; i--; )
-        *(d++) = value;
+    int     pixelIdx;
+    double *pixelPtr;
+    pixelPtr = data;
+    for (pixelIdx = nPixX*nPixY; pixelIdx--; )
+        *(pixelPtr++) = value;
 }
 
 /**
@@ -2219,13 +2219,13 @@ double ran1(int *idum) {
  * @param n      Number of elements.
  */
 void quick_sort (double *list, int *index, int n) {
-    
-    int i;
+
+    int indexIdx;
     void quick_sort_1();
-    
-    for (i = 0; i < n; i++) index [i] = i;
+
+    for (indexIdx = 0; indexIdx < n; indexIdx++) index [indexIdx] = indexIdx;
     quick_sort_1 (list, index, 0, n-1);
-    
+
     return;
 }
 
@@ -2246,29 +2246,29 @@ void quick_sort (double *list, int *index, int n) {
  * @param right_end  Right boundary of the subarray to sort (inclusive).
  */
 void quick_sort_1(double *list, int *index, int left_end, int right_end) {
-    int i,j,temp;
-    double chosen;
-    
-    
-    chosen = list[index[(left_end + right_end)/2]];
-    i = left_end-1;
-    j = right_end+1;
-    
+    int rightIdx,leftIdx,tempIndex;
+    double pivotValue;
+
+
+    pivotValue = list[index[(left_end + right_end)/2]];
+    rightIdx = left_end-1;
+    leftIdx = right_end+1;
+
     for(;;) {
-        while(list [index[++i]] < chosen);
-        while(list [index[--j]] > chosen);
-        if (i < j){
-            temp=index [j];
-            index [j] = index [i];
-            index [i] = temp;}
-        else if (i == j) {
-            ++i; break;}
+        while(list [index[++rightIdx]] < pivotValue);
+        while(list [index[--leftIdx]] > pivotValue);
+        if (rightIdx < leftIdx){
+            tempIndex=index [leftIdx];
+            index [leftIdx] = index [rightIdx];
+            index [rightIdx] = tempIndex;}
+        else if (rightIdx == leftIdx) {
+            ++rightIdx; break;}
         else break;
-    } 
-    
-    if (left_end < j)  quick_sort_1 (list, index, left_end, j);
-    if (i < right_end) quick_sort_1 (list, index, i, right_end);
-    
+    }
+
+    if (left_end < leftIdx)  quick_sort_1 (list, index, left_end, leftIdx);
+    if (rightIdx < right_end) quick_sort_1 (list, index, rightIdx, right_end);
+
     return;
 }
 
@@ -2285,11 +2285,11 @@ void quick_sort_1(double *list, int *index, int left_end, int right_end) {
  * @return -1 if *x < *y, 0 if equal, 1 if *x > *y.
  */
 /**** comparison call for the qsort ****/
-int flcomp(x,y)
-     double *x,*y;
+int flcomp(xVal,yVal)
+     double *xVal,*yVal;
 {
-    if (*x>*y) return(1);
-    else if (*x==*y) return(0);
+    if (*xVal>*yVal) return(1);
+    else if (*xVal==*yVal) return(0);
     else return(-1);
 }
 
