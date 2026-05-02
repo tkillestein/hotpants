@@ -165,61 +165,61 @@ void savexy(stamp_struct *stamps, int nStamps, long xmin, long ymin, int regionc
  * @return 0 on success, 1 if any allocation fails.
  */
 int allocateStamps(stamp_struct *stamps, int nStamps) {
-    int i,j;
+    int stampIdx, vectorIdx;
     int nbgVectors;
     
     nbgVectors = ((bgOrder + 1) * (bgOrder + 2)) / 2;
     
     if (stamps) {
-        for (i = 0; i < nStamps; i++) {
-            
+        for (stampIdx = 0; stampIdx < nStamps; stampIdx++) {
+
             /* **************************** */
-            if(!(stamps[i].vectors = (double **)calloc((nCompKer+nbgVectors), sizeof(double *))))
+            if(!(stamps[stampIdx].vectors = (double **)calloc((nCompKer+nbgVectors), sizeof(double *))))
                 return 1;
-            
-            for (j = 0; j < nCompKer + nbgVectors; j++) {
-                if(!(stamps[i].vectors[j] = (double *)calloc(fwKSStamp*fwKSStamp, sizeof(double))))
+
+            for (vectorIdx = 0; vectorIdx < nCompKer + nbgVectors; vectorIdx++) {
+                if(!(stamps[stampIdx].vectors[vectorIdx] = (double *)calloc(fwKSStamp*fwKSStamp, sizeof(double))))
                     return 1;
             }
-            
+
             /* **************************** */
-            
-            if (!(stamps[i].krefArea      = (double *)calloc(fwKSStamp*fwKSStamp, sizeof(double))))
+
+            if (!(stamps[stampIdx].krefArea      = (double *)calloc(fwKSStamp*fwKSStamp, sizeof(double))))
                 return 1;
-            
+
             /* **************************** */
-            
-            if (!(stamps[i].mat    = (double **)calloc(nC, sizeof(double *))))
+
+            if (!(stamps[stampIdx].mat    = (double **)calloc(nC, sizeof(double *))))
                 return 1;
-            
-            for (j = 0; j < nC; j++)
-                if ( !(stamps[i].mat[j] = (double *)calloc(nC, sizeof(double))) )
+
+            for (vectorIdx = 0; vectorIdx < nC; vectorIdx++)
+                if ( !(stamps[stampIdx].mat[vectorIdx] = (double *)calloc(nC, sizeof(double))) )
                     return 1;
             
             /* **************************** */
-            
-            if (!(stamps[i].xss = (int *)calloc(nKSStamps, sizeof(int))))
+
+            if (!(stamps[stampIdx].xss = (int *)calloc(nKSStamps, sizeof(int))))
                 return 1;
-            
+
             /* **************************** */
-            
-            if (!(stamps[i].yss = (int *)calloc(nKSStamps, sizeof(int))))
+
+            if (!(stamps[stampIdx].yss = (int *)calloc(nKSStamps, sizeof(int))))
                 return 1;
-            
+
             /* **************************** */
-            
-            if (!(stamps[i].scprod = (double *)calloc(nC, sizeof(double))))
+
+            if (!(stamps[stampIdx].scprod = (double *)calloc(nC, sizeof(double))))
                 return 1;
-            
+
             /* **************************** */
-            
-            stamps[i].x0 = stamps[i].y0 = stamps[i].x = stamps[i].y = 0;
-            stamps[i].nss = stamps[i].sscnt = 0;
-            stamps[i].nx = stamps[i].ny = 0;
-            stamps[i].sum = stamps[i].mean = stamps[i].median = 0;
-            stamps[i].mode = stamps[i].sd = stamps[i].fwhm = 0;
-            stamps[i].lfwhm = stamps[i].chi2 = 0;
-            stamps[i].norm = stamps[i].diff = 0;
+
+            stamps[stampIdx].x0 = stamps[stampIdx].y0 = stamps[stampIdx].x = stamps[stampIdx].y = 0;
+            stamps[stampIdx].nss = stamps[stampIdx].sscnt = 0;
+            stamps[stampIdx].nx = stamps[stampIdx].ny = 0;
+            stamps[stampIdx].sum = stamps[stampIdx].mean = stamps[stampIdx].median = 0;
+            stamps[stampIdx].mode = stamps[stampIdx].sd = stamps[stampIdx].fwhm = 0;
+            stamps[stampIdx].lfwhm = stamps[stampIdx].chi2 = 0;
+            stamps[stampIdx].norm = stamps[stampIdx].diff = 0;
         }
     }
     return 0;
@@ -1451,21 +1451,21 @@ float *calculateAvgNoise(float *image, int *mask, int nx, int ny, int size, int 
  * @param nStamps  Number of stamps in the array.
  */
 void freeStampMem(stamp_struct *stamps, int nStamps) {
-    int i, j;
+    int stampIdx, vectorIdx;
     if (stamps) {
-        for (i = 0; i < nStamps; i++) {
-            for(j = 0; j < nCompKer + nBGVectors; j++) 
-                if (stamps[i].vectors[j]) free(stamps[i].vectors[j]);
-            if (stamps[i].vectors) free(stamps[i].vectors);
-            
-            for (j = 0; j < nC; j++) 
-                if (stamps[i].mat[j]) free(stamps[i].mat[j]);
-            if (stamps[i].mat) free(stamps[i].mat);
-            
-            if (stamps[i].krefArea) free(stamps[i].krefArea);
-            if (stamps[i].scprod) free(stamps[i].scprod);
-            if (stamps[i].xss) free(stamps[i].xss);
-            if (stamps[i].yss) free(stamps[i].yss);
+        for (stampIdx = 0; stampIdx < nStamps; stampIdx++) {
+            for(vectorIdx = 0; vectorIdx < nCompKer + nBGVectors; vectorIdx++)
+                if (stamps[stampIdx].vectors[vectorIdx]) free(stamps[stampIdx].vectors[vectorIdx]);
+            if (stamps[stampIdx].vectors) free(stamps[stampIdx].vectors);
+
+            for (vectorIdx = 0; vectorIdx < nC; vectorIdx++)
+                if (stamps[stampIdx].mat[vectorIdx]) free(stamps[stampIdx].mat[vectorIdx]);
+            if (stamps[stampIdx].mat) free(stamps[stampIdx].mat);
+
+            if (stamps[stampIdx].krefArea) free(stamps[stampIdx].krefArea);
+            if (stamps[stampIdx].scprod) free(stamps[stampIdx].scprod);
+            if (stamps[stampIdx].xss) free(stamps[stampIdx].xss);
+            if (stamps[stampIdx].yss) free(stamps[stampIdx].yss);
         }
     }
 }
