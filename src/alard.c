@@ -79,16 +79,16 @@ void getKernelVec() {
  *         substamp data).
  */
 int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
-    
-    int       ren = 0;
-    int       pixelX,pixelY,xi,yi,dx,dy,idegx,idegy,bgDegX,bgDegY,di,dj,nv,ig,nvec;
-    double    ax,ay,xf,yf;
+
+    int       renormalizeFlag = 0;
+    int       pixelX,pixelY,stampCenterX,stampCenterY,pixelOffsetX,pixelOffsetY,idegx,idegy,bgDegX,bgDegY,substampIndexX,substampIndexY,vectorCompIdx,gaussianCompIdx,vectorComponentIdx;
+    double    polyBasisX,polyBasisY,normalizedX,normalizedY;
     double *im;
-    float     rPixX2, rPixY2;
-    
-    rPixX2   = 0.5 * rPixX;
-    rPixY2   = 0.5 * rPixY;
-    
+    float     halfPixX, halfPixY;
+
+    halfPixX   = 0.5 * rPixX;
+    halfPixY   = 0.5 * rPixY;
+
     if (verbose >= 1)
         fprintf(stderr, "    xs  : %4i ys  : %4i sig: %6.3f sscnt: %4i nss: %4i \n",
                 stamp->x, stamp->y, stamp->chi2, stamp->sscnt, stamp->nss);
@@ -103,80 +103,80 @@ int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
     /* ====================================================================
        POLYNOMIAL BASIS CONSTRUCTION
        ====================================================================
-       Iterate over kernel basis triplets (ig, idegx, idegy):
-       - ig: Gaussian component index [0, ngauss)
-       - idegx, idegy: polynomial degrees such that idegx + idegy <= deg_fixe[ig]
+       Iterate over kernel basis triplets (gaussianCompIdx, idegx, idegy):
+       - gaussianCompIdx: Gaussian component index [0, ngauss)
+       - idegx, idegy: polynomial degrees such that idegx + idegy <= deg_fixe[gaussianCompIdx]
 
        This implements the triangular basis expansion:
          K(x,y) = Sum_i c_i(x,y) * phi_i
        where phi_i = exp(-(x^2+y^2)*sigma^2) * x^deg_x * y^deg_y
 
-       The counter nvec sequentially assigns indices to each (ig, idegx, idegy)
+       The counter vectorComponentIdx sequentially assigns indices to each (gaussianCompIdx, idegx, idegy)
        triplet; these indices are used by xy_conv_stamp() to access precomputed
-       convolution responses stored in stamp->vectors[nvec].
+       convolution responses stored in stamp->vectors[vectorComponentIdx].
 
        Alard & Lupton (1998), Sect. 2: "The kernel is expanded as a sum of
        Gaussian basis elements with polynomial spatial weighting."
        Reference: https://iopscience.iop.org/article/10.1086/305984
        ==================================================================== */
-    nvec = 0;
-    for (ig = 0; ig < ngauss; ig++) {
-        for (idegx = 0; idegx <= deg_fixe[ig]; idegx++) {
-            for (idegy = 0; idegy <= deg_fixe[ig]-idegx; idegy++) {
+    vectorComponentIdx = 0;
+    for (gaussianCompIdx = 0; gaussianCompIdx < ngauss; gaussianCompIdx++) {
+        for (idegx = 0; idegx <= deg_fixe[gaussianCompIdx]; idegx++) {
+            for (idegy = 0; idegy <= deg_fixe[gaussianCompIdx]-idegx; idegy++) {
 
-                ren = 0;
+                renormalizeFlag = 0;
                 /* Detect odd-degree terms: (deg/2)*2 - deg evaluates to
                    -1 if deg is odd, 0 if even. Used to trigger renormalization
-                   of even-parity basis functions (those with dx==0 && dy==0). */
-                dx = (idegx / 2) * 2 - idegx;
-                dy = (idegy / 2) * 2 - idegy;
-                if (dx == 0 && dy == 0 && nvec > 0)
-                    ren = 1;  /* Set renormalization flag for higher-order even-parity basis */
-                
-                /* fill stamp->vectors[nvec] with convolved image */
+                   of even-parity basis functions (those with pixelOffsetX==0 && pixelOffsetY==0). */
+                pixelOffsetX = (idegx / 2) * 2 - idegx;
+                pixelOffsetY = (idegy / 2) * 2 - idegy;
+                if (pixelOffsetX == 0 && pixelOffsetY == 0 && vectorComponentIdx > 0)
+                    renormalizeFlag = 1;  /* Set renormalization flag for higher-order even-parity basis */
+
+                /* fill stamp->vectors[vectorComponentIdx] with convolved image */
                 /* image is convolved with functional form of kernel, fit later for amplitude */
-                xy_conv_stamp(stamp, imConv, nvec, ren);
-                ++nvec;
+                xy_conv_stamp(stamp, imConv, vectorComponentIdx, renormalizeFlag);
+                ++vectorComponentIdx;
             }
         }
     }
-    
+
     /* get the krefArea data */
     if (cutSStamp(stamp, imRef))
         return 1;
-    
-    /* fill stamp->vectors[nvec+++] with x^(bg) * y^(bg) for background fit */
-    xi = stamp->xss[stamp->sscnt];
-    yi = stamp->yss[stamp->sscnt];
-    di = xi - hwKSStamp;
-    dj = yi - hwKSStamp;
-    for (pixelX = xi - hwKSStamp; pixelX <= xi + hwKSStamp; pixelX++) {
-        xf = (pixelX - rPixX2) / rPixX2;
 
-        for (pixelY = yi - hwKSStamp; pixelY <= yi + hwKSStamp; pixelY++) {
-            /* fprintf(stderr, "%d %d %d %d %d %d\n", k, xi, yi,pixelX, pixelY, fwKSStamp); */
-            yf = (pixelY - rPixY2) / rPixY2;
+    /* fill stamp->vectors[vectorComponentIdx+++] with x^(bg) * y^(bg) for background fit */
+    stampCenterX = stamp->xss[stamp->sscnt];
+    stampCenterY = stamp->yss[stamp->sscnt];
+    substampIndexX = stampCenterX - hwKSStamp;
+    substampIndexY = stampCenterY - hwKSStamp;
+    for (pixelX = stampCenterX - hwKSStamp; pixelX <= stampCenterX + hwKSStamp; pixelX++) {
+        normalizedX = (pixelX - halfPixX) / halfPixX;
 
-            ax = 1.0;
-            nv = nvec;
+        for (pixelY = stampCenterY - hwKSStamp; pixelY <= stampCenterY + hwKSStamp; pixelY++) {
+            /* fprintf(stderr, "%d %d %d %d %d %d\n", k, stampCenterX, stampCenterY,pixelX, pixelY, fwKSStamp); */
+            normalizedY = (pixelY - halfPixY) / halfPixY;
+
+            polyBasisX = 1.0;
+            vectorCompIdx = vectorComponentIdx;
             for (bgDegX = 0; bgDegX <= bgOrder; bgDegX++) {
-                ay = 1.0;
+                polyBasisY = 1.0;
                 for (bgDegY = 0; bgDegY <= bgOrder - bgDegX; bgDegY++) {
-                    im = stamp->vectors[nv];
-                    im[pixelX-di+fwKSStamp*(pixelY-dj)] = ax * ay;
-                    ay *= yf;
-                    ++nv;
+                    im = stamp->vectors[vectorCompIdx];
+                    im[pixelX-substampIndexX+fwKSStamp*(pixelY-substampIndexY)] = polyBasisX * polyBasisY;
+                    polyBasisY *= normalizedY;
+                    ++vectorCompIdx;
                 }
-                ax *= xf;
+                polyBasisX *= normalizedX;
             }
         }
     }
-    
+
     /* build stamp->mat from stamp->vectors */
     build_matrix0(stamp);
     /* build stamp->scprod from stamp->vectors and imRef */
     build_scprod0(stamp, imRef);
-    
+
     return 0;
 }
 
