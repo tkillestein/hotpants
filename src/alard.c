@@ -349,47 +349,47 @@ double *kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int *ren) {
  *               convolution (renormalisation step for higher-order bases).
  */
 void xy_conv_stamp(stamp_struct *stamp, float *image, int n, int ren) {
-    int       i,j,xc,yc,xij,sub_width,xi,yi;
+    int       stampColIdx,stampRowIdx,kerOffsetX,kerOffsetY,xij,sub_width,xi,yi,imgColIdx,imgRowIdx,pixelIdx;
     double    *v0,*imc;
-    
-    
+
+
     if (usePCA) {
         xy_conv_stamp_PCA(stamp, image, n, ren);
         return;
     }
-    
+
     xi  = stamp->xss[stamp->sscnt];
     yi  = stamp->yss[stamp->sscnt];
     imc = stamp->vectors[n];
-    
+
     sub_width = fwKSStamp + fwKernel - 1;
-    
+
     /* pull area to convolve out of full reference image region */
     /* convolve with y filter */
-    for(i = xi - hwKSStamp - hwKernel; i <= xi + hwKSStamp + hwKernel; i++) {
-        for(j = yi - hwKSStamp; j <= yi + hwKSStamp; j++) {
-            xij = i - xi + sub_width / 2 + sub_width * (j - yi + hwKSStamp);
+    for(imgColIdx = xi - hwKSStamp - hwKernel; imgColIdx <= xi + hwKSStamp + hwKernel; imgColIdx++) {
+        for(imgRowIdx = yi - hwKSStamp; imgRowIdx <= yi + hwKSStamp; imgRowIdx++) {
+            xij = imgColIdx - xi + sub_width / 2 + sub_width * (imgRowIdx - yi + hwKSStamp);
             temp[xij] = 0.0;
-            for(yc = -hwKernel; yc <= hwKernel; yc++) {
-                temp[xij] += image[i+rPixX*(j+yc)] * filter_y[hwKernel-yc+n*fwKernel];
+            for(kerOffsetY = -hwKernel; kerOffsetY <= hwKernel; kerOffsetY++) {
+                temp[xij] += image[imgColIdx+rPixX*(imgRowIdx+kerOffsetY)] * filter_y[hwKernel-kerOffsetY+n*fwKernel];
             }
         }
     }
-    
+
     /* convolve with x filter */
-    for(j = -hwKSStamp; j <= hwKSStamp; j++) {
-        for(i = -hwKSStamp; i <= hwKSStamp;i++) {  
-            xij = i + hwKSStamp + fwKSStamp * (j + hwKSStamp);
+    for(stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp; stampRowIdx++) {
+        for(stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp;stampColIdx++) {
+            xij = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
             imc[xij] = 0.0;
-            for(xc = -hwKernel; xc <= hwKernel; xc++) {
-                imc[xij] += temp[i+xc+sub_width/2+sub_width*(j+hwKSStamp)] * filter_x[hwKernel-xc+n*fwKernel];
+            for(kerOffsetX = -hwKernel; kerOffsetX <= hwKernel; kerOffsetX++) {
+                imc[xij] += temp[stampColIdx+kerOffsetX+sub_width/2+sub_width*(stampRowIdx+hwKSStamp)] * filter_x[hwKernel-kerOffsetX+n*fwKernel];
             }
         }
     }
-    
+
     if (ren) {
         v0 = stamp->vectors[0];
-        for(i = 0; i < fwKSStamp * fwKSStamp; i++) imc[i] -= v0[i];
+        for(pixelIdx = 0; pixelIdx < fwKSStamp * fwKSStamp; pixelIdx++) imc[pixelIdx] -= v0[pixelIdx];
     }
     
     return;
