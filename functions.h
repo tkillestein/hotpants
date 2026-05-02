@@ -23,9 +23,9 @@ void build_scprod(stamp_struct *, int, const float *, double *, int, double **);
 
 void getStampSig(stamp_struct *, double *, const float *, double *, double *, double *, int *, int, int, float *);
 
-void getFinalStampSig(stamp_struct *, const float *, const float *, double *, const int *, int, int);
+void getFinalStampSig(stamp_struct *, float *, float *, double *);
 
-char check_again(stamp_struct *, double *, float *, float *, float *, double *, double *, int *, int *, int, int, int, double *, double *, float *);
+char check_again(stamp_struct *, double *, float *, float *, float *, double *, double *, int *);
 
 void spatial_convolve(float *, float **, int, int, double *, float *, int *);
 
@@ -44,21 +44,21 @@ int allocateStamps(stamp_struct *, int);
 
 void buildStamps(int, int, int, int, int *, int *, int, int, int,
                  stamp_struct *, stamp_struct *, float *, float *,
-                 float, float, int *, int, int);
+                 float, float);
 
 void cutStamp(float *, float *, int, int, int, int, int, stamp_struct *);
 
-int cutSStamp(stamp_struct *, float *, int *, int, int);
+int cutSStamp(stamp_struct *, float *);
 
 double checkPsfCenter(float *, int, int, int, int, int, int, double, float, float,
-                      int, int, int, int, int *, int, int);
+                      int, int, int, int);
 
-int getPsfCenters(stamp_struct *, float *, int, int, double, int, int, int *, int, int);
+int getPsfCenters(stamp_struct *, float *, int, int, double, int, int);
 
 int getStampStats3(float *, int, int, int, int, double *, double *, double *, double *, double *, double *, double *, int,
-               int, int, int *, int, int);
+               int, int);
 
-void getNoiseStats3(float *, float *, double *, int *, int, int, int *, int, int);
+void getNoiseStats3(float *, float *, double *, int *, int, int);
 
 int sigma_clip(float *, int, double *, double *, int);
 
