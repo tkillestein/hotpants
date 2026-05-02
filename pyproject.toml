@@ -1,0 +1,22 @@
+[project]
+name = "hotpants"
+version = "0.0.1"
+description = "High Order Transform of PSF ANd Template Subtraction"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+test = [
+    "pytest>=8.0",
+    "numpy>=1.26",
+    "astropy>=6.0",
+    "scipy>=1.13",
+]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=2.0",
+    "breathe>=4.35",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

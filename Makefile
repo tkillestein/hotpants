@@ -1,17 +1,17 @@
 #############################################################
-# TO BE CHANGED BY EACH USER TO POINT TO include/ AND lib/ 
-# DIRS HOLDING CFITSIO *.h AND libcfitsio IF THEY ARE NOT IN 
+# TO BE CHANGED BY EACH USER TO POINT TO include/ AND lib/
+# DIRS HOLDING CFITSIO *.h AND libcfitsio IF THEY ARE NOT IN
 # THE STANDARD PLACES
-# 
+#
 
-CFITSIOINCDIR =  ../../cfitsio/include
-LIBDIR        =  ../../cfitsio/lib
+CFITSIOINCDIR =  /usr/include
+LIBDIR        =  /usr/lib/x86_64-linux-gnu
 
 #
 #
 #############################################################
 # COMPILATION OPTIONS BELOW
-# 
+#
 
 # another good memory checker is valgrind : http://valgrind.kde.org/index.html
 # valgrind --tool=memcheck hotpants
@@ -20,34 +20,42 @@ LIBDIR        =  ../../cfitsio/lib
 # LIBS  = -L$(LIBDIR) -lm -lcfitsio -lefence
 
 # for profiling with gprof
-# COPTS = -pg -fprofile-arcs -funroll-loops -O3 -ansi -pedantic-errors -Wall -I$(CFITSIOINCDIR) 
+# COPTS = -pg -fprofile-arcs -funroll-loops -O3 -ansi -pedantic-errors -Wall -I$(CFITSIOINCDIR)
 
 # for gdbugging
-#COPTS = -g3 -funroll-loops -O3 -ansi -pedantic-errors -Wall -I$(CFITSIOINCDIR) 
+#COPTS = -g3 -funroll-loops -O3 -ansi -pedantic-errors -Wall -I$(CFITSIOINCDIR)
 
 # standard usage
 # recently added -std=c99 after a bug report
-COPTS = -funroll-loops -O3 -ansi -std=c99 -pedantic-errors -Wall -I$(CFITSIOINCDIR) -D_GNU_SOURCE -fcommon -g
-LIBS  = -lpthread -L$(LIBDIR) -lm -lcfitsio
+COPTS = -funroll-loops -O3 -ansi -std=c99 -pedantic-errors -Wall -I$(CFITSIOINCDIR) -D_GNU_SOURCE -fopenmp
+LIBS  = -L$(LIBDIR) -lm -lcfitsio -llapacke -llapack -lblas
+
+# Optional FFT convolution via FFTW3.  Build with: make hotpants FFTW=1
+# Override FFTWINCDIR/FFTWLIBDIR if headers/library are in non-standard paths.
+FFTWINCDIR ?= /usr/include
+FFTWLIBDIR ?= /usr/lib/x86_64-linux-gnu
+ifeq ($(FFTW),1)
+  COPTS += -DUSE_FFTW -I$(FFTWINCDIR)
+  LIBS  += -L$(FFTWLIBDIR) -lfftw3
+endif
 
 # compiler
-CC    = gcc 
+CC    = gcc
 
 #
 #
-############################################################# 
+#############################################################
 # BELOW SHOULD BE OK, UNLESS YOU WANT TO COPY THE EXECUTABLES
 # SOMEPLACE AFTER THEY ARE BUILT eg. hotpants
 #
 
-STDH  = functions.h globals.h defaults.h thpool.h
-ALL   = main.o vargs.o alard.o functions.o thpool.o
+STDH  = functions.h globals.h defaults.h
+ALL   = main.o vargs.o alard.o functions.o
 
-all:	hotpants maskim
+all:	hotpants extractkern maskim
 
 hotpants: $(ALL)
 	$(CC) $(ALL) -o hotpants $(LIBS) $(COPTS)
-#	cp hotpants ../../bin/$(ARCH)
 
 main.o: $(STDH) main.c
 	$(CC) $(COPTS)  -c main.c
@@ -61,8 +69,11 @@ functions.o: $(STDH) functions.c
 vargs.o: $(STDH) vargs.c
 	$(CC) $(COPTS)  -c vargs.c
 
-thpool.o: $(STDH) thpool.c
-	$(CC) $(COPTS)  -c thpool.c
+extractkern : extractkern.o
+	$(CC) extractkern.o -o extractkern $(LIBS) $(COPTS)
+
+extractkern.o : $(STDH) extractkern.c
+	$(CC) $(COPTS)  -c extractkern.c
 
 maskim : maskim.o
 	$(CC) maskim.o -o maskim $(LIBS) $(COPTS)
@@ -76,3 +87,11 @@ clean :
 	rm -f hotpants
 	rm -f extractkern
 	rm -f maskim
+
+# CMake convenience targets
+cmake-build:
+	cmake -B build -DCMAKE_BUILD_TYPE=Release
+	cmake --build build --parallel
+
+cmake-install: cmake-build
+	cmake --install build --prefix $(CURDIR)

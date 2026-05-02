@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+*.o
+hotpants
+extractkern
+maskim
+.venv/
+build/
