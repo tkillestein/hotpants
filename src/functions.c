@@ -667,8 +667,8 @@ double checkPsfCenter(float *iData, int imax, int jmax, int xLen, int yLen,
  * @return 0 on success, 1 if no valid substamp could be found.
  */
 int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double hiThresh, int bbit1, int bbit2) {
-    
-    int stampRegionCol, stampRegionRow, centroidCol, centroidRow, nr, nr2, imax, jmax, xr, yr, xr2, yr2, sy0, sx0, xbuffer, ybuffer;
+
+    int stampRegionCol, stampRegionRow, centroidCol, centroidRow, nr, nr2, imax, jmax, xr, yr, xr2, yr2, sy0, sx0, xbuffer, ybuffer, i, j;
     double dmax, dmax2, dpt, dpt2, loPsf, floor;
     int *xloc, *yloc, *qs, pcnt, brk, bbit, fcnt;
     double *peaks;
