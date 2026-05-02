@@ -2286,25 +2286,26 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
  */
 double make_kernel(int xi, int yi, double *kernelSol) {
 
-    int    kernelCompIdx,solIdx,polyDegX,polyDegY,kernelPixelIdx;
-    double ax,ay,sum_kernel;
-    double xf, yf;
+    int    gaussianCompIdx,solutionIdx,polyDegX,polyDegY,kernelPixelIdx;
+    int    pixelCompIdx;
+    double polyBasisX,polyBasisY,kernelSum;
+    double normalizedX, normalizedY;
 
-    solIdx  = 2;
+    solutionIdx  = 2;
     /* RANGE FROM -1 to 1 */
-    xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
-    yf = (yi - 0.5 * rPixY) / (0.5 * rPixY);
+    normalizedX = (xi - 0.5 * rPixX) / (0.5 * rPixX);
+    normalizedY = (yi - 0.5 * rPixY) / (0.5 * rPixY);
 
-    for (kernelCompIdx = 1; kernelCompIdx < nCompKer; kernelCompIdx++) {
-        kernel_coeffs[kernelCompIdx] = 0.0;
-        ax = 1.0;
+    for (gaussianCompIdx = 1; gaussianCompIdx < nCompKer; gaussianCompIdx++) {
+        kernel_coeffs[gaussianCompIdx] = 0.0;
+        polyBasisX = 1.0;
         for (polyDegX = 0; polyDegX <= kerOrder; polyDegX++) {
-            ay = 1.0;
+            polyBasisY = 1.0;
             for (polyDegY = 0; polyDegY <= kerOrder - polyDegX; polyDegY++) {
-                kernel_coeffs[kernelCompIdx] += kernelSol[solIdx++] * ax * ay;
-                ay *= yf;
+                kernel_coeffs[gaussianCompIdx] += kernelSol[solutionIdx++] * polyBasisX * polyBasisY;
+                polyBasisY *= normalizedY;
             }
-            ax *= xf;
+            polyBasisX *= normalizedX;
         }
     }
     kernel_coeffs[0] = kernelSol[1];
@@ -2312,14 +2313,14 @@ double make_kernel(int xi, int yi, double *kernelSol) {
     for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel; kernelPixelIdx++)
         kernel[kernelPixelIdx] = 0.0;
 
-    sum_kernel = 0.0;
+    kernelSum = 0.0;
     for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel; kernelPixelIdx++) {
-        for (kernelCompIdx = 0; kernelCompIdx < nCompKer; kernelCompIdx++) {
-            kernel[kernelPixelIdx] += kernel_coeffs[kernelCompIdx] * kernel_vec[kernelCompIdx][kernelPixelIdx];
+        for (pixelCompIdx = 0; pixelCompIdx < nCompKer; pixelCompIdx++) {
+            kernel[kernelPixelIdx] += kernel_coeffs[pixelCompIdx] * kernel_vec[pixelCompIdx][kernelPixelIdx];
         }
-        sum_kernel += kernel[kernelPixelIdx];
+        kernelSum += kernel[kernelPixelIdx];
     }
-    return sum_kernel;
+    return kernelSum;
 }
 
 /**
