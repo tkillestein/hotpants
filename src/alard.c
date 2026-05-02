@@ -2284,39 +2284,39 @@ void spatial_convolve(float *image, float **variance, int xSize, int ySize, doub
  *         factor at this position).
  */
 double make_kernel(int xi, int yi, double *kernelSol) {
-    
-    int    i1,k,ix,iy,i;
+
+    int    kernelCompIdx,solIdx,polyDegX,polyDegY,kernelPixelIdx;
     double ax,ay,sum_kernel;
     double xf, yf;
-    
-    k  = 2;
+
+    solIdx  = 2;
     /* RANGE FROM -1 to 1 */
     xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
     yf = (yi - 0.5 * rPixY) / (0.5 * rPixY);
-    
-    for (i1 = 1; i1 < nCompKer; i1++) {
-        kernel_coeffs[i1] = 0.0;
+
+    for (kernelCompIdx = 1; kernelCompIdx < nCompKer; kernelCompIdx++) {
+        kernel_coeffs[kernelCompIdx] = 0.0;
         ax = 1.0;
-        for (ix = 0; ix <= kerOrder; ix++) {
+        for (polyDegX = 0; polyDegX <= kerOrder; polyDegX++) {
             ay = 1.0;
-            for (iy = 0; iy <= kerOrder - ix; iy++) {
-                kernel_coeffs[i1] += kernelSol[k++] * ax * ay;
+            for (polyDegY = 0; polyDegY <= kerOrder - polyDegX; polyDegY++) {
+                kernel_coeffs[kernelCompIdx] += kernelSol[solIdx++] * ax * ay;
                 ay *= yf;
             }
             ax *= xf;
         }
     }
-    kernel_coeffs[0] = kernelSol[1]; 
-    
-    for (i = 0; i < fwKernel * fwKernel; i++)
-        kernel[i] = 0.0;
-    
+    kernel_coeffs[0] = kernelSol[1];
+
+    for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel; kernelPixelIdx++)
+        kernel[kernelPixelIdx] = 0.0;
+
     sum_kernel = 0.0;
-    for (i = 0; i < fwKernel * fwKernel; i++) {
-        for (i1 = 0; i1 < nCompKer; i1++) {
-            kernel[i] += kernel_coeffs[i1] * kernel_vec[i1][i];
+    for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel; kernelPixelIdx++) {
+        for (kernelCompIdx = 0; kernelCompIdx < nCompKer; kernelCompIdx++) {
+            kernel[kernelPixelIdx] += kernel_coeffs[kernelCompIdx] * kernel_vec[kernelCompIdx][kernelPixelIdx];
         }
-        sum_kernel += kernel[i];    
+        sum_kernel += kernel[kernelPixelIdx];
     }
     return sum_kernel;
 }
@@ -2338,25 +2338,25 @@ double make_kernel(int xi, int yi, double *kernelSol) {
  * @return Background value at (xi, yi) in data units.
  */
 double get_background(int xi, int yi, double *kernelSol) {
-    
+
     double  background,ax,ay,xf,yf;
-    int     i,j,k;
+    int     polyDegX,polyDegY,solIdx;
     int     ncompBG;
-    
+
     ncompBG = (nCompKer - 1) * ( ((kerOrder + 1) * (kerOrder + 2)) / 2 ) + 1;
-    
+
     background = 0.0;
-    k          = 1;
+    solIdx     = 1;
     /* RANGE FROM -1 to 1 */
     xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
     yf = (yi - 0.5 * rPixY) / (0.5 * rPixY);
-    
+
     ax=1.0;
-    for (i = 0; i <= bgOrder; i++) {
-        ay = 1.0; 
-        for (j = 0; j <= bgOrder - i; j++) {
-            background += kernelSol[ncompBG+k++] * ax * ay;
-            /* fprintf(stderr, "bg: %d %d %d %d %f %f %f\n", xi, yi, i, j, ax, ay, kernelSol[ncompBG+k-1]); */
+    for (polyDegX = 0; polyDegX <= bgOrder; polyDegX++) {
+        ay = 1.0;
+        for (polyDegY = 0; polyDegY <= bgOrder - polyDegX; polyDegY++) {
+            background += kernelSol[ncompBG+solIdx++] * ax * ay;
+            /* fprintf(stderr, "bg: %d %d %d %d %f %f %f\n", xi, yi, polyDegX, polyDegY, ax, ay, kernelSol[ncompBG+solIdx-1]); */
             ay *= yf;
         }
         ax *= xf;
