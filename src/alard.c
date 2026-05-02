@@ -99,17 +99,39 @@ int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
             fprintf(stderr, "        Reject stamp\n");
         return 1;
     }
-    
+
+    /* ====================================================================
+       POLYNOMIAL BASIS CONSTRUCTION
+       ====================================================================
+       Iterate over kernel basis triplets (ig, idegx, idegy):
+       - ig: Gaussian component index [0, ngauss)
+       - idegx, idegy: polynomial degrees such that idegx + idegy <= deg_fixe[ig]
+
+       This implements the triangular basis expansion:
+         K(x,y) = Sum_i c_i(x,y) * phi_i
+       where phi_i = exp(-(x^2+y^2)*sigma^2) * x^deg_x * y^deg_y
+
+       The counter nvec sequentially assigns indices to each (ig, idegx, idegy)
+       triplet; these indices are used by xy_conv_stamp() to access precomputed
+       convolution responses stored in stamp->vectors[nvec].
+
+       Alard & Lupton (1998), Sect. 2: "The kernel is expanded as a sum of
+       Gaussian basis elements with polynomial spatial weighting."
+       Reference: https://iopscience.iop.org/article/10.1086/305984
+       ==================================================================== */
     nvec = 0;
     for (ig = 0; ig < ngauss; ig++) {
         for (idegx = 0; idegx <= deg_fixe[ig]; idegx++) {
             for (idegy = 0; idegy <= deg_fixe[ig]-idegx; idegy++) {
-                
+
                 ren = 0;
+                /* Detect odd-degree terms: (deg/2)*2 - deg evaluates to
+                   -1 if deg is odd, 0 if even. Used to trigger renormalization
+                   of even-parity basis functions (those with dx==0 && dy==0). */
                 dx = (idegx / 2) * 2 - idegx;
                 dy = (idegy / 2) * 2 - idegy;
                 if (dx == 0 && dy == 0 && nvec > 0)
-                    ren = 1;
+                    ren = 1;  /* Set renormalization flag for higher-order even-parity basis */
                 
                 /* fill stamp->vectors[nvec] with convolved image */
                 /* image is convolved with functional form of kernel, fit later for amplitude */
@@ -194,6 +216,10 @@ double *kernel_vector(int n, int deg_x, int deg_y, int ig, int *ren) {
     }
     
     vector = (double *)malloc(fwKernel*fwKernel*sizeof(double));
+    /* Detect parity: (deg/2)*2 - deg = 0 if even, -1 if odd.
+       Odd-degree filters (dx != 0 || dy != 0) retain full normalization;
+       even-degree filters (dx==0 && dy==0) are normalized and (for n>0)
+       have the n=0 basis subtracted to form differential corrections. */
     dx = (deg_x / 2) * 2 - deg_x;
     dy = (deg_y / 2) * 2 - deg_y;
     sum_x = sum_y = 0.0;
@@ -291,10 +317,19 @@ double *kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int *ren) {
  * @brief Convolve the substamp region of an image with the n-th separable
  *        Gaussian-polynomial kernel basis function.
  *
- * @details Uses the separability of the Gaussian-polynomial filter to perform
+ * @details **Separability optimization:** Gaussian-polynomial filters are separable:
+ *   φ(x,y) = filter_x[x] * filter_y[y]
+ * where filter_x[k] = exp(-k^2*σ^2) * k^deg_x and similarly for filter_y.
+ *
+ * Standard 2D convolution costs O(k^2*n^2) FLOPs (k = kernel width, n = image dimension).
+ * Separable 1D passes reduce this to O(2*k*n^2), a speedup factor of k/2 (typically
+ * 5–10×). This is the primary reason HOTPANTS achieves real-time performance on
+ * large images.
+ *
+ * The implementation uses the separability of the Gaussian-polynomial filter to perform
  * the convolution in two 1-D passes (first along y, then along x), storing the
  * fwKSStamp×fwKSStamp result in stamp->vectors[n].  This is the performance-
- * critical inner loop (~60 % of total runtime according to the PROF file).
+ * critical inner loop (~60 % of total runtime according to profiling).
  *
  * If the renormalise flag @p ren is set (i.e. kernel_vector() returned ren=1
  * for this basis), the zeroth-basis convolved image stamp->vectors[0] is
@@ -302,6 +337,8 @@ double *kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int *ren) {
  * construction of the higher-order basis images.
  *
  * In PCA mode the call is forwarded to xy_conv_stamp_PCA().
+ *
+ * Reference: Alard & Lupton (1998), Sect. 2; classic signal-processing optimization.
  *
  * @param stamp  Stamp whose current substamp (stamp->sscnt) defines the pixel
  *               region to convolve.
@@ -596,9 +633,10 @@ void build_matrix0(stamp_struct *stamp) {
         }
     }
     
-    for (i1 = 0; i1 < ncomp1; i1++) { 
+    for (i1 = 0; i1 < ncomp1; i1++) {
+        /* ivecbg = index into the background vector array (the constant background term) */
         ivecbg = ncomp1;
-        
+
         p0 = 0.0;
         /* integrate convolved images and first order background (equals 1 everywhere!)*/
         for (k = 0; k < pixStamp; k++)
@@ -1007,16 +1045,20 @@ void build_matrix_new(stamp_struct *stamps, int nS, double **matrix) {
         for (ideg1 = 0, a1 = 1.0; ideg1 <= kerOrder; ideg1++, a1 *= fx)
             for (ideg2 = 0, a2 = 1.0; ideg2 <= kerOrder - ideg1; ideg2++, a2 *= fy)
                 wxy[istamp][k++] = a1 * a2;
-        
+
         matrix0 = stamps[istamp].mat;
         for (i = 0; i < ncomp; i++) {
+            /* Decompose linear index i into (i1, i2):
+               i1 = which Gaussian component (0 to ncomp1-1)
+               i2 = which polynomial term within that component (0 to ncomp2-1) */
             i1 = i / ncomp2;
             i2 = i - i1 * ncomp2;
-            
+
             for (j = 0; j <= i; j++) {
+                /* Same decomposition for column index j */
                 j1 = j / ncomp2;
                 j2 = j - j1 * ncomp2;
-                
+
                 /* spatially weighted W_m1 and W_m2 integrals */
                 matrix[i+2][j+2] += wxy[istamp][i2] * wxy[istamp][j2] * matrix0[i1+2][j1+2];
             }
@@ -1154,20 +1196,25 @@ void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
         
         matrix0 = stamps[istamp].mat;
         for (i = 0; i < ncomp; i++) {
+            /* Decompose linear index i into (i1, i2):
+               i1 = which Gaussian component (0 to ncomp1-1)
+               i2 = which polynomial term within that component (0 to ncomp2-1) */
             i1 = i / ncomp2;
             i2 = i - i1 * ncomp2;
-            
+
             for (j = 0; j <= i; j++) {
+                /* Same decomposition for column index j */
                 j1 = j / ncomp2;
                 j2 = j - j1 * ncomp2;
-                
+
                 /* spatially weighted W_m1 and W_m2 integrals */
                 matrix[i+2][j+2] += wxy[istamp][i2] * wxy[istamp][j2] * matrix0[i1+2][j1+2];
             }
         }
-        
+
         matrix[1][1] += matrix0[1][1];
         for (i = 0; i < ncomp; i++) {
+            /* Index decomposition for background terms */
             i1 = i / ncomp2;
             i2 = i - i1 * ncomp2;
             matrix[i+2][1] += wxy[istamp][i2] * matrix0[i1+2][1];

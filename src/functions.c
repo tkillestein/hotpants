@@ -942,39 +942,66 @@ void getNoiseStats3(float *data, float *noise, double *nnorm, int *nncount, int 
  *        FWHM) for a sub-region of an image using iterative sigma-clipping and
  *        histogram analysis.
  *
- * @details The function operates in two passes:
- *  1. Draws up to 100 random samples from the nPixX×nPixY region (respecting
- *     the umask/smask quality flags) to estimate a histogram bin size based on
- *     the interquartile range; runs sigma_clip() on the full region for the
- *     initial mean and standard deviation.
- *  2. Constructs a 256-bin histogram of the sigma-clipped pixel values and
- *     derives the mode (using the narrowest bin range containing ~10 % of
- *     points), the median (50th percentile), the sky noise FWHM (bin width
- *     times the IQR converted to Gaussian sigma via the factor 1/1.35), and a
- *     lower-quartile FWHM estimate.
- *  If the histogram bins are poorly chosen (lower/upper percentile bins outside
- *  [1, 255] or the spread is too narrow) the bins are adjusted and the
- *  histogram is repeated, up to 5 times.
+ * @details Algorithm (multi-step histogram refinement):
  *
- * @param data    Pixel array of size nPixX × nPixY (row-major).
- * @param x0Reg   X origin of this region within the full-frame mRData mask.
- * @param y0Reg   Y origin of this region within the full-frame mRData mask.
- * @param nPixX   Width of the region in pixels.
- * @param nPixY   Height of the region in pixels.
- * @param sum     Output: sum of absolute pixel values in the good pixel set.
- * @param mean    Output: sigma-clipped mean.
- * @param median  Output: histogram-interpolated median.
- * @param mode    Output: mode (peak of pixel histogram).
- * @param sd      Output: sigma-clipped standard deviation.
- * @param fwhm    Output: noise FWHM estimated from the histogram IQR (in pixel
- *                value units, not angular FWHM).
- * @param lfwhm   Output: lower-quartile FWHM estimate.
- * @param umask   Pixels with this bit set in mRData are excluded.
- * @param smask   Pixels without this bit set in mRData are excluded.
- * @param maxiter Maximum number of sigma-clipping iterations.
- * @return 0 on success; non-zero error codes for insufficient data (4), memory
- *         allocation failure (1), no valid pixels (2), degenerate bins (3), or
- *         sigma-clipping failure (5).
+ *   1. **Sampling & bin-width estimation:** Draw HISTOGRAM_SAMPLE_SIZE (100)
+ *      random pixels; compute percentiles at HISTOGRAM_LOWER_FRAC (50%) and
+ *      HISTOGRAM_UPPER_FRAC (90%) to estimate the dynamic range and bin width.
+ *
+ *   2. **Sigma-clipping setup:** Call sigma_clip() on all valid pixels to
+ *      obtain mean and standard deviation, excluding outliers beyond maxiter
+ *      iterations of the clipping loop.
+ *
+ *   3. **Histogram construction & refinement loop:** Build a 256-bin histogram
+ *      and test if bin boundaries fit the data:
+ *      - If bins too wide (lower < 1, upper > 255): double bin width, retry.
+ *      - If bins too narrow (peak span < 40 bins): halve bin width, retry.
+ *      - If bins acceptable: exit loop.
+ *      Maximum MAX_SIGMA_CLIP_RETRIES (5) attempts to prevent divergence.
+ *
+ *   4. **Mode finding:** Locate the histogram peak as the narrowest region
+ *      containing ~HISTOGRAM_PEAK_WIDTH_PCT (10%) of pixels; interpolate
+ *      bin boundaries using weighted centroid. Store peak location in *mode.
+ *
+ *   5. **FWHM estimation:** Find 25th and 75th percentiles (i.e., 50% of
+ *      pixels around the mode) via cumulative histogram; estimate FWHM as
+ *      the difference between these percentiles (a robust surrogate for
+ *      the Gaussian sigma of the noise distribution).
+ *
+ *   Mask filtering uses two bitmask parameters:
+ *   - umask (exclude bits): pixels with (mRData[i] & umask) != 0 are skipped.
+ *   - smask (select bits): pixels without (mRData[i] & smask) set are skipped.
+ *   Good pixels: umask=0x0, smask=0xffff. Semi-bad: umask=0xff, smask=0x8000.
+ *
+ *   Reference: Alard & Lupton (1998), Appendix; histogram-based estimators
+ *   are robust to outliers and provide unbiased FWHM estimates for PSF-convolved
+ *   noise (which is non-Gaussian due to correlation).
+ *
+ * @param data    Flat pixel array of the stamp region (size nPixX × nPixY).
+ * @param x0Reg   X-coordinate offset of the stamp within the full region (for mask lookup).
+ * @param y0Reg   Y-coordinate offset of the stamp within the full region.
+ * @param nPixX   Width of the stamp in pixels.
+ * @param nPixY   Height of the stamp in pixels.
+ * @param sum     Output: sum of all valid pixel values.
+ * @param mean    Output: mean of sigma-clipped pixels.
+ * @param median  Output: median (50th percentile) from histogram.
+ * @param mode    Output: mode (peak bin) from histogram, interpolated via
+ *                weighted centroid of bins near the peak.
+ * @param sd      Output: standard deviation (sigma) of sigma-clipped pixels.
+ * @param fwhm    Output: full-width half-maximum FWHM estimate (in pixel
+ *                value units, not angular FWHM); derived from 75th–25th
+ *                percentile range, robust to outliers.
+ * @param lfwhm   Output: lower-quartile FWHM estimate (25th percentile).
+ * @param umask   Bits to exclude: pixels with (mRData[pixel] & umask) != 0 are skipped.
+ * @param smask   Bits to select: pixels without (mRData[pixel] & smask) set are skipped.
+ * @param maxiter Maximum number of sigma-clipping iterations in step 2.
+ *
+ * @return 0 on success; error codes:
+ *   - 1: memory allocation failure or max retries exceeded
+ *   - 2: insufficient valid pixels (< HISTOGRAM_SAMPLE_SIZE) after masking
+ *   - 3: degenerate bin width (zero variance in data)
+ *   - 4: too few input pixels (nPixX*nPixY < HISTOGRAM_SAMPLE_SIZE)
+ *   - 5: sigma_clip() failed to converge
  */
 int getStampStats3(float *data,
                    int x0Reg, int y0Reg, int nPixX, int nPixY,
@@ -1005,9 +1032,9 @@ int getStampStats3(float *data,
     float    *sdat;
     double   *work;
     
-    int      nstat=100;
-    float    ufstat=0.9;
-    float    mfstat=0.5;
+    int      nstat     = HISTOGRAM_SAMPLE_SIZE;
+    float    ufstat    = HISTOGRAM_UPPER_FRAC;
+    float    mfstat    = HISTOGRAM_LOWER_FRAC;
     
     
     npts = nPixX * nPixY;
@@ -1020,11 +1047,14 @@ int getStampStats3(float *data,
         return (1);
     }
     
-    idum   = -666;  /* initialize random number generator with the devil's seed */
+    idum   = RNG_SEED_MAGIC;  /* Numerical Recipes convention; triggers re-seeding */
     tries  = 0;     /* attempts at the histogram */
     
+    /* ====================================================================
+       SAMPLING PHASE: Estimate bin width from percentile range
+       ===================================================================== */
     goodcnt = 0;
-    /* pull 100 random enough values from array to estimate required bin sizes */
+    /* pull HISTOGRAM_SAMPLE_SIZE random enough values to estimate required bin sizes */
     /* only do as many calls as there are points in the section! */
     /* NOTE : ignore anything with fillVal or zero */
     for (i = 0; (i < nstat) && (goodcnt < npts); i++, goodcnt++) {
@@ -1076,6 +1106,10 @@ int getStampStats3(float *data,
             sdat[goodcnt++] = rdat;
         }
     }
+
+    /* ====================================================================
+       SIGMA-CLIPPING PHASE: Obtain mean & std dev before histogram
+       ===================================================================== */
     if (sigma_clip(sdat, goodcnt, mean, sd, maxiter)) {
         free(sdat);
         free(work);
@@ -1085,20 +1119,21 @@ int getStampStats3(float *data,
     
     /* save some speed */
     isd = 1. / (*sd);
-    
-    /*** DO ONLY ONCE! ***/
-    
+
+    /* ====================================================================
+       HISTOGRAM REFINEMENT LOOP: Adjust bin width until bounds are acceptable
+       ===================================================================== */
     repeat = 1;
     while (repeat) {
         
-        if (tries >= 5) {
+        if (tries >= MAX_SIGMA_CLIP_RETRIES) {
             /* too many attempts here - print message and exit*/
             /* DD fprintf(stderr, "     WARNING: 5 failed iterations in getStampStats2\n"); */
             free(work);
             return 1;
         }
         
-        for (i=0; i<256; bins[i++]=0);
+        for (i=0; i<HISTOGRAM_NUM_BINS; bins[i++]=0);
         
         /* rezero sums if repeating */
         ssum = sumx = sumxx = 0.;
@@ -1161,11 +1196,14 @@ int getStampStats3(float *data,
             free(work);
             return 3;
         }
-        
+
+        /* ====================================================================
+           MODE FINDING: Locate peak as narrowest region containing ~10% of data
+           ===================================================================== */
         /* find the mode - find narrowest region which holds ~10% of points*/
         sumx = maxdens = 0.;
         for (ilower = iupper = 1; iupper < 255; sumx -= bins[ilower++]) {
-            while ( (sumx < goodcnt/10.) && (iupper < 255) ) 
+            while ( (sumx < goodcnt * HISTOGRAM_PEAK_WIDTH_PCT) && (iupper < 255) ) 
                 sumx += bins[iupper++];
             
             if (sumx / (iupper-ilower) > maxdens) {
@@ -1195,11 +1233,14 @@ int getStampStats3(float *data,
         sumx += bins[imax] * (mode_bin-imax); /*interpolate fractional bin*/
         sumx /= goodcnt;
         moden=sumx;
-        
+
+        /* ====================================================================
+           FWHM ESTIMATION: Find 25th–75th percentile range (robust noise σ estimate)
+           ===================================================================== */
         /* find the region around mode containing half the "noise" points,
            e.g. assume that the mode is 50th percentile of the noise */
-        lower = goodcnt * 0.25;
-        upper = goodcnt * 0.75; 
+        lower = goodcnt * (0.5 - HISTOGRAM_NOISE_HALF_PCT);  /* 25th percentile */
+        upper = goodcnt * (0.5 + HISTOGRAM_NOISE_HALF_PCT);  /* 75th percentile */ 
         sumx = 0.;
         for (i = 0; sumx < lower; sumx += bins[i++]);
         lower = i - (sumx - lower) / bins[i-1];

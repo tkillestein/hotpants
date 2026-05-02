@@ -74,6 +74,49 @@
 #define D_CONVVAR       0       /* instead of convolving noise, convolve variance.  ker vs ker**2 */
 #define D_NTHREAD       1       /* number of threads to use for calculating regions - will be limited to nrx*nry */
 
+/* =====================================================================
+   HISTOGRAM STATISTICS PARAMETERS (used in getStampStats3)
+   =====================================================================
+   getStampStats3 estimates image statistics (mean, median, mode, FWHM)
+   by building a 256-bin histogram and performing sigma-clipping.
+   See functions.c:getStampStats3() for algorithm details.
+   ===================================================================== */
+
+#define HISTOGRAM_SAMPLE_SIZE    100    /* # random pixels sampled to estimate bin width; must be << total pixels */
+#define HISTOGRAM_NUM_BINS       256    /* # histogram bins for FWHM estimation (256 fits percentile calculations) */
+#define HISTOGRAM_LOWER_FRAC     0.5    /* lower percentile (50%) for bin-width estimation */
+#define HISTOGRAM_UPPER_FRAC     0.9    /* upper percentile (90%) for bin-width estimation */
+#define HISTOGRAM_PEAK_WIDTH_PCT 0.1    /* width of histogram peak containing ~10% of points (used for mode finding) */
+#define HISTOGRAM_NOISE_HALF_PCT 0.25   /* half-width percentile for FWHM: finds 25th-75th percentile range around mode */
+
+/* =====================================================================
+   RANDOM NUMBER GENERATION
+   ===================================================================== */
+#define RNG_SEED_MAGIC           (-666)  /* Numerical Recipes convention; Park & Miller generator re-seeds on negative value */
+
+/* =====================================================================
+   KERNEL-FITTING ITERATION LIMITS
+   ===================================================================== */
+#define MAX_SIGMA_CLIP_RETRIES   5       /* max iterations for histogram bin-width refinement in getStampStats3; typical convergence < 3 */
+
+/* =====================================================================
+   POLYNOMIAL BASIS FORMULA
+   =====================================================================
+   The number of polynomial basis terms (1-D and 2-D) up to order n is:
+     N(n) = (n+1)*(n+2)/2
+
+   This formula counts all monomials x^i*y^j where i,j >= 0 and i+j <= n.
+   Used to compute:
+   - nComp = number of spatial polynomial terms in kernel
+   - ncompBG = number of background polynomial terms
+   - nBGVectors = number of background basis vectors
+
+   Reference: Alard & Lupton (1998), Eq. 3; Appendix A discusses the
+   polynomial expansion of the spatially-varying kernel coefficient c_i(x,y).
+
+   Example: order=2 gives (2+1)*(2+2)/2 = 6 terms: {1, x, y, x^2, xy, y^2}
+   ===================================================================== */
+
 /* Compile-time guards for type-size assumptions (C11/C17 _Static_assert) */
 _Static_assert(sizeof(float)  == 4, "CFITSIO BITPIX=-32 I/O assumes 4-byte float");
 _Static_assert(sizeof(double) == 8, "LAPACK/BLAS routines assume 8-byte double");

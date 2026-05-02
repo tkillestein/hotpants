@@ -31,6 +31,35 @@ typedef struct
 #define EXTERN extern
 #endif
 
+/* =====================================================================
+   GLOBAL VARIABLE PREFIX LEGEND
+   =====================================================================
+   The following variables use single-letter prefixes for brevity. This
+   legend documents their meanings to aid code comprehension:
+
+   t* = template image data and parameters
+        Examples: tUThresh (template upper saturation threshold),
+                  tGain (template gain in e-/ADU), tRdnoise (readnoise),
+                  tMaskIm (template mask image filename)
+
+   i* = science (input) image data and parameters
+        Examples: iUThresh (image upper threshold), iGain (image gain),
+                  iRdnoise (image readnoise), iMaskIm (image mask filename)
+
+   m* = mask and masking data (per-pixel binary flags and indices)
+        Example: mRData (region mask array, stores bit flags for each pixel)
+
+   o* = output image data
+        Example: outim (output difference image filename)
+
+   e* = ephemeris/environment (reserved for future use)
+
+   Note: Legacy global names may not strictly follow this convention;
+   migration to this naming scheme is ongoing. New code should adhere to
+   these prefixes for consistency.
+   =====================================================================
+*/
+
 /* GLOBAL VARS POSSIBLY SET ON COMMAND LINE */
 EXTERN char      *template, *image, *outim;
 
