@@ -1643,38 +1643,38 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
  */
 static double make_kernel_local(int xi, int yi, double *kernelSol,
                                 double *lkernel, double *lkernel_coeffs) {
-    int    i1, k, ix, iy, i;
-    double ax, ay, sum_kernel;
-    double xf, yf;
+    int    gaussianCompIdx, solutionIdx, polyDegX, polyDegY, kernelPixelIdx;
+    double polyBasisX, polyBasisY, kernelSum;
+    double normalizedX, normalizedY;
 
-    k  = 2;
-    xf = (xi - 0.5 * rPixX) / (0.5 * rPixX);
-    yf = (yi - 0.5 * rPixY) / (0.5 * rPixY);
+    solutionIdx  = 2;
+    normalizedX = (xi - 0.5 * rPixX) / (0.5 * rPixX);
+    normalizedY = (yi - 0.5 * rPixY) / (0.5 * rPixY);
 
-    for (i1 = 1; i1 < nCompKer; i1++) {
-        lkernel_coeffs[i1] = 0.0;
-        ax = 1.0;
-        for (ix = 0; ix <= kerOrder; ix++) {
-            ay = 1.0;
-            for (iy = 0; iy <= kerOrder - ix; iy++) {
-                lkernel_coeffs[i1] += kernelSol[k++] * ax * ay;
-                ay *= yf;
+    for (gaussianCompIdx = 1; gaussianCompIdx < nCompKer; gaussianCompIdx++) {
+        lkernel_coeffs[gaussianCompIdx] = 0.0;
+        polyBasisX = 1.0;
+        for (polyDegX = 0; polyDegX <= kerOrder; polyDegX++) {
+            polyBasisY = 1.0;
+            for (polyDegY = 0; polyDegY <= kerOrder - polyDegX; polyDegY++) {
+                lkernel_coeffs[gaussianCompIdx] += kernelSol[solutionIdx++] * polyBasisX * polyBasisY;
+                polyBasisY *= normalizedY;
             }
-            ax *= xf;
+            polyBasisX *= normalizedX;
         }
     }
     lkernel_coeffs[0] = kernelSol[1];
 
-    for (i = 0; i < fwKernel * fwKernel; i++)
-        lkernel[i] = 0.0;
+    for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel; kernelPixelIdx++)
+        lkernel[kernelPixelIdx] = 0.0;
 
-    sum_kernel = 0.0;
-    for (i = 0; i < fwKernel * fwKernel; i++) {
-        for (i1 = 0; i1 < nCompKer; i1++)
-            lkernel[i] += lkernel_coeffs[i1] * kernel_vec[i1][i];
-        sum_kernel += lkernel[i];
+    kernelSum = 0.0;
+    for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel; kernelPixelIdx++) {
+        for (gaussianCompIdx = 0; gaussianCompIdx < nCompKer; gaussianCompIdx++)
+            lkernel[kernelPixelIdx] += lkernel_coeffs[gaussianCompIdx] * kernel_vec[gaussianCompIdx][kernelPixelIdx];
+        kernelSum += lkernel[kernelPixelIdx];
     }
-    return sum_kernel;
+    return kernelSum;
 }
 
 #ifdef USE_FFTW
