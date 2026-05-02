@@ -7,7 +7,7 @@ from astropy.io import fits
 from scipy.ndimage import gaussian_filter
 
 REPO_ROOT = Path(__file__).parent.parent
-HOTPANTS_BIN = REPO_ROOT / "hotpants"
+HOTPANTS_BIN = REPO_ROOT / "build" / "hotpants"
 
 # Fixed image geometry for all synthetic tests
 NY, NX = 512, 512
@@ -43,15 +43,24 @@ HOTPANTS_BASE_ARGS = [
 
 @pytest.fixture(scope="session")
 def hotpants_binary():
-    """Return path to the hotpants binary, building it first if necessary."""
-    result = subprocess.run(
-        ["make", "hotpants"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        pytest.fail(f"hotpants build failed:\n{result.stderr}")
+    """Return path to the hotpants binary, building it via CMake if necessary."""
+    if not HOTPANTS_BIN.exists():
+        result = subprocess.run(
+            ["cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            pytest.fail(f"cmake configure failed:\n{result.stderr}")
+        result = subprocess.run(
+            ["cmake", "--build", "build", "--parallel"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            pytest.fail(f"cmake build failed:\n{result.stderr}")
     if not HOTPANTS_BIN.exists():
         pytest.fail("hotpants binary not found after build")
     return HOTPANTS_BIN

@@ -5,7 +5,7 @@ PROJECT_NAME           = "HOTPANTS"
 PROJECT_NUMBER         = "0.0.1"
 PROJECT_BRIEF          = "High Order Transform of PSF ANd Template Subtraction"
 
-INPUT                  = alard.c functions.c functions.h
+INPUT                  = src/alard.c src/functions.c src/functions.h
 FILE_PATTERNS          = *.c *.h
 RECURSIVE              = NO
 
