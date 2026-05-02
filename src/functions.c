@@ -668,7 +668,7 @@ double checkPsfCenter(float *iData, int imax, int jmax, int xLen, int yLen,
  */
 int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double hiThresh, int bbit1, int bbit2) {
     
-    int i, j, k, l, nr, nr2, imax, jmax, xr, yr, xr2, yr2, sy0, sx0, xbuffer, ybuffer;
+    int stampRegionCol, stampRegionRow, centroidCol, centroidRow, nr, nr2, imax, jmax, xr, yr, xr2, yr2, sy0, sx0, xbuffer, ybuffer;
     double dmax, dmax2, dpt, dpt2, loPsf, floor;
     int *xloc, *yloc, *qs, pcnt, brk, bbit, fcnt;
     double *peaks;
@@ -719,11 +719,11 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
         loPsf = (loPsf > floor) ? loPsf : floor;   /* last ditch attempt to get some usable pixels */
         
         /* (0). ignore near the edges */
-        for (j = ybuffer; j < yLen-ybuffer; j++) {
-            yr  = j + sy0;
-            
-            for (i = xbuffer; i < xLen-xbuffer; i++) {
-                xr = i + sx0;
+        for (stampRegionRow = ybuffer; stampRegionRow < yLen-ybuffer; stampRegionRow++) {
+            yr  = stampRegionRow + sy0;
+
+            for (stampRegionCol = xbuffer; stampRegionCol < xLen-xbuffer; stampRegionCol++) {
+                xr = stampRegionCol + sx0;
                 nr = xr+rPixX*yr;
                 
                 /* (1). pixel already included in another stamp, or exceeds hiThresh */
@@ -744,24 +744,24 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
                 
                 /* finally, a good candidate! */
                 if (dpt > loPsf) {
-                    
+
                     dmax  = dpt;
-                    imax  = i;
-                    jmax  = j;
+                    imax  = stampRegionCol;
+                    jmax  = stampRegionRow;
                     
                     /* center this candidate on the peak flux */
-                    for (l = j-hwKSStamp; l <= j+hwKSStamp; l++) {
-                        yr2 = l + sy0;
-                        
-                        if ((l < ybuffer) || (l >= yLen-ybuffer))
-                            continue; /* continue l loop */
-                        
-                        for (k = i-hwKSStamp; k <= i+hwKSStamp; k++) {
-                            xr2 = k + sx0;
+                    for (centroidRow = stampRegionRow-hwKSStamp; centroidRow <= stampRegionRow+hwKSStamp; centroidRow++) {
+                        yr2 = centroidRow + sy0;
+
+                        if ((centroidRow < ybuffer) || (centroidRow >= yLen-ybuffer))
+                            continue; /* continue centroidRow loop */
+
+                        for (centroidCol = stampRegionCol-hwKSStamp; centroidCol <= stampRegionCol+hwKSStamp; centroidCol++) {
+                            xr2 = centroidCol + sx0;
                             nr2 = xr2+rPixX*yr2;
-                            
-                            if ((k < xbuffer) || (k >= xLen-xbuffer))
-                                continue; /* continue k loop */
+
+                            if ((centroidCol < xbuffer) || (centroidCol >= xLen-xbuffer))
+                                continue; /* continue centroidCol loop */
                             
                             /* (3). no fill/sat values within checked region, and not overlapping other stamp */
                             if (mRData[nr2] & bbit)
@@ -779,11 +779,11 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
                             if (( (dpt2 - sky) * invdsky) < kerFitThresh)
                                 continue;
                             
-                            /* record position and amp of good point centroid in i,j,dmax */
+                            /* record position and amp of good point centroid in stampRegionCol,stampRegionRow,dmax */
                             if (dpt2 > dmax) {
                                 dmax = dpt2;
-                                imax = k;
-                                jmax = l;
+                                imax = centroidCol;
+                                jmax = centroidRow;
                             }
                         }
                     }
@@ -800,7 +800,7 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
                                            hiThresh, sky, invdsky, xbuffer, ybuffer, bbit, bbit1);
                     
                     if (dmax2 == 0.)
-                        continue; /* continue i loop */
+                        continue; /* continue stampRegionCol loop */
                     
                     /* made it! - a valid peak */
                     xloc[pcnt]    = imax;
@@ -808,14 +808,14 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
                     peaks[pcnt++] = dmax2;
                     
                     /* globally mask out the region around this guy */
-                    for (l = jmax-hwKSStamp; l <= jmax+hwKSStamp; l++) {
-                        yr2 = l + sy0;
-                        
-                        for (k = imax-hwKSStamp; k <= imax+hwKSStamp; k++) {
-                            xr2 = k + sx0;
+                    for (centroidRow = jmax-hwKSStamp; centroidRow <= jmax+hwKSStamp; centroidRow++) {
+                        yr2 = centroidRow + sy0;
+
+                        for (centroidCol = imax-hwKSStamp; centroidCol <= imax+hwKSStamp; centroidCol++) {
+                            xr2 = centroidCol + sx0;
                             nr2 = xr2+rPixX*yr2;
-                            
-                            if ((k > 0) && (k < xLen) && (l > 0) && (l < yLen))
+
+                            if ((centroidCol > 0) && (centroidCol < xLen) && (centroidRow > 0) && (centroidRow < yLen))
                                 mRData[nr2] |= bbit2;
                         }
                     }
@@ -1786,13 +1786,13 @@ void spreadMask(int *mData, int width) {
  * @param mData  Full-frame integer mask array; updated in place.
  */
 void makeInputMask(float *tData, float *iData, int *mData) {
-    
-    int i;
-    
-    for (i = rPixX*rPixY; i--; ){
-        mData[i] |= (FLAG_INPUT_ISBAD | FLAG_BAD_PIXVAL) * (tData[i] == fillVal  || iData[i] == fillVal);
-        mData[i] |= (FLAG_INPUT_ISBAD | FLAG_SAT_PIXEL)  * (tData[i] >= tUThresh || iData[i] >= iUThresh);
-        mData[i] |= (FLAG_INPUT_ISBAD | FLAG_LOW_PIXEL)  * (tData[i] <= tLThresh || iData[i] <= iLThresh);
+
+    int pixelIdx;
+
+    for (pixelIdx = rPixX*rPixY; pixelIdx--; ){
+        mData[pixelIdx] |= (FLAG_INPUT_ISBAD | FLAG_BAD_PIXVAL) * (tData[pixelIdx] == fillVal  || iData[pixelIdx] == fillVal);
+        mData[pixelIdx] |= (FLAG_INPUT_ISBAD | FLAG_SAT_PIXEL)  * (tData[pixelIdx] >= tUThresh || iData[pixelIdx] >= iUThresh);
+        mData[pixelIdx] |= (FLAG_INPUT_ISBAD | FLAG_LOW_PIXEL)  * (tData[pixelIdx] <= tLThresh || iData[pixelIdx] <= iLThresh);
     }
     
     spreadMask(mData, (int)(hwKernel*kfSpreadMask1));
