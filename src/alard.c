@@ -741,200 +741,200 @@ void build_scprod0(stamp_struct *stamp, float *image) {
  *         global fit is not requested.
  */
 double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) {
-    
-    int    nComps,i,im,jm,mcnt1,mcnt2,mcnt3;
+
+    int    nComps,stampIdx,matrixRowIdx,matrixColIdx,meritCount1,meritCount2,meritCount3;
     double sum=0,kmean,kstdev;
     double merit1,merit2,merit3,sig1,sig2,sig3;
-    float *m1,*m2,*m3,*ks;
-    int    xc, yc, nks;
-    
+    float *meritValues1,*meritValues2,*meritValues3,*ks;
+    int    substampCenterX, substampCenterY, nks;
+
     double **matrix;
     int mat_size;
     int ncomp1, ncomp2, ncomp, nbg_vec;
-    
+
     int ntestStamps;
     double       *testKerSol = NULL;
     stamp_struct *testStamps = NULL;
-    
+
     /* kernel sum */
     ks  = (float *)calloc(nS, sizeof(float));
     nks = 0;
-    
+
     ncomp1  = nCompKer - 1;
     ncomp2  = ((kerOrder + 1) * (kerOrder + 2)) / 2;
     ncomp   = ncomp1 * ncomp2;
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
     mat_size   = ncomp1 * ncomp2 + nbg_vec + 1;
-    
+
     if (verbose>=2) fprintf(stderr, " Mat_size0: %i ncomp2: %i ncomp1: %i nbg_vec: %i \n"
                             , mat_size, ncomp2, ncomp1, nbg_vec);
-    
+
     /* for inital fit */
     nComps      = nCompKer + 1;
-    
-    for (i = 0; i < nS; i++) {
-        
-        xc    = stamps[i].xss[stamps[i].sscnt];
-        yc    = stamps[i].yss[stamps[i].sscnt];
-        
+
+    for (stampIdx = 0; stampIdx < nS; stampIdx++) {
+
+        substampCenterX    = stamps[stampIdx].xss[stamps[stampIdx].sscnt];
+        substampCenterY    = stamps[stampIdx].yss[stamps[stampIdx].sscnt];
+
         /* extract check_mat to solve one particular stamp */
-        for (im = 1; im <= nComps; im++) {
-            check_vec[im] = stamps[i].scprod[im];
-            
-            for (jm = 1; jm <= im; jm++) {
-                check_mat[im][jm] = stamps[i].mat[im][jm];
-                check_mat[jm][im] = check_mat[im][jm];
+        for (matrixRowIdx = 1; matrixRowIdx <= nComps; matrixRowIdx++) {
+            check_vec[matrixRowIdx] = stamps[stampIdx].scprod[matrixRowIdx];
+
+            for (matrixColIdx = 1; matrixColIdx <= matrixRowIdx; matrixColIdx++) {
+                check_mat[matrixRowIdx][matrixColIdx] = stamps[stampIdx].mat[matrixRowIdx][matrixColIdx];
+                check_mat[matrixColIdx][matrixRowIdx] = check_mat[matrixRowIdx][matrixColIdx];
             }
         }
-        
+
         /* fit stamp, the constant kernel coefficients end up in check_vec */
         solve_spd(check_mat, nComps, check_vec);
-        
+
         /* find kernel sum */
         sum = check_vec[1];
-        check_stack[i] = sum;
-        stamps[i].norm = sum;
+        check_stack[stampIdx] = sum;
+        stamps[stampIdx].norm = sum;
         ks[nks++]      = sum;
-        
-        if (verbose >= 2) fprintf(stderr, "    # %d    xss: %4i yss: %4i  ksum: %f\n", i,
-                                  stamps[i].xss[stamps[i].sscnt],
-                                  stamps[i].yss[stamps[i].sscnt], sum);
+
+        if (verbose >= 2) fprintf(stderr, "    # %d    xss: %4i yss: %4i  ksum: %f\n", stampIdx,
+                                  stamps[stampIdx].xss[stamps[stampIdx].sscnt],
+                                  stamps[stampIdx].yss[stamps[stampIdx].sscnt], sum);
     }
-    
+
     sigma_clip(ks, nks, &kmean, &kstdev, 10);
-    
+
     fprintf(stderr, "    %.1f sigma clipped mean ksum : %.3f, stdev : %.3f, n : %i\n",
             kerSigReject, kmean, kstdev, nks);
-    
+
     /* so we need some way to reject bad stamps here in the first test,
        we decided to use kernel sum.  is there a better way?  part of
        the trick is that if some things are variable, you get different
        kernel sums, but the subtraction itself should come out ok. */
-    
+
     /* stamps.diff : delta ksum in sigma */
-    
+
     /* here we want to reject high sigma points on the HIGH and LOW
        side, since we want things with the same normalization */
-    for (i = 0; i < nS; i++) {
-        stamps[i].diff = fabs((stamps[i].norm - kmean) / kstdev);
+    for (stampIdx = 0; stampIdx < nS; stampIdx++) {
+        stamps[stampIdx].diff = fabs((stamps[stampIdx].norm - kmean) / kstdev);
     }
-    
+
     /*****************************************************
      * Global fit for kernel solution
      *****************************************************/
-    
+
     /* do only if necessary */
     if ((strncmp(forceConvolve, "b", 1)==0)) {
-        
+
         /* allocate fitting matrix */
         matrix = (double **)calloc((mat_size + 1), sizeof(double *));
-        for (i = 0; i <= mat_size; i++) 
-            matrix[i] = (double *)calloc((mat_size + 1), sizeof(double));
-        
+        for (stampIdx = 0; stampIdx <= mat_size; stampIdx++)
+            matrix[stampIdx] = (double *)calloc((mat_size + 1), sizeof(double));
+
         /* allocate weight matrix */
         wxy = (double **)calloc(nS, sizeof(double *));
-        for (i = 0; i < nS; i++)
-            wxy[i] = (double *)calloc(ncomp2, sizeof(double));
-        
+        for (stampIdx = 0; stampIdx < nS; stampIdx++)
+            wxy[stampIdx] = (double *)calloc(ncomp2, sizeof(double));
+
         /* first find out how many good stamps to allocate */
         ntestStamps = 0;
-        for (i = 0; i < nS; i++)
-            if (stamps[i].diff < kerSigReject) {
+        for (stampIdx = 0; stampIdx < nS; stampIdx++)
+            if (stamps[stampIdx].diff < kerSigReject) {
                 ntestStamps++;
             }
             else {
-                if (verbose >= 2) fprintf(stderr, "    # %d    skipping xss: %4i yss: %4i ksum: %f sigma: %f\n", i,
-                                          stamps[i].xss[stamps[i].sscnt],
-                                          stamps[i].yss[stamps[i].sscnt],
-                                          stamps[i].norm, stamps[i].diff);
+                if (verbose >= 2) fprintf(stderr, "    # %d    skipping xss: %4i yss: %4i ksum: %f sigma: %f\n", stampIdx,
+                                          stamps[stampIdx].xss[stamps[stampIdx].sscnt],
+                                          stamps[stampIdx].yss[stamps[stampIdx].sscnt],
+                                          stamps[stampIdx].norm, stamps[stampIdx].diff);
             }
-        
+
         /* then allocate test stamp structure */
         if(!(testStamps = (stamp_struct *)calloc(ntestStamps, sizeof(stamp_struct)))) {
-            printf("Cannot Allocate Test Stamp List\n"); 
+            printf("Cannot Allocate Test Stamp List\n");
             exit (1);
         }
         testKerSol = (double *)calloc((nCompTotal+1), sizeof(double));
-        
+
         /* and point test stamp structure to good stamps */
         ntestStamps = 0;
-        for (i = 0; i < nS; i++)
-            if (stamps[i].diff < kerSigReject)
-                testStamps[ntestStamps++] = stamps[i];
-        
+        for (stampIdx = 0; stampIdx < nS; stampIdx++)
+            if (stamps[stampIdx].diff < kerSigReject)
+                testStamps[ntestStamps++] = stamps[stampIdx];
+
         /* finally do fit */
         if (verbose >= 2) fprintf(stderr, " Expanding Test Matrix For Fit\n");
         build_matrix(testStamps, ntestStamps, matrix);
         build_scprod(testStamps, ntestStamps, imRef, testKerSol);
         solve_spd(matrix, mat_size, testKerSol);
-        
+
         /* get the kernel sum to normalize figures of merit! */
         kmean = make_kernel(0, 0, testKerSol);
-        
+
         /* determine figure of merit from good stamps */
-        
+
         /* average of sum (diff**2 / value), ~variance */
-        m1 = (float *)calloc(ntestStamps, sizeof(float));
-        
+        meritValues1 = (float *)calloc(ntestStamps, sizeof(float));
+
         /* standard deviation of pixel distribution */
-        m2 = (float *)calloc(ntestStamps, sizeof(float));
-        
+        meritValues2 = (float *)calloc(ntestStamps, sizeof(float));
+
         /* noise sd based on histogram distribution width */
-        m3 = (float *)calloc(ntestStamps, sizeof(float));
-        
-        mcnt1 = 0;
-        mcnt2 = 0;
-        mcnt3 = 0;
-        for (i = 0; i < ntestStamps; i++) {
-            
-            getStampSig(&testStamps[i], testKerSol, imNoise, &sig1, &sig2, &sig3);
-            
+        meritValues3 = (float *)calloc(ntestStamps, sizeof(float));
+
+        meritCount1 = 0;
+        meritCount2 = 0;
+        meritCount3 = 0;
+        for (stampIdx = 0; stampIdx < ntestStamps; stampIdx++) {
+
+            getStampSig(&testStamps[stampIdx], testKerSol, imNoise, &sig1, &sig2, &sig3);
+
             if ((sig1 != -1) && (sig1 <= MAXVAL)) {
-                m1[mcnt1++] = sig1;
+                meritValues1[meritCount1++] = sig1;
             }
             if ((sig2 != -1) && (sig2 <= MAXVAL)) {
-                m2[mcnt2++] = sig2;
+                meritValues2[meritCount2++] = sig2;
             }
             if ((sig3 != -1) && (sig3 <= MAXVAL)) {
-                m3[mcnt3++] = sig3;
+                meritValues3[meritCount3++] = sig3;
             }
         }
-        sigma_clip(m1, mcnt1, &merit1, &sig1, 10);
-        sigma_clip(m2, mcnt2, &merit2, &sig2, 10);
-        sigma_clip(m3, mcnt3, &merit3, &sig3, 10);
-        
+        sigma_clip(meritValues1, meritCount1, &merit1, &sig1, 10);
+        sigma_clip(meritValues2, meritCount2, &merit2, &sig2, 10);
+        sigma_clip(meritValues3, meritCount3, &merit3, &sig3, 10);
+
         /* normalize by kernel sum */
         merit1 /= kmean;
         merit2 /= kmean;
         merit3 /= kmean;
-        
+
         /* clean up this mess */
         if (testKerSol)	 free(testKerSol);
         if (testStamps)	 free(testStamps);
-        for (i = 0; i <= mat_size; i++)
-            free(matrix[i]);
-        for (i = 0; i < nS; i++)
-            free(wxy[i]);
+        for (stampIdx = 0; stampIdx <= mat_size; stampIdx++)
+            free(matrix[stampIdx]);
+        for (stampIdx = 0; stampIdx < nS; stampIdx++)
+            free(wxy[stampIdx]);
         free(matrix);
         free(wxy);
-        
-        free(m1);
-        free(m2);
-        free(m3);
+
+        free(meritValues1);
+        free(meritValues2);
+        free(meritValues3);
         free(ks);
-        
+
         /* average value of figures of merit across stamps */
         fprintf(stderr, "    <var_merit> = %.3f, <sd_merit> = %.3f, <hist_merit> = %.3f\n", merit1, merit2, merit3);
-        
+
         /* return what is asked for if possible, if not use backup */
         if (strncmp(figMerit, "v", 1)==0) {
-            if (mcnt1 > 0) {
+            if (meritCount1 > 0) {
                 return merit1;
             }
-            else if (mcnt2 > 0) {
+            else if (meritCount2 > 0) {
                 return merit2;
             }
-            else if (mcnt3 > 0) {
+            else if (meritCount3 > 0) {
                 return merit3;
             }
             else {
@@ -942,27 +942,27 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
             }
         }
         else if (strncmp(figMerit, "s", 1)==0) {
-            if (mcnt2 > 0) {
+            if (meritCount2 > 0) {
                 return merit2;
             }
-            else if (mcnt1 > 0) {
+            else if (meritCount1 > 0) {
                 return merit1;
             }
-            else if (mcnt3 > 0) {
+            else if (meritCount3 > 0) {
                 return merit3;
             }
             else {
                 return 666;
             }
         }
-        else if (strncmp(figMerit, "h", 1)==0) {      
-            if (mcnt3 > 0) {
+        else if (strncmp(figMerit, "h", 1)==0) {
+            if (meritCount3 > 0) {
                 return merit3;
             }
-            else if (mcnt1 > 0) {
+            else if (meritCount1 > 0) {
                 return merit1;
             }
-            else if (mcnt2 > 0) {
+            else if (meritCount2 > 0) {
                 return merit2;
             }
             else {
@@ -972,7 +972,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
     }
     else
         return 0;
-    
+
     return 0;
 }
 
