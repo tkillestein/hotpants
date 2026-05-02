@@ -64,7 +64,7 @@ int sigma_clip(float *, int, double *, double *, int);
 
 void freeStampMem(stamp_struct *, int);
 
-void makeNoiseImage4(float *, float *, float, float, int, int);
+float *makeNoiseImage4(float *, float, float);
 
 void getKernelInfo(char *);
 
