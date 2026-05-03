@@ -1,9 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "hotpants"
 version = "0.0.1"
 description = "High Order Transform of PSF ANd Template Subtraction"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "numpy>=1.26",
+]
 
 [dependency-groups]
 test = [
@@ -17,6 +23,13 @@ docs = [
     "sphinx-rtd-theme>=2.0",
     "breathe>=4.35",
 ]
+dev = [
+    "pytest>=8.0",
+    "numpy>=1.26",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hotpants"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

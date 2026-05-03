@@ -152,3 +152,79 @@ def load_diff(path):
     """Load difference image, masking hotpants fill pixels (1e-30)."""
     data = fits.getdata(str(path)).astype(np.float64)
     return data[np.abs(data - 1e-30) > 1e-35]
+
+
+# ---------------------------------------------------------------------------
+# Python API Test Fixtures (Mock C Library)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def mock_hotpants_library(monkeypatch, request):
+    """
+    Auto-mock the HOTPANTS C library for Python API tests.
+
+    Provides dummy implementations of C library functions so tests can run
+    without requiring the compiled C library to be available.
+
+    This fixture is automatically applied to all tests in test_api.py.
+    """
+    # Only mock for test_api.py and test_api_integration.py
+    if 'test_api' not in str(request.fspath):
+        return None
+
+    from unittest.mock import MagicMock
+    from hotpants import _hotpants_ffi
+
+    # Mock the C library loader to return a mock library
+    mock_lib = MagicMock()
+
+    # Mock global variable getters/setters
+    # These are called by _core.py when setting up the global state
+    globals_state = {
+        'hwKernel': 15,
+        'kerOrder': 2,
+        'bgOrder': 1,
+        'nKSStamps': 3,
+        'hwKSStamp': 10,
+        'nRegX': 1,
+        'nRegY': 1,
+        'nStampX': 10,
+        'nStampY': 10,
+        'useFullSS': 0,
+        'tUThresh': 25000.0,
+        'tLThresh': 0.0,
+        'iUThresh': 25000.0,
+        'iLThresh': 0.0,
+        'tGain': 1.0,
+        'iGain': 1.0,
+        'tRdnoise': 0.0,
+        'iRdnoise': 0.0,
+        'tPedestal': 0.0,
+        'iPedestal': 0.0,
+        'nCompKer': 3,
+        'nComp': 6,  # (2+1)*(2+2)/2 for kerOrder=2
+        'nCompBG': 3,  # (1+1)*(1+2)/2 for bgOrder=1
+        'verbose': 0,
+        'nThread': 1,
+    }
+
+    def mock_get_global_int(name):
+        return globals_state.get(name, 0)
+
+    def mock_set_global_int(name, value):
+        globals_state[name] = value
+
+    def mock_get_global_float(name):
+        return float(globals_state.get(name, 0.0))
+
+    def mock_set_global_float(name, value):
+        globals_state[name] = value
+
+    # Patch the library loading and global variable functions
+    monkeypatch.setattr(_hotpants_ffi, 'get_library', lambda: mock_lib)
+    monkeypatch.setattr(_hotpants_ffi, 'get_global_int', mock_get_global_int)
+    monkeypatch.setattr(_hotpants_ffi, 'set_global_int', mock_set_global_int)
+    monkeypatch.setattr(_hotpants_ffi, 'get_global_float', mock_get_global_float)
+    monkeypatch.setattr(_hotpants_ffi, 'set_global_float', mock_set_global_float)
+
+    return mock_lib
