@@ -514,6 +514,126 @@ perf report
 
 ---
 
+## In-Progress Improvements: Logging & Memory Management (May 2026)
+
+### Logging Output Improvements
+
+**Objective:** Centralize and standardize all stdout/stderr output for cleaner, more consistent user-facing messages.
+
+**Current state:** ~300 `fprintf(stderr, ...)` calls scattered throughout, inconsistent formatting, ad-hoc verbosity checks.
+
+**Solution:** Implement centralized logging macros in `defaults.h`:
+
+```c
+/* Verbosity levels: 0=silent, 1=progress, 2=debug */
+#define LOG_PROGRESS(fmt, ...) \
+    if (verbose >= 1) fprintf(stderr, "[PROGRESS] " fmt "\n", ##__VA_ARGS__)
+#define LOG_DEBUG(fmt, ...) \
+    if (verbose >= 2) fprintf(stderr, "  [DEBUG] " fmt "\n", ##__VA_ARGS__)
+#define LOG_ERROR(fmt, ...) \
+    fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__)
+```
+
+**Refactoring scope:**
+- `main.c` (92 verbose output calls)
+- `alard.c` (kernel fitting, convolution progress)
+- `functions.c` (stamp processing, statistics)
+- `vargs.c` and `maskim.c` (error/help output)
+
+**Benefits:**
+- Consistent formatting with level prefixes
+- Easy to add timestamps/structured output
+- Simplified search/replace (can redirect stderr selectively for Python API)
+- One place to modify output behavior
+
+**Status:** In implementation (estimated 2-3 hours total)
+
+---
+
+### Memory Allocation Improvements
+
+**Objective:** Replace scattered, error-prone `malloc/calloc` patterns with safer, more efficient allocation strategy.
+
+**Current problems identified:**
+1. Inconsistent error checking (some paths leak on allocation failure)
+2. Nested malloc loops for 2D arrays (poor cache locality, N+1 separate allocations)
+3. Mixed malloc/fftw_malloc without consistent pattern
+4. Verbose `if(!(...))` checks throughout code
+
+**Solution: Three-phase approach**
+
+#### Phase 1: Memory allocation wrappers (`allocate.c`/`allocate.h`)
+
+Create safe wrapper functions that handle errors consistently:
+
+```c
+/* allocate.c */
+void *xmalloc(size_t size);      /* malloc with error checking */
+void *xcalloc(size_t count, size_t size);  /* calloc with error checking */
+
+/* Allocate contiguous 2D array: data is row-major, no fragmentation */
+double **alloc_matrix_contiguous(int rows, int cols);
+void free_matrix_contiguous(double **matrix);
+
+/* Allocate contiguous 3D array of pointers (for vectors) */
+double **alloc_vector_array(int nVectors, int vectorSize);
+void free_vector_array(double **vectors, int nVectors);
+```
+
+**Benefits:**
+- Single error path (no repeated `if(!(malloc(...)))`)
+- Contiguous allocation better cache behavior
+- Easier to track allocations (good for future pooling)
+
+#### Phase 2: Refactor major allocation sites
+
+Apply new allocation functions to:
+- `allocateStamps()` in `functions.c` (nested stamp structures)
+- Matrix allocations in `alard.c` (normal equations, fit matrices)
+- FFT buffer allocation in `alard.c` (spatial_convolve_fft)
+
+#### Phase 3 (future): Memory pooling for Python API
+
+Once Python bindings are complete, consider:
+- Arena allocator for frame-to-frame reuse
+- Single cleanup call on Python side
+- Eliminates per-call malloc/free overhead
+
+**Status:** In implementation (estimated 4-6 hours total)
+
+**Implementation Order:**
+1. Define macros in defaults.h (quick)
+2. Create allocate.c/allocate.h with wrapper functions
+3. Refactor allocateStamps() → uses new functions
+4. Refactor major matrix allocations in alard.c
+5. Global find/replace of verbose `if(!(malloc(...)))` patterns
+6. Test and verify
+
+**Files to modify:**
+- `src/defaults.h` — logging macros, allocation macros
+- `src/allocate.c` (new) — wrapper implementations
+- `src/allocate.h` (new) — wrapper declarations
+- `src/functions.c` — refactor `allocateStamps()`
+- `src/alard.c` — refactor matrix allocations, FFT buffers
+- `src/main.c` — replace fprintf calls with LOG_* macros
+- `src/functions.c` — replace fprintf calls with LOG_* macros
+- `src/vargs.c` — replace fprintf calls with LOG_* macros
+- `CMakeLists.txt` — add allocate.c to sources
+- `CLAUDE.md` — document new patterns in contributor checklist
+
+**Checklist for completion:**
+- [ ] Logging macros working across all modules
+- [ ] allocate.c implements all wrapper functions
+- [ ] allocateStamps() refactored and tested
+- [ ] Matrix allocations refactored in alard.c
+- [ ] All major allocation sites use safe wrappers
+- [ ] stderr output consistent and clean
+- [ ] Build succeeds with no warnings
+- [ ] CLI produces same results on test data
+- [ ] Contributor checklist updated with new patterns
+
+---
+
 ## Notes for AI Assistants
 
 When working on HOTPANTS:
