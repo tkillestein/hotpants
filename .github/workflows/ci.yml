@@ -28,3 +28,5 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -v
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build:$LD_LIBRARY_PATH
