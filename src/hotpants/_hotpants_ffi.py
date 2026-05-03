@@ -1,134 +1,146 @@
 """
-HOTPANTS cffi FFI Declarations
+HOTPANTS ctypes FFI Layer
 
-This module defines the C API interface using cffi's out-of-line mode.
-It parses hotpants_api.h and generates compiled extension modules.
+This module provides a ctypes interface to the HOTPANTS C library.
+No compilation is needed — ctypes loads the pre-compiled C library at runtime.
 
-Note: This file is processed by cffi during package build. The cffi library
-compiles it into a native extension (_hotpants_cffi.so) that provides fast
-access to the C code without overhead.
+The C library must be built separately via CMake:
+    cmake -B build && cmake --build build
+
+Then loaded by finding the shared library (.so / .dll / .dylib).
 """
 
-from cffi import FFI
+import ctypes
+import ctypes.util
+import sys
+from pathlib import Path
 
-ffi = FFI()
 
-# Define C types and functions from the public API header
-ffi.cdef("""
-    /* Stamp data structure */
-    typedef struct {
-        int       x0, y0;
-        int       x, y;
-        int       nx, ny;
-        int       *xss;
-        int       *yss;
-        int       nss;
-        int       sscnt;
-        double    **vectors;
-        double    *krefArea;
-        double    **mat;
-        double    *scprod;
-        double    sum;
-        double    mean;
-        double    median;
-        double    mode;
-        double    sd;
-        double    fwhm;
-        double    lfwhm;
-        double    chi2;
-        double    norm;
-        double    diff;
-    } stamp_struct;
-
-    /* Core API functions */
-    int allocateStamps(stamp_struct *stamps, int n);
-    void freeStampMem(stamp_struct *stamps, int n);
-
-    void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax,
-                     int *rPixX, int *rPixY, int nStampX, int nStampY,
-                     int hwKSStamp,
-                     stamp_struct *stamps, stamp_struct *tStamps, stamp_struct *iStamps,
-                     float *iData, float *tData,
-                     float tUThresh, float tLThresh);
-
-    int getPsfCenters(stamp_struct *stamp, float *iData, int nsx, int nsy,
-                      double smin, int nKSStamps, int nKSEdge);
-
-    int getStampStats3(float *data, int nx, int ny, int nsy,
-                       int stat_type,
-                       double *mean, double *median, double *mode,
-                       double *sd, double *fwhm, double *lfwhm,
-                       int verbose, int nThread, int nComp);
-
-    void fitKernel(stamp_struct *stamps, float *imRef, float *imConv,
-                   float *imNoise, double *kernel_coeffs,
-                   double *meansig, double *scatter, int *n_skipped);
-
-    void spatial_convolve(float *image, float **var_image, int ny, int nx,
-                          double *kernel_coeffs, float *output, int *conv_method);
-
-    /* Global configuration variables */
-    extern int       hwKernel;
-    extern int       kerOrder;
-    extern int       bgOrder;
-    extern float     kerFitThresh;
-    extern float     scaleFitThresh;
-    extern int       nKSStamps;
-    extern int       hwKSStamp;
-    extern int       nStampX, nStampY;
-    extern int       useFullSS;
-
-    extern float     tUThresh, tLThresh;
-    extern float     iUThresh, iLThresh;
-    extern float     tGain, iGain;
-    extern float     tRdnoise, iRdnoise;
-    extern float     tPedestal, iPedestal;
-
-    extern int       nCompKer;
-    extern int       nComp;
-    extern int       nCompBG;
-
-    extern int       verbose;
-    extern int       nThread;
-
-    /* Memory allocation helpers (for creating double pointers, etc.) */
-    double** malloc_double_array(int rows, int cols);
-    void free_double_array(double** arr, int rows);
-""")
-
-# Configure source code to compile
-# Set source to compile the C code with cffi
-ffi.set_source(
-    "hotpants._hotpants_cffi",  # module name
+def load_hotpants_library():
     """
-    #define HOTPANTS_DEFINE_GLOBALS
-    #include "hotpants_api.h"
+    Load the pre-compiled HOTPANTS C library.
 
-    /* Simple allocators for double pointers (needed for Python to pass to C) */
-    double** malloc_double_array(int rows, int cols) {
-        double** arr = (double**)malloc(rows * sizeof(double*));
-        for (int i = 0; i < rows; i++) {
-            arr[i] = (double*)malloc(cols * sizeof(double));
-        }
-        return arr;
-    }
+    Searches in standard locations and environment paths.
+    Returns the ctypes CDLL instance.
 
-    void free_double_array(double** arr, int rows) {
-        for (int i = 0; i < rows; i++) {
-            free(arr[i]);
-        }
-        free(arr);
-    }
-    """,
-    sources=[
-        "src/alard.c",
-        "src/functions.c",
-    ],
-    include_dirs=["src"],
-    libraries=["cfitsio", "lapack", "lapacke", "m"],
-    extra_compile_args=["-O3", "-march=native", "-std=c17"],
-    language="c",
-)
+    Raises:
+        OSError: if library not found
+    """
+    # Try to find libhotpants (built by CMake)
+    lib_name = "libhotpants"
 
-if __name__ == "__main__":
-    ffi.compile(verbose=True)
+    # Try standard locations first
+    lib_path = ctypes.util.find_library(lib_name)
+    if lib_path:
+        return ctypes.CDLL(lib_path)
+
+    # Try build directory
+    possible_paths = [
+        Path(__file__).parent.parent.parent / "build",
+        Path(__file__).parent.parent.parent / "build" / "src",
+        Path("/usr/local/lib"),
+        Path("/usr/lib"),
+    ]
+
+    for path_dir in possible_paths:
+        if path_dir.exists():
+            for pattern in [f"{lib_name}.so*", f"{lib_name}.dylib", f"{lib_name}.dll"]:
+                matches = list(path_dir.glob(pattern))
+                if matches:
+                    return ctypes.CDLL(str(matches[0]))
+
+    raise OSError(
+        f"Could not find {lib_name}. "
+        "Please build the C library first:\n"
+        "  cmake -B build && cmake --build build\n"
+        "Then set LD_LIBRARY_PATH to the build directory."
+    )
+
+
+# Load the library (deferred until first use)
+_lib = None
+
+
+def get_library():
+    """Get the loaded HOTPANTS library, loading it if necessary."""
+    global _lib
+    if _lib is None:
+        _lib = load_hotpants_library()
+    return _lib
+
+
+# =====================================================================
+# ctypes Wrapper Functions
+# =====================================================================
+
+def get_hotpants_library_functions():
+    """
+    Define C function signatures for ctypes.
+
+    Returns a dict mapping function names to ctypes function wrappers
+    with proper argument and return types.
+    """
+    lib = get_library()
+
+    functions = {}
+
+    # int allocateStamps(stamp_struct *stamps, int n)
+    functions['allocateStamps'] = lib.allocateStamps
+    functions['allocateStamps'].argtypes = [ctypes.c_void_p, ctypes.c_int]
+    functions['allocateStamps'].restype = ctypes.c_int
+
+    # void freeStampMem(stamp_struct *stamps, int n)
+    functions['freeStampMem'] = lib.freeStampMem
+    functions['freeStampMem'].argtypes = [ctypes.c_void_p, ctypes.c_int]
+    functions['freeStampMem'].restype = None
+
+    # int getStampStats3(...)
+    functions['getStampStats3'] = lib.getStampStats3
+    functions['getStampStats3'].argtypes = [
+        ctypes.c_void_p,  # float *data
+        ctypes.c_int,     # nx
+        ctypes.c_int,     # ny
+        ctypes.c_int,     # nsy
+        ctypes.c_int,     # stat_type
+        ctypes.POINTER(ctypes.c_double),  # *mean
+        ctypes.POINTER(ctypes.c_double),  # *median
+        ctypes.POINTER(ctypes.c_double),  # *mode
+        ctypes.POINTER(ctypes.c_double),  # *sd
+        ctypes.POINTER(ctypes.c_double),  # *fwhm
+        ctypes.POINTER(ctypes.c_double),  # *lfwhm
+        ctypes.c_int,     # verbose
+        ctypes.c_int,     # nThread
+        ctypes.c_int,     # nComp
+    ]
+    functions['getStampStats3'].restype = ctypes.c_int
+
+    return functions
+
+
+# Global variable access via ctypes
+def get_global_int(name):
+    """Get value of integer global variable."""
+    lib = get_library()
+    var = ctypes.c_int.in_dll(lib, name)
+    return var.value
+
+
+def set_global_int(name, value):
+    """Set value of integer global variable."""
+    lib = get_library()
+    var = ctypes.c_int.in_dll(lib, name)
+    var.value = value
+
+
+def get_global_float(name):
+    """Get value of float global variable."""
+    lib = get_library()
+    var = ctypes.c_float.in_dll(lib, name)
+    return var.value
+
+
+def set_global_float(name, value):
+    """Set value of float global variable."""
+    lib = get_library()
+    var = ctypes.c_float.in_dll(lib, name)
+    var.value = value

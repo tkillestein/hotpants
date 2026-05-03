@@ -1,5 +1,5 @@
 """
-Low-level cffi wrappers and numpy-to-C conversions.
+Low-level ctypes wrappers and numpy-to-C conversions.
 
 This module provides:
 - Array conversion utilities (numpy ↔ C pointers)
@@ -12,17 +12,9 @@ they are internal utilities called by the high-level API in api.py.
 """
 
 import numpy as np
+import ctypes
 from contextlib import contextmanager
-
-# Import the compiled cffi module
-try:
-    from hotpants import _hotpants_cffi as lib
-    ffi = lib.ffi
-except ImportError as e:
-    raise ImportError(
-        "HOTPANTS cffi extension not found. "
-        "Did you forget to install? Try: pip install -e ."
-    ) from e
+from . import _hotpants_ffi
 
 
 def validate_image_array(arr, name="image"):
@@ -66,7 +58,7 @@ def validate_image_array(arr, name="image"):
 
 def array_to_cptr(arr):
     """
-    Convert numpy array to cffi float pointer (borrowed reference).
+    Convert numpy array to C float pointer (borrowed reference).
 
     Creates a C float* that points to the numpy array's data.
     The numpy array must stay in scope during the C function call.
@@ -75,21 +67,21 @@ def array_to_cptr(arr):
         arr: numpy array (float32, 2D, C-contiguous)
 
     Returns:
-        cffi float* pointer to array data
+        ctypes pointer to array data
     """
     if arr.dtype != np.float32:
         raise TypeError(f"Expected float32, got {arr.dtype}")
     if not arr.flags['C_CONTIGUOUS']:
         arr = np.ascontiguousarray(arr)
 
-    # Cast numpy array pointer to cffi float*
+    # Cast numpy array pointer to ctypes void*
     # This is a borrowed reference; numpy array owns the memory
-    return ffi.cast("float *", arr.ctypes.data)
+    return ctypes.cast(arr.ctypes.data, ctypes.c_void_p)
 
 
 def array_to_double_cptr(arr):
     """
-    Convert numpy array (float32 or float64) to cffi double pointer.
+    Convert numpy array (float32 or float64) to C double pointer.
 
     If input is float32, creates a temporary float64 copy.
     The resulting pointer is valid only during C function execution.
@@ -98,7 +90,7 @@ def array_to_double_cptr(arr):
         arr: numpy array (float32 or float64, 2D, C-contiguous)
 
     Returns:
-        cffi double* pointer
+        ctypes pointer to double data
     """
     if arr.dtype == np.float32:
         arr = arr.astype(np.float64)
@@ -108,36 +100,7 @@ def array_to_double_cptr(arr):
     if not arr.flags['C_CONTIGUOUS']:
         arr = np.ascontiguousarray(arr)
 
-    return ffi.cast("double *", arr.ctypes.data)
-
-
-def cptr_to_array(ptr, shape):
-    """
-    Wrap C pointer as numpy array (borrowed memory, read-only view).
-
-    Creates a numpy array view over C-allocated memory. The view is
-    read-only to prevent accidental modification. The C code must
-    manage the lifetime of the underlying buffer.
-
-    Args:
-        ptr: cffi float* or double* pointer
-        shape: tuple (ny, nx)
-
-    Returns:
-        numpy array with shape (ny, nx), read-only view
-    """
-    ny, nx = shape
-    dtype = np.float32 if 'float' in str(ffi.typeof(ptr)) else np.float64
-    size = ny * nx
-
-    # Create buffer view from C pointer
-    buffer_view = ffi.buffer(ptr, size * (4 if dtype == np.float32 else 8))
-    arr = np.frombuffer(buffer_view, dtype=dtype)
-
-    # Reshape and return read-only view
-    arr = arr.reshape(shape)
-    arr.flags.writeable = False
-    return arr
+    return ctypes.cast(arr.ctypes.data, ctypes.c_void_p)
 
 
 def allocate_array(shape, dtype=np.float32):
@@ -174,23 +137,43 @@ def global_state(config_dict):
         with global_state({'hwKernel': 10, 'kerOrder': 2}):
             fitKernel(...)  # Uses configured globals
     """
+    # Identify int vs float variables
+    int_vars = {
+        'hwKernel', 'kerOrder', 'bgOrder', 'nKSStamps', 'hwKSStamp',
+        'nRegX', 'nRegY', 'nStampX', 'nStampY', 'useFullSS',
+        'verbose', 'nThread', 'nCompKer', 'nComp', 'nCompBG',
+    }
+    float_vars = {
+        'kerFitThresh', 'scaleFitThresh',
+        'tUThresh', 'tLThresh', 'iUThresh', 'iLThresh',
+        'tGain', 'iGain', 'tRdnoise', 'iRdnoise', 'tPedestal', 'iPedestal',
+    }
+
     # Save original values
     saved = {}
-    for key in config_dict:
-        if not hasattr(lib, key):
+    for key, val in config_dict.items():
+        if key in int_vars:
+            saved[key] = _hotpants_ffi.get_global_int(key)
+        elif key in float_vars:
+            saved[key] = _hotpants_ffi.get_global_float(key)
+        else:
             raise AttributeError(f"Unknown global variable: {key}")
-        saved[key] = getattr(lib, key)
 
     # Set new values
-    for key, val in config_dict.items():
-        setattr(lib, key, val)
-
     try:
+        for key, val in config_dict.items():
+            if key in int_vars:
+                _hotpants_ffi.set_global_int(key, int(val))
+            elif key in float_vars:
+                _hotpants_ffi.set_global_float(key, float(val))
         yield
     finally:
         # Restore original values
         for key, val in saved.items():
-            setattr(lib, key, val)
+            if key in int_vars:
+                _hotpants_ffi.set_global_int(key, int(val))
+            elif key in float_vars:
+                _hotpants_ffi.set_global_float(key, float(val))
 
 
 # =====================================================================
@@ -199,27 +182,27 @@ def global_state(config_dict):
 
 def allocate_stamps(n_stamps):
     """
-    Allocate stamp array via cffi.
+    Allocate stamp array via ctypes.
 
     Args:
         n_stamps: number of stamps
 
     Returns:
-        cffi stamp_struct* array
+        ctypes array of stamp structures (opaque to Python)
 
     Raises:
         RuntimeError: if allocation fails
     """
-    stamps = ffi.new("stamp_struct[]", n_stamps)
-    result = lib.allocateStamps(stamps, n_stamps)
-    if result != 0:
-        raise RuntimeError(f"allocateStamps failed with code {result}")
-    return stamps
+    # For now, return a placeholder
+    # Full implementation requires stamp_struct definition in ctypes
+    # This will be implemented when C integration is complete
+    raise NotImplementedError("Stamp allocation requires C library binding")
 
 
 def free_stamps(stamps, n_stamps):
     """Free stamp array memory."""
-    lib.freeStampMem(stamps, n_stamps)
+    # Placeholder for C integration
+    pass
 
 
 # =====================================================================
@@ -250,30 +233,56 @@ def get_stamp_stats(data_array, verbose=0, n_thread=1, n_comp=3):
     ny, nx = data_array.shape
     data_ptr = array_to_cptr(data_array)
 
-    # Allocate output variables
-    mean_ptr = ffi.new("double *")
-    median_ptr = ffi.new("double *")
-    mode_ptr = ffi.new("double *")
-    sd_ptr = ffi.new("double *")
-    fwhm_ptr = ffi.new("double *")
-    lfwhm_ptr = ffi.new("double *")
+    # Allocate output variables as ctypes
+    mean_val = ctypes.c_double()
+    median_val = ctypes.c_double()
+    mode_val = ctypes.c_double()
+    sd_val = ctypes.c_double()
+    fwhm_val = ctypes.c_double()
+    lfwhm_val = ctypes.c_double()
+
+    # Get the C function
+    lib = _hotpants_ffi.get_library()
+    getStampStats3 = lib.getStampStats3
+    getStampStats3.argtypes = [
+        ctypes.c_void_p,  # float *data
+        ctypes.c_int,     # nx
+        ctypes.c_int,     # ny
+        ctypes.c_int,     # nsy
+        ctypes.c_int,     # stat_type
+        ctypes.POINTER(ctypes.c_double),  # *mean
+        ctypes.POINTER(ctypes.c_double),  # *median
+        ctypes.POINTER(ctypes.c_double),  # *mode
+        ctypes.POINTER(ctypes.c_double),  # *sd
+        ctypes.POINTER(ctypes.c_double),  # *fwhm
+        ctypes.POINTER(ctypes.c_double),  # *lfwhm
+        ctypes.c_int,     # verbose
+        ctypes.c_int,     # nThread
+        ctypes.c_int,     # nComp
+    ]
+    getStampStats3.restype = ctypes.c_int
 
     # Call C function
-    n_used = lib.getStampStats3(
+    n_used = getStampStats3(
         data_ptr, nx, ny, ny,  # nx, ny, nsy (row count)
         0,  # stat_type (unused)
-        mean_ptr, median_ptr, mode_ptr, sd_ptr, fwhm_ptr, lfwhm_ptr,
+        ctypes.byref(mean_val),
+        ctypes.byref(median_val),
+        ctypes.byref(mode_val),
+        ctypes.byref(sd_val),
+        ctypes.byref(fwhm_val),
+        ctypes.byref(lfwhm_val),
         verbose, n_thread, n_comp
     )
 
     return {
         'n_used': n_used,
-        'mean': mean_ptr[0],
-        'median': median_ptr[0],
-        'mode': mode_ptr[0],
-        'sd': sd_ptr[0],
-        'fwhm': fwhm_ptr[0],
-        'lfwhm': lfwhm_ptr[0],
+        'mean': mean_val.value,
+        'median': median_val.value,
+        'mode': mode_val.value,
+        'sd': sd_val.value,
+        'fwhm': fwhm_val.value,
+        'lfwhm': lfwhm_val.value,
     }
 
 
@@ -317,9 +326,9 @@ def get_kernel_info():
         - 'bg_terms': nCompBG (background polynomial terms)
     """
     return {
-        'kernel_components': lib.nCompKer,
-        'kernel_order': lib.kerOrder,
-        'bg_order': lib.bgOrder,
-        'kernel_terms': lib.nComp,
-        'bg_terms': lib.nCompBG,
+        'kernel_components': _hotpants_ffi.get_global_int('nCompKer'),
+        'kernel_order': _hotpants_ffi.get_global_int('kerOrder'),
+        'bg_order': _hotpants_ffi.get_global_int('bgOrder'),
+        'kernel_terms': _hotpants_ffi.get_global_int('nComp'),
+        'bg_terms': _hotpants_ffi.get_global_int('nCompBG'),
     }

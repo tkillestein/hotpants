@@ -32,14 +32,15 @@ __version__ = "0.0.1"
 __author__ = "Andy Becker (C core), Python bindings"
 __license__ = "MIT"
 
-# Deferred import of API functions to avoid cffi build errors during package discovery
-def __getattr__(name):
-    """Lazy load public API on first access."""
-    if name in ("fit_kernel", "spatial_convolve", "KernelConfig",
-                "RegionLayout", "NoiseThresholds", "KernelSolution"):
-        from . import api
-        return getattr(api, name)
-    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+# Import public API
+from .api import (
+    fit_kernel,
+    spatial_convolve,
+    KernelConfig,
+    RegionLayout,
+    NoiseThresholds,
+    KernelSolution,
+)
 
 __all__ = [
     "fit_kernel",

@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "wheel", "cffi>=1.16"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "hotpants"
@@ -9,7 +9,6 @@ description = "High Order Transform of PSF ANd Template Subtraction"
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
-    "cffi>=1.16",
 ]
 
 [dependency-groups]
@@ -24,15 +23,13 @@ docs = [
     "sphinx-rtd-theme>=2.0",
     "breathe>=4.35",
 ]
+dev = [
+    "pytest>=8.0",
+    "numpy>=1.26",
+]
 
-[tool.setuptools]
-package-dir = { "" = "src" }
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.cffi-modules]
-"src/hotpants/_hotpants_ffi.py:ffi" = "hotpants._hotpants_cffi"
+[tool.hatch.build.targets.wheel]
+packages = ["src/hotpants"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
