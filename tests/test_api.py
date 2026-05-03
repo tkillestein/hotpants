@@ -30,9 +30,10 @@ class TestKernelConfig:
     def test_default_config(self):
         """Default config should be valid."""
         config = KernelConfig()
-        assert config.kernel_half_width == 10
+        assert config.kernel_half_width == 15
         assert config.kernel_order == 2
         assert config.bg_order == 1
+        assert config.hw_ks_stamp == 10  # Must be <= kernel_half_width
 
     def test_custom_config(self):
         """Custom config with valid parameters."""
@@ -65,7 +66,9 @@ class TestRegionLayout:
         """Default layout should be valid."""
         layout = RegionLayout()
         assert layout.n_regions_x == 1
+        assert layout.n_regions_y == 1
         assert layout.stamps_per_region_x == 10
+        assert layout.stamps_per_region_y == 10
 
     def test_invalid_regions(self):
         """Invalid region counts should raise ValueError."""
