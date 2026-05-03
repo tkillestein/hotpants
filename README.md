@@ -52,18 +52,6 @@ sudo cmake --install build  # optional
 
 The CMake build auto-detects CFITSIO, OpenBLAS, FFTW3, and OpenMP. Use `-DUSE_FFTW=OFF` to disable FFT acceleration if needed.
 
-### Legacy Makefiles
-
-```bash
-# Linux
-make hotpants
-
-# macOS
-make -f Makefile.macosx hotpants
-```
-
-Edit `CFITSIOINCDIR` and `LIBDIR` in the Makefile to match your installation paths.
-
 ---
 
 ## Quick Start
@@ -176,7 +164,7 @@ Use `-march=native` for local builds; omit for portable binaries.
 
 See [CLAUDE.md](CLAUDE.md) for:
 - Algorithm overview and modernization roadmap
-- Build system details (CMake, Makefile)
+- Build system details (CMake)
 - Performance profiling
 - Planned optimizations (SIMD, adaptive basis, GPU offload)
 
