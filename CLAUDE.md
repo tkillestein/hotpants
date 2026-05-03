@@ -171,10 +171,6 @@ cmake --build build -j$(nproc)
 
 Use `-march=native` for SIMD optimisations on the build host; omit for portable binaries.
 
-### Legacy Makefile
-
-A legacy Makefile is maintained for backward compatibility, but CMake is preferred.
-
 ### Python (In Development)
 
 ```sh
@@ -193,7 +189,6 @@ uv run pytest       # Run tests
 - Normal equations matrix from `build_matrix()` is symmetric positive-definite → Cholesky is optimal (2× fewer operations than general LU)
 - Linear system solve now uses optimised library code; typically <5% of runtime
 - CMake build system cleanly detects and links CFITSIO, OpenBLAS, FFTW3, and OpenMP
-- Both CMake and legacy Makefile available for compatibility
 
 ### ✓ Parallelism — OpenMP
 
