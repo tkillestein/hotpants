@@ -26,15 +26,19 @@ def load_hotpants_library():
     Raises:
         OSError: if library not found
     """
-    # Try to find libhotpants (built by CMake)
+    import os
+
     lib_name = "libhotpants"
 
-    # Try standard locations first
+    # Try to find libhotpants using ctypes' find_library (searches LD_LIBRARY_PATH, etc.)
     lib_path = ctypes.util.find_library(lib_name)
     if lib_path:
-        return ctypes.CDLL(lib_path)
+        try:
+            return ctypes.CDLL(lib_path)
+        except OSError as e:
+            pass  # Fall through to manual search
 
-    # Try build directory
+    # Try build directory relative to this file
     possible_paths = [
         Path(__file__).parent.parent.parent / "build",
         Path(__file__).parent.parent.parent / "build" / "src",
@@ -42,18 +46,33 @@ def load_hotpants_library():
         Path("/usr/lib"),
     ]
 
+    # Also check LD_LIBRARY_PATH
+    ld_path = os.environ.get("LD_LIBRARY_PATH", "")
+    if ld_path:
+        for path_str in ld_path.split(":"):
+            if path_str:
+                possible_paths.insert(0, Path(path_str))
+
     for path_dir in possible_paths:
         if path_dir.exists():
             for pattern in [f"{lib_name}.so*", f"{lib_name}.dylib", f"{lib_name}.dll"]:
                 matches = list(path_dir.glob(pattern))
                 if matches:
-                    return ctypes.CDLL(str(matches[0]))
+                    lib_file = matches[0]
+                    try:
+                        return ctypes.CDLL(str(lib_file))
+                    except OSError as e:
+                        # Continue to next path if this one doesn't load
+                        continue
 
+    # Give helpful error message
+    searched_paths = "\n  ".join(str(p) for p in possible_paths)
     raise OSError(
-        f"Could not find {lib_name}. "
+        f"Could not find {lib_name}. Searched:\n  {searched_paths}\n"
         "Please build the C library first:\n"
         "  cmake -B build && cmake --build build\n"
-        "Then set LD_LIBRARY_PATH to the build directory."
+        "Then set LD_LIBRARY_PATH (or run tests with):\n"
+        "  export LD_LIBRARY_PATH=$PWD/build:$LD_LIBRARY_PATH"
     )
 
 
