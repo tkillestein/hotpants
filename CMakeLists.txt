@@ -23,23 +23,21 @@ find_path(LAPACKE_INCLUDE_DIR NAMES lapacke.h REQUIRED
 find_package(OpenMP)
 
 # ---------------------------------------------------------------------------
-# hotpants (main executable)
+# hotpants (shared library for Python and C API)
 # ---------------------------------------------------------------------------
 
-add_executable(hotpants
-    src/main.c
+add_library(hotpants SHARED
     src/alard.c
     src/functions.c
-    src/vargs.c
 )
 
-target_include_directories(hotpants PRIVATE
+target_include_directories(hotpants PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CFITSIO_INCLUDE_DIRS}
     ${LAPACKE_INCLUDE_DIR}
-    src
 )
 
-target_link_libraries(hotpants PRIVATE
+target_link_libraries(hotpants PUBLIC
     ${CFITSIO_LIBRARIES}
     LAPACK::LAPACK
     ${LAPACKE_LIBRARY}
@@ -47,8 +45,33 @@ target_link_libraries(hotpants PRIVATE
 )
 
 if(OpenMP_C_FOUND)
-    target_link_libraries(hotpants PRIVATE OpenMP::OpenMP_C)
+    target_link_libraries(hotpants PUBLIC OpenMP::OpenMP_C)
 endif()
+
+# Define globals in the shared library
+target_compile_definitions(hotpants PRIVATE HOTPANTS_DEFINE_GLOBALS)
+
+# ---------------------------------------------------------------------------
+# hotpants CLI (main executable, uses the shared library)
+# ---------------------------------------------------------------------------
+
+add_executable(hotpants_cli
+    src/main.c
+    src/vargs.c
+)
+
+target_include_directories(hotpants_cli PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CFITSIO_INCLUDE_DIRS}
+    ${LAPACKE_INCLUDE_DIR}
+)
+
+target_link_libraries(hotpants_cli PRIVATE
+    hotpants
+)
+
+# Rename to 'hotpants' in installation
+set_target_properties(hotpants_cli PROPERTIES OUTPUT_NAME hotpants)
 
 # ---------------------------------------------------------------------------
 # maskim (standalone mask application utility)
@@ -63,4 +86,11 @@ target_link_libraries(maskim PRIVATE ${CFITSIO_LIBRARIES} m)
 # Install
 # ---------------------------------------------------------------------------
 
-install(TARGETS hotpants maskim DESTINATION bin)
+install(TARGETS hotpants hotpants_cli maskim
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
+)
+
+install(FILES src/hotpants_api.h
+    DESTINATION include
+)
