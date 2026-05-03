@@ -27,6 +27,7 @@ find_package(OpenMP)
 # ---------------------------------------------------------------------------
 
 add_library(hotpants SHARED
+    src/globals.c
     src/alard.c
     src/functions.c
 )
@@ -47,9 +48,6 @@ target_link_libraries(hotpants PUBLIC
 if(OpenMP_C_FOUND)
     target_link_libraries(hotpants PUBLIC OpenMP::OpenMP_C)
 endif()
-
-# Define globals in the shared library
-target_compile_definitions(hotpants PRIVATE HOTPANTS_DEFINE_GLOBALS)
 
 # ---------------------------------------------------------------------------
 # hotpants CLI (main executable, uses the shared library)
