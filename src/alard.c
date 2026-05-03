@@ -498,15 +498,15 @@ static int solve_spd(double **a, int n, double *b) {
  * @details Implements the full Alard & Lupton (1998) kernel solution:
  *  1. Assembles the global normal-equations matrix M via build_matrix() and
  *     the right-hand-side vector b via build_scprod().
- *  2. Solves M·a = b by LU decomposition (ludcmp / lubksb); the solution
- *     vector a is written into @p kernelSol.
+ *  2. Solves M·a = b via LAPACK Cholesky decomposition (dpotrf + dpotrs);
+ *     the solution vector a is written into @p kernelSol.
  *  3. Calls check_again() to evaluate each stamp's residual sigma and reject
  *     or replace bad substamps; if any stamp is flagged the matrices are
  *     rebuilt and the linear system is solved again.
  *  4. Iterates steps 1–3 until check_again() reports no further changes.
  *
- * Note: the normal-equations matrix is symmetric positive-definite; the
- * correct solver is Cholesky decomposition, but LU is used here.
+ * The normal-equations matrix is symmetric positive-definite; Cholesky
+ * decomposition is optimal for this structure.
  *
  * @param stamps              Array of nS stamps used for the fit.
  * @param imRef               Full-frame reference image (the fit target).
@@ -1273,8 +1273,8 @@ void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
  *   kernelSol[I] += wxy[istamp][i2] · stamp->scprod[i1]
  * Background terms are computed directly from the background basis images and
  * the reference pixel values.  On entry @p kernelSol is zeroed.  After
- * build_matrix() fills M and this function fills b, ludcmp/lubksb solve M·a=b
- * to yield the kernel coefficient vector in @p kernelSol.
+ * build_matrix() fills M and this function fills b, LAPACK Cholesky solves
+ * M·a=b to yield the kernel coefficient vector in @p kernelSol.
  *
  * @param stamps     Array of nS stamps.
  * @param nS         Number of stamps.

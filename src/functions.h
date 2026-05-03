@@ -20,8 +20,6 @@ void        spatial_convolve(float *, float **, int, int, double *, float *, int
 double      make_kernel(int, int, double *);
 double      get_background(int, int, double *);
 void        make_model(stamp_struct *, double *, float *);
-int         ludcmp(double **, int, int *, double *);
-void        lubksb(double **, int, int *, double *);
 
 /* Functions.c */
 int         allocateStamps(stamp_struct *, int);
