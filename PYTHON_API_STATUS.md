@@ -10,35 +10,37 @@ A production-ready Python API for HOTPANTS kernel fitting and convolution has be
 
 ## Completed Work
 
-### Phase 1: cffi Build Infrastructure ✓
+### Phase 1: ctypes FFI Infrastructure ✓
 
 - **File**: `src/hotpants_api.h`
-  - Minimal C API header defining public functions and structures
+  - Reference header defining public C functions and structures
   - Complete Doxygen documentation with Alard & Lupton references
-  - Global configuration variables exposed for Python control
+  - Used as documentation; actual FFI via ctypes in Python
 
 - **Build System**: Updated `pyproject.toml`
-  - Modern setuptools backend with PEP 517 support
-  - cffi declared as build-time and runtime dependency
+  - Modern hatchling backend (compatible with uv)
+  - No compilation needed for Python package
+  - C library built separately via CMake
   - Package detection configured for `src/` layout
 
-- **Files Created**:
-  - `src/hotpants_api.h` (120 lines)
-  - Modified `pyproject.toml` (build-system, setuptools config)
+- **Files Created/Modified**:
+  - `src/hotpants_api.h` (120 lines, reference only)
+  - Modified `pyproject.toml` (hatchling backend)
 
-### Phase 2: Low-Level cffi Wrappers ✓
+### Phase 2: Low-Level ctypes Wrappers ✓
 
 - **File**: `src/hotpants/_hotpants_ffi.py` (120 lines)
-  - cffi FFI declarations for all public C functions
-  - Source file configuration (alard.c, functions.c compilation)
-  - Global variable declarations
+  - ctypes FFI declarations for C library loading
+  - Smart library search (build dir, system paths, LD_LIBRARY_PATH)
+  - Global variable access (get/set int and float)
+  - Zero-copy ctypes function signatures
 
 - **File**: `src/hotpants/_core.py` (400 lines)
   - Array validation utilities (dtype, shape, NaN/Inf checks)
-  - numpy ↔ C pointer conversions (`array_to_cptr`, `cptr_to_array`)
-  - Global state management context manager
+  - numpy ↔ ctypes pointer conversions (`array_to_cptr`)
+  - Global state management context manager (save/restore)
   - Stamp allocation/deallocation wrappers
-  - Image statistics computation wrapper
+  - Image statistics computation wrapper (via ctypes)
   - Polynomial basis term counter
 
 ### Phase 3: High-Level Python API ✓
@@ -119,15 +121,16 @@ A production-ready Python API for HOTPANTS kernel fitting and convolution has be
 ```
 hotpants/
 ├── src/hotpants/
-│   ├── __init__.py                # Package init, lazy import
-│   ├── _hotpants_ffi.py           # cffi FFI declarations + build config
+│   ├── __init__.py                # Package init, direct imports
+│   ├── _hotpants_ffi.py           # ctypes FFI declarations, C library loader
 │   ├── _core.py                   # Low-level wrappers + array conversions
 │   └── api.py                     # High-level API + dataclasses
-├── src/hotpants_api.h             # Minimal C API header
+├── src/hotpants_api.h             # Minimal C API header (reference only)
 ├── tests/
 │   ├── test_api.py                # Unit tests (infrastructure)
 │   └── test_api_integration.py     # Integration tests (C comparison, skipped)
-└── pyproject.toml                 # Build config with cffi setup
+├── CMakeLists.txt                 # CMake config for C library (unchanged)
+└── pyproject.toml                 # Build config with hatchling
 ```
 
 ## Next Steps: C Integration (Estimated 2-4 Days)
@@ -206,24 +209,40 @@ pytest tests/test_regression.py -v      # Existing C regression suite (unchanged
 
 ## Design Decisions
 
-1. **cffi out-of-line mode** (vs inline): Compiled once at install, faster imports, cleaner packaging.
+1. **ctypes FFI** (vs cffi): 
+   - Zero build-time compilation (built into Python)
+   - Compatible with modern package managers (uv, hatchling)
+   - Similar performance to cffi (minimal overhead)
+   - Simpler packaging workflow
 
-2. **Dataclass-based config** (vs dict or globals): Type-safe, autocomplete, validation, serialization-ready.
+2. **Dataclass-based config** (vs dict or globals): 
+   - Type-safe, autocomplete, validation, serialization-ready
 
-3. **numpy array I/O**: Direct pointer conversion avoids copy overhead, matches user expectations.
+3. **numpy array I/O**: 
+   - Direct ctypes pointer conversion avoids copy overhead
+   - Matches user expectations for array-based APIs
 
-4. **Placeholder implementation**: Validates infrastructure before C integration; reduces risk of large refactoring.
+4. **Placeholder implementation**: 
+   - Validates infrastructure before C integration
+   - Reduces risk of large refactoring
+   - Tests pass on validation layer
 
-5. **Lazy import**: Avoids cffi build errors during package discovery in development.
+5. **Separate C build**: 
+   - C library built via CMake (independent of Python package)
+   - Loaded at runtime via ctypes
+   - Enables optional C dependencies
 
-6. **Comprehensive validation**: Python validates early (dtype, shape, NaN/Inf); C assumes valid input.
+6. **Comprehensive validation**: 
+   - Python validates early (dtype, shape, NaN/Inf)
+   - C assumes valid input
 
 ## Performance Notes
 
 - Python API calls the same C code as CLI → identical performance
-- Array conversion is zero-copy (pointer casting)
-- Global state setup is minimal (a few assignments)
-- cffi out-of-line compiled modules have <1μs call overhead
+- Array conversion is zero-copy (ctypes pointer casting)
+- Global state setup is minimal (a few variable assignments)
+- ctypes has <1μs call overhead (similar to cffi)
+- No Python package compilation needed (faster installation)
 
 ## Documentation
 
