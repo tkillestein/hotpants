@@ -28,6 +28,7 @@ find_package(OpenMP)
 
 add_library(hotpants SHARED
     src/globals.c
+    src/allocate.c
     src/alard.c
     src/functions.c
 )

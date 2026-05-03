@@ -165,54 +165,30 @@ void savexy(stamp_struct *stamps, int nStamps, long xmin, long ymin, int regionc
  * @return 0 on success, 1 if any allocation fails.
  */
 int allocateStamps(stamp_struct *stamps, int nStamps) {
-    int stampIdx, vectorIdx;
+    int stampIdx;
     int nbgVectors;
-    
+
     nbgVectors = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-    
+
     if (stamps) {
         for (stampIdx = 0; stampIdx < nStamps; stampIdx++) {
+            /* Allocate contiguous vector array: much more efficient than nested malloc */
+            stamps[stampIdx].vectors = alloc_vector_array(nCompKer + nbgVectors, fwKSStamp * fwKSStamp);
 
-            /* **************************** */
-            if(!(stamps[stampIdx].vectors = (double **)calloc((nCompKer+nbgVectors), sizeof(double *))))
-                return 1;
+            /* Reference area for kernel fitting */
+            stamps[stampIdx].krefArea = (double *)xcalloc((size_t)fwKSStamp * fwKSStamp, sizeof(double));
 
-            for (vectorIdx = 0; vectorIdx < nCompKer + nbgVectors; vectorIdx++) {
-                if(!(stamps[stampIdx].vectors[vectorIdx] = (double *)calloc(fwKSStamp*fwKSStamp, sizeof(double))))
-                    return 1;
-            }
+            /* Fitting matrix: contiguous 2D array for better cache locality */
+            stamps[stampIdx].mat = alloc_matrix_contiguous(nC, nC);
 
-            /* **************************** */
+            /* Substamp center coordinates */
+            stamps[stampIdx].xss = (int *)xcalloc(nKSStamps, sizeof(int));
+            stamps[stampIdx].yss = (int *)xcalloc(nKSStamps, sizeof(int));
 
-            if (!(stamps[stampIdx].krefArea      = (double *)calloc(fwKSStamp*fwKSStamp, sizeof(double))))
-                return 1;
+            /* Scalar products (right-hand side of normal equations) */
+            stamps[stampIdx].scprod = (double *)xcalloc(nC, sizeof(double));
 
-            /* **************************** */
-
-            if (!(stamps[stampIdx].mat    = (double **)calloc(nC, sizeof(double *))))
-                return 1;
-
-            for (vectorIdx = 0; vectorIdx < nC; vectorIdx++)
-                if ( !(stamps[stampIdx].mat[vectorIdx] = (double *)calloc(nC, sizeof(double))) )
-                    return 1;
-            
-            /* **************************** */
-
-            if (!(stamps[stampIdx].xss = (int *)calloc(nKSStamps, sizeof(int))))
-                return 1;
-
-            /* **************************** */
-
-            if (!(stamps[stampIdx].yss = (int *)calloc(nKSStamps, sizeof(int))))
-                return 1;
-
-            /* **************************** */
-
-            if (!(stamps[stampIdx].scprod = (double *)calloc(nC, sizeof(double))))
-                return 1;
-
-            /* **************************** */
-
+            /* Initialize stamp metadata */
             stamps[stampIdx].x0 = stamps[stampIdx].y0 = stamps[stampIdx].x = stamps[stampIdx].y = 0;
             stamps[stampIdx].nss = stamps[stampIdx].sscnt = 0;
             stamps[stampIdx].nx = stamps[stampIdx].ny = 0;
@@ -1441,27 +1417,27 @@ float *calculateAvgNoise(float *image, int *mask, int nx, int ny, int size, int 
  * @brief Release all dynamically allocated sub-arrays within an array of
  *        stamp_struct objects.
  *
- * @details Frees in the reverse order of allocateStamps(): for each stamp,
- * frees stamp->vectors[j] for j in [0, nCompKer+nBGVectors), then vectors
- * itself, then mat[j] for j in [0, nC), then mat itself, then krefArea,
- * scprod, xss, and yss.  Safe to call after the unused stamp array (e.g.
- * ctStamps when ciStamps is selected) to recover its memory.
+ * @details Frees all dynamically allocated arrays within each stamp_struct:
+ * vectors, mat, krefArea, scprod, xss, and yss.
+ *
+ * The new contiguous allocation strategy (alloc_vector_array, alloc_matrix_contiguous)
+ * means vectors and mat each require only 2 free() calls total instead of N+1.
  *
  * @param stamps   Array of stamp_struct objects whose sub-arrays are to be freed.
  * @param nStamps  Number of stamps in the array.
  */
 void freeStampMem(stamp_struct *stamps, int nStamps) {
-    int stampIdx, vectorIdx;
+    int stampIdx;
+
     if (stamps) {
         for (stampIdx = 0; stampIdx < nStamps; stampIdx++) {
-            for(vectorIdx = 0; vectorIdx < nCompKer + nBGVectors; vectorIdx++)
-                if (stamps[stampIdx].vectors[vectorIdx]) free(stamps[stampIdx].vectors[vectorIdx]);
-            if (stamps[stampIdx].vectors) free(stamps[stampIdx].vectors);
+            /* Free contiguous vector array (2 frees: pointer array + data block) */
+            if (stamps[stampIdx].vectors) free_vector_array(stamps[stampIdx].vectors);
 
-            for (vectorIdx = 0; vectorIdx < nC; vectorIdx++)
-                if (stamps[stampIdx].mat[vectorIdx]) free(stamps[stampIdx].mat[vectorIdx]);
-            if (stamps[stampIdx].mat) free(stamps[stampIdx].mat);
+            /* Free contiguous matrix (2 frees: pointer array + data block) */
+            if (stamps[stampIdx].mat) free_matrix_contiguous(stamps[stampIdx].mat);
 
+            /* Free simple arrays */
             if (stamps[stampIdx].krefArea) free(stamps[stampIdx].krefArea);
             if (stamps[stampIdx].scprod) free(stamps[stampIdx].scprod);
             if (stamps[stampIdx].xss) free(stamps[stampIdx].xss);

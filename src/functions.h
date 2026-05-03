@@ -1,4 +1,5 @@
 #include <fitsio.h>
+#include "allocate.h"
 
 /* Alard.c */
 void        getKernelVec();

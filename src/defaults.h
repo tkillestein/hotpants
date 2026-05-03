@@ -100,6 +100,32 @@
 #define MAX_SIGMA_CLIP_RETRIES   5       /* max iterations for histogram bin-width refinement in getStampStats3; typical convergence < 3 */
 
 /* =====================================================================
+   LOGGING AND OUTPUT MACROS
+   =====================================================================
+   Centralized logging for clean, consistent terminal output.
+   All macros respect the global 'verbose' verbosity level:
+     verbose = 0: silent (only errors)
+     verbose = 1: progress (major steps, FITS I/O, region processing)
+     verbose = 2: debug (detailed diagnostics, stamp processing, kernel fitting)
+
+   Macros automatically add timestamp and level prefix for clarity.
+   Output goes to stderr (standard practice for diagnostics).
+   ===================================================================== */
+
+#define LOG_ERROR(fmt, ...) \
+    do { fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__); } while(0)
+
+#define LOG_PROGRESS(fmt, ...) \
+    do { if (verbose >= 1) fprintf(stderr, "[PROGRESS] " fmt "\n", ##__VA_ARGS__); } while(0)
+
+#define LOG_DEBUG(fmt, ...) \
+    do { if (verbose >= 2) fprintf(stderr, "  [DEBUG] " fmt "\n", ##__VA_ARGS__); } while(0)
+
+/* Indented debug output for nested contexts (regions, stamps, etc.) */
+#define LOG_DEBUG_INDENT(indent, fmt, ...) \
+    do { if (verbose >= 2) fprintf(stderr, "%*s[DEBUG] " fmt "\n", (indent)*2, "", ##__VA_ARGS__); } while(0)
+
+/* =====================================================================
    POLYNOMIAL BASIS FORMULA
    =====================================================================
    The number of polynomial basis terms (1-D and 2-D) up to order n is:
