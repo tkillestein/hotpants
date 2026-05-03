@@ -73,16 +73,16 @@ class KernelConfig:
             (Maps to C global: nKSStamps)
 
         hw_ks_stamp: Half-width of kernel test substamps (pixels).
-            Typical: 15. Must be < kernel_half_width.
+            Must be <= kernel_half_width. Typical: 10.
             (Maps to C global: hwKSStamp)
     """
-    kernel_half_width: int = 10
+    kernel_half_width: int = 15
     kernel_order: int = 2
     bg_order: int = 1
     fit_threshold: float = 20.0
     scale_fit_threshold: float = 0.5
     n_ks_stamps: int = 3
-    hw_ks_stamp: int = 15
+    hw_ks_stamp: int = 10
 
     def __post_init__(self):
         """Validate configuration parameters."""
