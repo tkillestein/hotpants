@@ -24,8 +24,10 @@ def validate_image_array(arr, name="image"):
     Checks:
     - dtype is float32
     - array is 2D
-    - array is C-contiguous
     - no NaN or Inf values
+
+    Note: Non-C-contiguous arrays are acceptable and will be converted
+    automatically during processing.
 
     Args:
         arr: numpy array to validate
@@ -43,11 +45,6 @@ def validate_image_array(arr, name="image"):
     if arr.ndim != 2:
         raise ValueError(
             f"{name}: expected 2D array, got shape {arr.shape}"
-        )
-    if not arr.flags['C_CONTIGUOUS']:
-        raise ValueError(
-            f"{name}: array must be C-contiguous (row-major). "
-            "Use np.ascontiguousarray(arr) to convert."
         )
     if not np.isfinite(arr).all():
         raise ValueError(
