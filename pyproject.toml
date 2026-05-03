@@ -1,9 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel", "cffi>=1.16"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "hotpants"
 version = "0.0.1"
 description = "High Order Transform of PSF ANd Template Subtraction"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "numpy>=1.26",
+    "cffi>=1.16",
+]
 
 [dependency-groups]
 test = [
@@ -17,6 +24,15 @@ docs = [
     "sphinx-rtd-theme>=2.0",
     "breathe>=4.35",
 ]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.cffi-modules]
+"src/hotpants/_hotpants_ffi.py:ffi" = "hotpants._hotpants_cffi"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
