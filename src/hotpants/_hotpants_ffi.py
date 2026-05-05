@@ -76,16 +76,10 @@ def load_hotpants_library():
     )
 
 
-# Load the library (deferred until first use)
-_lib = None
 
-
-def get_library():
-    """Get the loaded HOTPANTS library, loading it if necessary."""
-    global _lib
-    if _lib is None:
-        _lib = load_hotpants_library()
-    return _lib
+@lru_cache(maxsize=1)
+def get_library() -> ctypes.CDLL:
+    return load_hotpants_library()
 
 
 # =====================================================================
