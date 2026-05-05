@@ -1,3 +1,7 @@
+The below are original notes from Andy Becker bundled with the original HOTPANTS,
+and might prove useful in using the algorithm.
+
+---
   This code makes use of Cristophe Alard's algorithm for the creation
   and application of a spatially varying convolution kernel, used in
   the subtraction of 2 images with different point spread functions.

@@ -1,21 +1,26 @@
 # HOTPANTS
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Build Status](https://img.shields.io/github/actions/workflow/status/tkillestein/hotpants/ci.yml?branch=main)
+![Build Status](https://img.shields.io/github/actions/workflow/status/tkillestein/hotpants/ci.yml?branch=master)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey)
-![C99](https://img.shields.io/badge/C-99-blue.svg)
+![C99](https://img.shields.io/badge/C-23-blue.svg)
 
 **High Order Transform of PSF ANd Template Subtraction**
 
-A fast, production-grade tool for image differencing. HOTPANTS fits a spatially-varying convolution kernel to match two astronomical images' point-spread functions (PSFs), producing optimal difference images for transient detection.
+A fast, production-grade tool for image differencing. HOTPANTS fits a spatially-varying
+convolution kernel to match two astronomical images' point-spread functions (PSFs),
+producing optimal difference images for transient detection.
 
-> Based on the algorithm from [Alard & Lupton (1998)](https://iopscience.iop.org/article/10.1086/305984). Originally written by Andy Becker; maintained and modernized here.
+> Based on the algorithm
+> from [Alard & Lupton (1998)](https://iopscience.iop.org/article/10.1086/305984).
+> HOTPANTS was written by Andy Becker; maintained and modernized here.
 
 ---
 
 ## Documentation
 
 📖 **[Full Documentation](https://tkillestein.github.io/hotpants/)** on GitHub Pages
+
 - API reference (C)
 - Installation and quick-start guides
 - PSF matching strategy and tuning
@@ -25,11 +30,16 @@ A fast, production-grade tool for image differencing. HOTPANTS fits a spatially-
 
 ## Features
 
+This fork adds:
+
 - **Fast convolution** — FFT-accelerated via FFTW3 for large images
 - **Parallelized** — multi-threaded with OpenMP for modern CPUs
-- **Flexible kernel** — spatially-varying polynomial basis, customizable basis functions
-- **Robust masking** — propagates bad pixel masks through the pipeline
-- **Production-ready** — ~60% reduction in difference image noise vs. simple differencing
+- **Modern build system** - CMake orchestrated with `scikit-build-core`
+- **Documentation** - inline documentation, and Doxygen-generated rich docs
+- **Python API** - via `ctypes`, for full compatibility with `numpy` and the modern
+  Python science stack
+
+These changes form the basis for extensions to the original HOTPANTS code.
 
 ---
 
@@ -50,7 +60,8 @@ cmake --build build
 sudo cmake --install build  # optional
 ```
 
-The CMake build auto-detects CFITSIO, OpenBLAS, FFTW3, and OpenMP. Use `-DUSE_FFTW=OFF` to disable FFT acceleration if needed.
+The CMake build auto-detects CFITSIO, OpenBLAS, FFTW3, and OpenMP. Use `-DUSE_FFTW=OFF`
+to disable FFT acceleration if needed.
 
 ---
 
@@ -60,15 +71,12 @@ The CMake build auto-detects CFITSIO, OpenBLAS, FFTW3, and OpenMP. Use `-DUSE_FF
 # Basic usage: match template to science image
 hotpants -inim science.fits -tmplim template.fits -outim difference.fits
 
-# Enable FFT-accelerated convolution (much faster for large images)
-hotpants -inim science.fits -tmplim template.fits -outim difference.fits -fft
-
 # Use 4 threads
 OMP_NUM_THREADS=4 hotpants -inim science.fits -tmplim template.fits -outim difference.fits
 
 # Parallel processing over image regions
 hotpants -inim science.fits -tmplim template.fits -outim difference.fits \
-  -nrx 2 -nry 2 -fft
+  -nrx 2 -nry 2
 
 # Save kernel info, output noise map
 hotpants -inim science.fits -tmplim template.fits -outim difference.fits \
@@ -80,10 +88,11 @@ hotpants -inim science.fits -tmplim template.fits -outim difference.fits \
 The choice of convolution direction depends on your PSF sizes:
 
 - **Science PSF sharper than template**: Convolution can introduce artifacts. Options:
-  - Pre-convolve science image with its PSF before matching (recommended)
-  - Force convolution on template: `-c t`
-  
-- **Science PSF broader than template** (common): Match succeeds naturally. Set basis Gaussians centered on `σ = √(σ²_science − σ²_template)`:
+    - Pre-convolve science image with its PSF before matching (recommended)
+    - Force convolution on template: `-c t`
+
+- **Science PSF broader than template** (common): Match succeeds naturally. Set basis
+  Gaussians centered on `σ = √(σ²_science − σ²_template)`:
   ```bash
   hotpants ... -ng 3 6 0.5*sigma 4 sigma 2 2.0*sigma
   ```
@@ -96,12 +105,13 @@ See [CLAUDE.md](CLAUDE.md) for algorithm details and performance tuning.
 
 HOTPANTS produces a multi-layer FITS file:
 
-| Layer | Content |
-|-------|---------|
-| 1 | Difference image: `D = I − T⊗K` |
-| 2+ | Optional: convolved image, noise map, noise-scaled difference, pixel mask |
+| Layer | Content                                                                   |
+|-------|---------------------------------------------------------------------------|
+| 1     | Difference image: `D = I − T⊗K`                                           |
+| 2+    | Optional: convolved image, noise map, noise-scaled difference, pixel mask |
 
-Use `-allm` to output all available layers. Use `-nim`, `-cim`, `-oni` for individual layers.
+Use `-allm` to output all available layers. Use `-nim`, `-cim`, `-oni` for individual
+layers.
 
 ---
 
@@ -111,16 +121,15 @@ Full option reference: run `hotpants` with no arguments.
 
 Key tuning parameters:
 
-| Option | Purpose | Default |
-|--------|---------|---------|
-| `-r` | Convolution kernel half-width (pixels) | 10 |
-| `-nrx`, `-nry` | Region grid (for spatial kernel variation) | 1×1 |
-| `-nsx`, `-nsy` | Stamp grid within each region | 10×10 |
-| `-ko` | Spatial polynomial order (kernel variation) | 2 |
-| `-bgo` | Spatial polynomial order (background) | 1 |
-| `-ft` | Centroid fitting threshold (RMS pixels) | 20.0 |
-| `-ks` | Bad-stamp rejection threshold (sigma) | 2.0 |
-| `-fft` | Enable FFT acceleration | off (use direct convolution) |
+| Option         | Purpose                                     | Default |
+|----------------|---------------------------------------------|---------|
+| `-r`           | Convolution kernel half-width (pixels)      | 10      |
+| `-nrx`, `-nry` | Region grid (for spatial kernel variation)  | 1×1     |
+| `-nsx`, `-nsy` | Stamp grid within each region               | 10×10   |
+| `-ko`          | Spatial polynomial order (kernel variation) | 2       |
+| `-bgo`         | Spatial polynomial order (background)       | 1       |
+| `-ft`          | Centroid fitting threshold (RMS pixels)     | 20.0    |
+| `-ks`          | Bad-stamp rejection threshold (sigma)       | 2.0     |
 
 ---
 
@@ -128,10 +137,10 @@ Key tuning parameters:
 
 On a modern 4-core CPU with FFTW acceleration:
 
-| Image size | Time | Speedup vs. direct |
-|------------|------|-------------------|
-| 1024×1024 | ~0.1s | 3–4× |
-| 4096×4096 | ~2s | 5–8× |
+| Image size | Time  | Speedup vs. direct |
+|------------|-------|--------------------|
+| 1024×1024  | ~0.1s | 3–4×               |
+| 4096×4096  | ~2s   | 5–8×               |
 
 Use `OMP_NUM_THREADS=N` to control threading. Typical scaling: 2–4× for 4 threads.
 
@@ -163,6 +172,7 @@ Use `-march=native` for local builds; omit for portable binaries.
 ## Development
 
 See [CLAUDE.md](CLAUDE.md) for:
+
 - Algorithm overview and modernization roadmap
 - Build system details (CMake)
 - Performance profiling
@@ -178,7 +188,9 @@ MIT License, 2013–2026. See [LICENSE](LICENSE).
 
 ## Citation
 
-If you use HOTPANTS in research, please cite the original algorithm and this implementation:
+If you use this fork of HOTPANTS in research, please cite the original algorithm and the
+original
+HOTPANTS implementation:
 
 ```bibtex
 @article{Alard1998,
