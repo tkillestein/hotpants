@@ -12,11 +12,13 @@ Then loaded by finding the shared library (.so / .dll / .dylib).
 
 import ctypes
 import ctypes.util
-import sys
+import os
+from functools import lru_cache
 from pathlib import Path
 
 
-def load_hotpants_library():
+# TODO: resolve C901 error
+def load_hotpants_library() -> ctypes.CDLL:  # noqa: C901
     """
     Load the pre-compiled HOTPANTS C library.
 
@@ -26,7 +28,6 @@ def load_hotpants_library():
     Raises:
         OSError: if library not found
     """
-    import os
 
     lib_name = "libhotpants"
 
@@ -35,7 +36,7 @@ def load_hotpants_library():
     if lib_path:
         try:
             return ctypes.CDLL(lib_path)
-        except OSError as e:
+        except OSError:
             pass  # Fall through to manual search
 
     # Try build directory relative to this file
@@ -61,20 +62,20 @@ def load_hotpants_library():
                     lib_file = matches[0]
                     try:
                         return ctypes.CDLL(str(lib_file))
-                    except OSError as e:
+                    except OSError:
                         # Continue to next path if this one doesn't load
                         continue
 
     # Give helpful error message
     searched_paths = "\n  ".join(str(p) for p in possible_paths)
-    raise OSError(
+    msg = (
         f"Could not find {lib_name}. Searched:\n  {searched_paths}\n"
         "Please build the C library first:\n"
         "  cmake -B build && cmake --build build\n"
         "Then set LD_LIBRARY_PATH (or run tests with):\n"
         "  export LD_LIBRARY_PATH=$PWD/build:$LD_LIBRARY_PATH"
     )
-
+    raise OSError(msg)
 
 
 @lru_cache(maxsize=1)
@@ -86,7 +87,8 @@ def get_library() -> ctypes.CDLL:
 # ctypes Wrapper Functions
 # =====================================================================
 
-def get_hotpants_library_functions():
+
+def get_hotpants_library_functions() -> dict[str, object]:
     """
     Define C function signatures for ctypes.
 
@@ -98,61 +100,61 @@ def get_hotpants_library_functions():
     functions = {}
 
     # int allocateStamps(stamp_struct *stamps, int n)
-    functions['allocateStamps'] = lib.allocateStamps
-    functions['allocateStamps'].argtypes = [ctypes.c_void_p, ctypes.c_int]
-    functions['allocateStamps'].restype = ctypes.c_int
+    functions["allocateStamps"] = lib.allocateStamps
+    functions["allocateStamps"].argtypes = [ctypes.c_void_p, ctypes.c_int]
+    functions["allocateStamps"].restype = ctypes.c_int
 
     # void freeStampMem(stamp_struct *stamps, int n)
-    functions['freeStampMem'] = lib.freeStampMem
-    functions['freeStampMem'].argtypes = [ctypes.c_void_p, ctypes.c_int]
-    functions['freeStampMem'].restype = None
+    functions["freeStampMem"] = lib.freeStampMem
+    functions["freeStampMem"].argtypes = [ctypes.c_void_p, ctypes.c_int]
+    functions["freeStampMem"].restype = None
 
     # int getStampStats3(...)
-    functions['getStampStats3'] = lib.getStampStats3
-    functions['getStampStats3'].argtypes = [
+    functions["getStampStats3"] = lib.getStampStats3
+    functions["getStampStats3"].argtypes = [
         ctypes.c_void_p,  # float *data
-        ctypes.c_int,     # nx
-        ctypes.c_int,     # ny
-        ctypes.c_int,     # nsy
-        ctypes.c_int,     # stat_type
+        ctypes.c_int,  # nx
+        ctypes.c_int,  # ny
+        ctypes.c_int,  # nsy
+        ctypes.c_int,  # stat_type
         ctypes.POINTER(ctypes.c_double),  # *mean
         ctypes.POINTER(ctypes.c_double),  # *median
         ctypes.POINTER(ctypes.c_double),  # *mode
         ctypes.POINTER(ctypes.c_double),  # *sd
         ctypes.POINTER(ctypes.c_double),  # *fwhm
         ctypes.POINTER(ctypes.c_double),  # *lfwhm
-        ctypes.c_int,     # verbose
-        ctypes.c_int,     # nThread
-        ctypes.c_int,     # nComp
+        ctypes.c_int,  # verbose
+        ctypes.c_int,  # nThread
+        ctypes.c_int,  # nComp
     ]
-    functions['getStampStats3'].restype = ctypes.c_int
+    functions["getStampStats3"].restype = ctypes.c_int
 
     return functions
 
 
 # Global variable access via ctypes
-def get_global_int(name):
+def get_global_int(name: str) -> int:
     """Get value of integer global variable."""
     lib = get_library()
     var = ctypes.c_int.in_dll(lib, name)
     return var.value
 
 
-def set_global_int(name, value):
+def set_global_int(name: str, value: int) -> None:
     """Set value of integer global variable."""
     lib = get_library()
     var = ctypes.c_int.in_dll(lib, name)
     var.value = value
 
 
-def get_global_float(name):
+def get_global_float(name: str) -> float:
     """Get value of float global variable."""
     lib = get_library()
     var = ctypes.c_float.in_dll(lib, name)
     return var.value
 
 
-def set_global_float(name, value):
+def set_global_float(name: str, value: float) -> None:
     """Set value of float global variable."""
     lib = get_library()
     var = ctypes.c_float.in_dll(lib, name)

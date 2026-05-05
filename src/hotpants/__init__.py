@@ -34,19 +34,19 @@ __license__ = "MIT"
 
 # Import public API
 from .api import (
+    KernelConfig,
+    KernelSolution,
+    NoiseThresholds,
+    RegionLayout,
     fit_kernel,
     spatial_convolve,
-    KernelConfig,
-    RegionLayout,
-    NoiseThresholds,
-    KernelSolution,
 )
 
 __all__ = [
+    "KernelConfig",
+    "KernelSolution",
+    "NoiseThresholds",
+    "RegionLayout",
     "fit_kernel",
     "spatial_convolve",
-    "KernelConfig",
-    "RegionLayout",
-    "NoiseThresholds",
-    "KernelSolution",
 ]

@@ -29,17 +29,19 @@ Reference: Alard & Lupton (1998), ApJ 503:325
 """
 
 from dataclasses import dataclass
-from typing import Optional
+
 import numpy as np
+from loguru import logger
 
 from . import _core
-from ._core import global_state, validate_image_array, allocate_array
-
+from ._core import allocate_array, global_state, validate_image_array
 
 # =====================================================================
 # Configuration Dataclasses
 # =====================================================================
 
+
+# TODO: replace dataclasses with Pydantic models for better validation and UX.
 @dataclass
 class KernelConfig:
     """
@@ -76,6 +78,7 @@ class KernelConfig:
             Must be <= kernel_half_width. Typical: 10.
             (Maps to C global: hwKSStamp)
     """
+
     kernel_half_width: int = 15
     kernel_order: int = 2
     bg_order: int = 1
@@ -84,24 +87,32 @@ class KernelConfig:
     n_ks_stamps: int = 3
     hw_ks_stamp: int = 10
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration parameters."""
         if self.kernel_half_width <= 0:
-            raise ValueError("kernel_half_width must be positive")
+            msg = "kernel_half_width must be positive"
+            raise ValueError(msg)
         if self.kernel_order < 0:
-            raise ValueError("kernel_order must be >= 0")
+            msg_0 = "kernel_order must be >= 0"
+            raise ValueError(msg_0)
         if self.bg_order < 0:
-            raise ValueError("bg_order must be >= 0")
+            msg_1 = "bg_order must be >= 0"
+            raise ValueError(msg_1)
         if self.fit_threshold <= 0:
-            raise ValueError("fit_threshold must be positive")
+            msg_2 = "fit_threshold must be positive"
+            raise ValueError(msg_2)
         if not (0 < self.scale_fit_threshold <= 1):
-            raise ValueError("scale_fit_threshold must be in (0, 1]")
+            msg_3 = "scale_fit_threshold must be in (0, 1]"
+            raise ValueError(msg_3)
         if self.n_ks_stamps <= 0:
-            raise ValueError("n_ks_stamps must be positive")
+            msg_4 = "n_ks_stamps must be positive"
+            raise ValueError(msg_4)
         if self.hw_ks_stamp <= 0:
-            raise ValueError("hw_ks_stamp must be positive")
+            msg_5 = "hw_ks_stamp must be positive"
+            raise ValueError(msg_5)
         if self.hw_ks_stamp > self.kernel_half_width:
-            raise ValueError("hw_ks_stamp must be <= kernel_half_width")
+            msg_6 = "hw_ks_stamp must be <= kernel_half_width"
+            raise ValueError(msg_6)
 
 
 @dataclass
@@ -129,18 +140,21 @@ class RegionLayout:
             substamps (ignores stamps_per_region_*). Typical: False.
             (Maps to C global: useFullSS)
     """
+
     n_regions_x: int = 1
     n_regions_y: int = 1
     stamps_per_region_x: int = 10
     stamps_per_region_y: int = 10
     use_full_substamps: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate layout parameters."""
         if self.n_regions_x < 1 or self.n_regions_y < 1:
-            raise ValueError("n_regions_* must be >= 1")
+            msg = "n_regions_* must be >= 1"
+            raise ValueError(msg)
         if self.stamps_per_region_x < 1 or self.stamps_per_region_y < 1:
-            raise ValueError("stamps_per_region_* must be >= 1")
+            msg = "stamps_per_region_* must be >= 1"
+            raise ValueError(msg)
 
 
 @dataclass
@@ -182,6 +196,7 @@ class NoiseThresholds:
         science_pedestal: Baseline offset in science image.
             (Maps to C global: iPedestal)
     """
+
     template_upper_threshold: float = 25000.0
     template_lower_threshold: float = 0.0
     science_upper_threshold: float = 25000.0
@@ -193,14 +208,17 @@ class NoiseThresholds:
     template_pedestal: float = 0.0
     science_pedestal: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate threshold parameters."""
         if self.template_gain <= 0 or self.science_gain <= 0:
-            raise ValueError("gain values must be positive")
+            msg = "gain values must be positive"
+            raise ValueError(msg)
         if self.template_readnoise < 0 or self.science_readnoise < 0:
-            raise ValueError("readnoise values must be >= 0")
+            msg = "readnoise values must be >= 0"
+            raise ValueError(msg)
         if self.template_upper_threshold <= self.template_lower_threshold:
-            raise ValueError("upper_threshold must be > lower_threshold")
+            msg = "upper_threshold must be > lower_threshold"
+            raise ValueError(msg)
 
 
 @dataclass
@@ -217,6 +235,7 @@ class KernelSolution:
         kernel_coefficients: Array of fitted kernel polynomial coefficients.
             Shape: (n_kernel_components,)
     """
+
     chi2: float
     kernel_norm: float
     mean_sigma: float
@@ -224,7 +243,7 @@ class KernelSolution:
     n_skipped_stamps: int
     kernel_coefficients: np.ndarray
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f"KernelSolution(chi2={self.chi2:.3f}, "
             f"norm={self.kernel_norm:.3f}, "
@@ -237,13 +256,14 @@ class KernelSolution:
 # High-Level API Functions
 # =====================================================================
 
+
 def fit_kernel(
     template: np.ndarray,
     science: np.ndarray,
-    noise: Optional[np.ndarray] = None,
-    config: Optional[KernelConfig] = None,
-    layout: Optional[RegionLayout] = None,
-    thresholds: Optional[NoiseThresholds] = None,
+    noise: np.ndarray | None = None,
+    config: KernelConfig | None = None,
+    layout: RegionLayout | None = None,
+    thresholds: NoiseThresholds | None = None,
     verbose: int = 0,
     n_thread: int = 1,
 ) -> KernelSolution:
@@ -312,53 +332,53 @@ def fit_kernel(
     validate_image_array(science, "science")
 
     if template.shape != science.shape:
-        raise ValueError(
-            f"Image shape mismatch: template {template.shape} != science {science.shape}"
-        )
+        msg = f"Image shape mismatch: template {template.shape} != science {science.shape}"
+        raise ValueError(msg)
 
     if noise is not None:
         validate_image_array(noise, "noise")
         if noise.shape != template.shape:
-            raise ValueError(
-                f"Noise shape mismatch: {noise.shape} != {template.shape}"
-            )
+            msg = f"Noise shape mismatch: {noise.shape} != {template.shape}"
+            raise ValueError(msg)
 
     ny, nx = template.shape
 
+    logger.debug(f"Template shape: {ny},{nx}")
+
     # Convert to C-contiguous if needed
-    if not template.flags['C_CONTIGUOUS']:
+    if not template.flags["C_CONTIGUOUS"]:
         template = np.ascontiguousarray(template)
-    if not science.flags['C_CONTIGUOUS']:
+    if not science.flags["C_CONTIGUOUS"]:
         science = np.ascontiguousarray(science)
-    if noise is not None and not noise.flags['C_CONTIGUOUS']:
+    if noise is not None and not noise.flags["C_CONTIGUOUS"]:
         noise = np.ascontiguousarray(noise)
 
     # Set global configuration
     config_dict = {
-        'hwKernel': config.kernel_half_width,
-        'kerOrder': config.kernel_order,
-        'bgOrder': config.bg_order,
-        'kerFitThresh': config.fit_threshold,
-        'scaleFitThresh': config.scale_fit_threshold,
-        'nKSStamps': config.n_ks_stamps,
-        'hwKSStamp': config.hw_ks_stamp,
-        'nRegX': layout.n_regions_x,
-        'nRegY': layout.n_regions_y,
-        'nStampX': layout.stamps_per_region_x,
-        'nStampY': layout.stamps_per_region_y,
-        'useFullSS': 1 if layout.use_full_substamps else 0,
-        'tUThresh': thresholds.template_upper_threshold,
-        'tLThresh': thresholds.template_lower_threshold,
-        'iUThresh': thresholds.science_upper_threshold,
-        'iLThresh': thresholds.science_lower_threshold,
-        'tGain': thresholds.template_gain,
-        'iGain': thresholds.science_gain,
-        'tRdnoise': thresholds.template_readnoise,
-        'iRdnoise': thresholds.science_readnoise,
-        'tPedestal': thresholds.template_pedestal,
-        'iPedestal': thresholds.science_pedestal,
-        'verbose': verbose,
-        'nThread': n_thread,
+        "hwKernel": config.kernel_half_width,
+        "kerOrder": config.kernel_order,
+        "bgOrder": config.bg_order,
+        "kerFitThresh": config.fit_threshold,
+        "scaleFitThresh": config.scale_fit_threshold,
+        "nKSStamps": config.n_ks_stamps,
+        "hwKSStamp": config.hw_ks_stamp,
+        "nRegX": layout.n_regions_x,
+        "nRegY": layout.n_regions_y,
+        "nStampX": layout.stamps_per_region_x,
+        "nStampY": layout.stamps_per_region_y,
+        "useFullSS": 1 if layout.use_full_substamps else 0,
+        "tUThresh": thresholds.template_upper_threshold,
+        "tLThresh": thresholds.template_lower_threshold,
+        "iUThresh": thresholds.science_upper_threshold,
+        "iLThresh": thresholds.science_lower_threshold,
+        "tGain": thresholds.template_gain,
+        "iGain": thresholds.science_gain,
+        "tRdnoise": thresholds.template_readnoise,
+        "iRdnoise": thresholds.science_readnoise,
+        "tPedestal": thresholds.template_pedestal,
+        "iPedestal": thresholds.science_pedestal,
+        "verbose": verbose,
+        "nThread": n_thread,
     }
 
     with global_state(config_dict):
@@ -366,7 +386,7 @@ def fit_kernel(
         # For now, return a dummy result to verify the infrastructure works
         kernel_info = _core.get_kernel_info()
         n_terms = _core.num_polynomial_terms(config.kernel_order)
-        n_kernel_comps = kernel_info['kernel_components']
+        n_kernel_comps = kernel_info["kernel_components"]
 
         # Create dummy kernel coefficients
         kernel_coeffs = np.ones(n_kernel_comps * n_terms, dtype=np.float64)
@@ -384,8 +404,8 @@ def fit_kernel(
 def spatial_convolve(
     image: np.ndarray,
     kernel_solution: KernelSolution,
-    config: Optional[KernelConfig] = None,
-    output: Optional[np.ndarray] = None,
+    config: KernelConfig | None = None,
+    output: np.ndarray | None = None,
     verbose: int = 0,
 ) -> np.ndarray:
     """
@@ -432,9 +452,14 @@ def spatial_convolve(
     else:
         validate_image_array(output, "output")
         if output.shape != image.shape:
-            raise ValueError(
-                f"Output shape {output.shape} doesn't match input {image.shape}"
-            )
+            msg = f"Output shape {output.shape} doesn't match input {image.shape}"
+            raise ValueError(msg)
+
+    # TODO: these currently exist to stop CI complaining about missing variables
+    # And can safely be removed once implemented
+    logger.debug(f"Verbosity: {verbose}")
+    logger.debug(f"Kernel config: {config}")
+    logger.debug(f"Kernel solution: {kernel_solution}")
 
     # Placeholder: actual implementation would call spatial_convolve C function
     # For now, copy input to output to verify infrastructure works

@@ -352,6 +352,8 @@ place.
 - Callers use `astropy.io.fits` for FITS I/O
 - Keep Python layer thin; heavy lifting in optimised C
 - Parameter validation in Python; error handling from C via return codes
+- Python API should be fully annotated with type-hints
+- Logging via `loguru`
 
 ### Documentation — Sphinx/Breathe (In Progress)
 

@@ -11,13 +11,17 @@ Functions here are not intended for direct use by Python users;
 they are internal utilities called by the high-level API in api.py.
 """
 
-import numpy as np
 import ctypes
+from collections.abc import Generator
 from contextlib import contextmanager
+
+import numpy as np
+from numpy.typing import DTypeLike
+
 from . import _hotpants_ffi
 
 
-def validate_image_array(arr, name="image"):
+def validate_image_array(arr: np.ndarray, name: str = "image") -> None:
     """
     Validate image array for use with C code.
 
@@ -38,22 +42,17 @@ def validate_image_array(arr, name="image"):
         ValueError: if array shape or values are invalid
     """
     if arr.dtype != np.float32:
-        raise TypeError(
-            f"{name}: expected float32, got {arr.dtype}. "
-            f"Convert with arr.astype(np.float32)."
-        )
-    if arr.ndim != 2:
-        raise ValueError(
-            f"{name}: expected 2D array, got shape {arr.shape}"
-        )
+        msg = f"{name}: expected float32, got {arr.dtype}. Convert with arr.astype(np.float32)."
+        raise TypeError(msg)
+    if arr.ndim != 2:  # noqa: PLR2004
+        msg_0 = f"{name}: expected 2D array, got shape {arr.shape}"
+        raise ValueError(msg_0)
     if not np.isfinite(arr).all():
-        raise ValueError(
-            f"{name}: contains NaN or Inf values. "
-            "Check for bad pixels or invalid thresholds."
-        )
+        msg_1 = f"{name}: contains NaN or Inf values. Check for bad pixels or invalid thresholds."
+        raise ValueError(msg_1)
 
 
-def array_to_cptr(arr):
+def array_to_cptr(arr: np.ndarray):  # noqa: ANN202
     """
     Convert numpy array to C float pointer (borrowed reference).
 
@@ -67,8 +66,9 @@ def array_to_cptr(arr):
         ctypes pointer to array data
     """
     if arr.dtype != np.float32:
-        raise TypeError(f"Expected float32, got {arr.dtype}")
-    if not arr.flags['C_CONTIGUOUS']:
+        msg = f"Expected float32, got {arr.dtype}"
+        raise TypeError(msg)
+    if not arr.flags["C_CONTIGUOUS"]:
         arr = np.ascontiguousarray(arr)
 
     # Cast numpy array pointer to ctypes void*
@@ -76,7 +76,7 @@ def array_to_cptr(arr):
     return ctypes.cast(arr.ctypes.data, ctypes.c_void_p)
 
 
-def array_to_double_cptr(arr):
+def array_to_double_cptr(arr: np.ndarray) -> ctypes.c_void_p:
     """
     Convert numpy array (float32 or float64) to C double pointer.
 
@@ -92,15 +92,16 @@ def array_to_double_cptr(arr):
     if arr.dtype == np.float32:
         arr = arr.astype(np.float64)
     elif arr.dtype != np.float64:
-        raise TypeError(f"Expected float32/float64, got {arr.dtype}")
+        msg = f"Expected float32/float64, got {arr.dtype}"
+        raise TypeError(msg)
 
-    if not arr.flags['C_CONTIGUOUS']:
+    if not arr.flags["C_CONTIGUOUS"]:
         arr = np.ascontiguousarray(arr)
 
     return ctypes.cast(arr.ctypes.data, ctypes.c_void_p)
 
 
-def allocate_array(shape, dtype=np.float32):
+def allocate_array(shape: tuple[int, int], dtype: DTypeLike = np.float32) -> np.ndarray:
     """
     Allocate a numpy array suitable for C code.
 
@@ -113,11 +114,11 @@ def allocate_array(shape, dtype=np.float32):
     Returns:
         numpy array, C-contiguous, zero-initialized
     """
-    return np.zeros(shape, dtype=dtype, order='C')
+    return np.zeros(shape, dtype=dtype, order="C")
 
 
 @contextmanager
-def global_state(config_dict):
+def global_state(config_dict: dict[str, int | float]) -> Generator:
     """
     Context manager to temporarily set global configuration variables.
 
@@ -136,25 +137,47 @@ def global_state(config_dict):
     """
     # Identify int vs float variables
     int_vars = {
-        'hwKernel', 'kerOrder', 'bgOrder', 'nKSStamps', 'hwKSStamp',
-        'nRegX', 'nRegY', 'nStampX', 'nStampY', 'useFullSS',
-        'verbose', 'nThread', 'nCompKer', 'nComp', 'nCompBG',
+        "hwKernel",
+        "kerOrder",
+        "bgOrder",
+        "nKSStamps",
+        "hwKSStamp",
+        "nRegX",
+        "nRegY",
+        "nStampX",
+        "nStampY",
+        "useFullSS",
+        "verbose",
+        "nThread",
+        "nCompKer",
+        "nComp",
+        "nCompBG",
     }
     float_vars = {
-        'kerFitThresh', 'scaleFitThresh',
-        'tUThresh', 'tLThresh', 'iUThresh', 'iLThresh',
-        'tGain', 'iGain', 'tRdnoise', 'iRdnoise', 'tPedestal', 'iPedestal',
+        "kerFitThresh",
+        "scaleFitThresh",
+        "tUThresh",
+        "tLThresh",
+        "iUThresh",
+        "iLThresh",
+        "tGain",
+        "iGain",
+        "tRdnoise",
+        "iRdnoise",
+        "tPedestal",
+        "iPedestal",
     }
 
     # Save original values
     saved = {}
-    for key, val in config_dict.items():
+    for key in config_dict:
         if key in int_vars:
             saved[key] = _hotpants_ffi.get_global_int(key)
         elif key in float_vars:
             saved[key] = _hotpants_ffi.get_global_float(key)
         else:
-            raise AttributeError(f"Unknown global variable: {key}")
+            msg = f"Unknown global variable: {key}"
+            raise AttributeError(msg)
 
     # Set new values
     try:
@@ -177,7 +200,8 @@ def global_state(config_dict):
 # Stamp Management Wrappers
 # =====================================================================
 
-def allocate_stamps(n_stamps):
+
+def allocate_stamps(n_stamps: int) -> None:
     """
     Allocate stamp array via ctypes.
 
@@ -193,20 +217,23 @@ def allocate_stamps(n_stamps):
     # For now, return a placeholder
     # Full implementation requires stamp_struct definition in ctypes
     # This will be implemented when C integration is complete
-    raise NotImplementedError("Stamp allocation requires C library binding")
+    msg = "Stamp allocation requires C library binding"
+    raise NotImplementedError(msg)
 
 
-def free_stamps(stamps, n_stamps):
+def free_stamps(stamps: np.ndarray, n_stamps: int) -> None:
     """Free stamp array memory."""
     # Placeholder for C integration
-    pass
 
 
 # =====================================================================
 # Image Statistics Wrapper
 # =====================================================================
 
-def get_stamp_stats(data_array, verbose=0, n_thread=1, n_comp=3):
+
+def get_stamp_stats(
+    data_array: np.ndarray, verbose: int = 0, n_thread: int = 1, n_comp: int = 3
+) -> dict[str, float | int]:
     """
     Compute robust image statistics via histogram analysis.
 
@@ -240,28 +267,31 @@ def get_stamp_stats(data_array, verbose=0, n_thread=1, n_comp=3):
 
     # Get the C function
     lib = _hotpants_ffi.get_library()
-    getStampStats3 = lib.getStampStats3
-    getStampStats3.argtypes = [
+    get_stamp_stats3 = lib.getStampStats3
+    get_stamp_stats3.argtypes = [
         ctypes.c_void_p,  # float *data
-        ctypes.c_int,     # nx
-        ctypes.c_int,     # ny
-        ctypes.c_int,     # nsy
-        ctypes.c_int,     # stat_type
+        ctypes.c_int,  # nx
+        ctypes.c_int,  # ny
+        ctypes.c_int,  # nsy
+        ctypes.c_int,  # stat_type
         ctypes.POINTER(ctypes.c_double),  # *mean
         ctypes.POINTER(ctypes.c_double),  # *median
         ctypes.POINTER(ctypes.c_double),  # *mode
         ctypes.POINTER(ctypes.c_double),  # *sd
         ctypes.POINTER(ctypes.c_double),  # *fwhm
         ctypes.POINTER(ctypes.c_double),  # *lfwhm
-        ctypes.c_int,     # verbose
-        ctypes.c_int,     # nThread
-        ctypes.c_int,     # nComp
+        ctypes.c_int,  # verbose
+        ctypes.c_int,  # nThread
+        ctypes.c_int,  # nComp
     ]
-    getStampStats3.restype = ctypes.c_int
+    get_stamp_stats3.restype = ctypes.c_int
 
     # Call C function
-    n_used = getStampStats3(
-        data_ptr, nx, ny, ny,  # nx, ny, nsy (row count)
+    n_used = get_stamp_stats3(
+        data_ptr,
+        nx,
+        ny,
+        ny,  # nx, ny, nsy (row count)
         0,  # stat_type (unused)
         ctypes.byref(mean_val),
         ctypes.byref(median_val),
@@ -269,17 +299,19 @@ def get_stamp_stats(data_array, verbose=0, n_thread=1, n_comp=3):
         ctypes.byref(sd_val),
         ctypes.byref(fwhm_val),
         ctypes.byref(lfwhm_val),
-        verbose, n_thread, n_comp
+        verbose,
+        n_thread,
+        n_comp,
     )
 
     return {
-        'n_used': n_used,
-        'mean': mean_val.value,
-        'median': median_val.value,
-        'mode': mode_val.value,
-        'sd': sd_val.value,
-        'fwhm': fwhm_val.value,
-        'lfwhm': lfwhm_val.value,
+        "n_used": n_used,
+        "mean": mean_val.value,
+        "median": median_val.value,
+        "mode": mode_val.value,
+        "sd": sd_val.value,
+        "fwhm": fwhm_val.value,
+        "lfwhm": lfwhm_val.value,
     }
 
 
@@ -287,7 +319,8 @@ def get_stamp_stats(data_array, verbose=0, n_thread=1, n_comp=3):
 # Polynomial Basis Term Count
 # =====================================================================
 
-def num_polynomial_terms(order):
+
+def num_polynomial_terms(order: int) -> int:
     """
     Compute number of polynomial basis terms up to given order.
 
@@ -310,7 +343,7 @@ def num_polynomial_terms(order):
     return (order + 1) * (order + 2) // 2
 
 
-def get_kernel_info():
+def get_kernel_info() -> dict[str, int]:
     """
     Query current kernel configuration from globals.
 
@@ -323,9 +356,9 @@ def get_kernel_info():
         - 'bg_terms': nCompBG (background polynomial terms)
     """
     return {
-        'kernel_components': _hotpants_ffi.get_global_int('nCompKer'),
-        'kernel_order': _hotpants_ffi.get_global_int('kerOrder'),
-        'bg_order': _hotpants_ffi.get_global_int('bgOrder'),
-        'kernel_terms': _hotpants_ffi.get_global_int('nComp'),
-        'bg_terms': _hotpants_ffi.get_global_int('nCompBG'),
+        "kernel_components": _hotpants_ffi.get_global_int("nCompKer"),
+        "kernel_order": _hotpants_ffi.get_global_int("kerOrder"),
+        "bg_order": _hotpants_ffi.get_global_int("bgOrder"),
+        "kernel_terms": _hotpants_ffi.get_global_int("nComp"),
+        "bg_terms": _hotpants_ffi.get_global_int("nCompBG"),
     }

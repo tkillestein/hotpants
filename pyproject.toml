@@ -8,8 +8,13 @@ version = "0.0.1"
 description = "High Order Transform of PSF ANd Template Subtraction"
 requires-python = ">=3.11"
 dependencies = [
+    "loguru>=0.7.3",
     "numpy>=1.26",
 ]
+readme = "README.md"
+
+[project.urls]
+Homepage = "https://github.com/tkillestein/hotpants"
 
 [dependency-groups]
 test = [
@@ -26,6 +31,8 @@ docs = [
 dev = [
     "pytest>=8.0",
     "numpy>=1.26",
+    "ruff>=0.15.12",
+    "ty>=0.0.34",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -33,3 +40,18 @@ packages = ["src/hotpants"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+
+[tool.ruff]
+extend-exclude = ["tests", "docs"]
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "ALL"
+]
+ignore = ["D", "COM812", "FBT", "PLR0913", "FIX", "TD"]
+
+
+[tool.ty.src]
+exclude = ["tests"]
