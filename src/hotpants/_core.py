@@ -454,7 +454,7 @@ def build_stamps(
 
     Algorithm:
     1. Divide image into regions (nRegX × nRegY)
-    2. For each region, lay out stamp grid (nStampX × nStampY)
+    2. For each region: extract region data and allocate region buffers
     3. For each stamp, call C buildStamps to identify PSF centers
     4. Compute statistics (mean, median, FWHM) for each stamp
 
@@ -467,7 +467,7 @@ def build_stamps(
     Returns:
         Pointer to allocated stamp array (total: nRegX×nRegY×nStampX×nStampY)
 
-    Reference: Alard & Lupton (1998) Section 2.1; src/main.c lines 919-985
+    Reference: Alard & Lupton (1998) Section 2.1; src/main.c lines 746-985
     """
     validate_image_array(template, "template")
     validate_image_array(science, "science")
@@ -527,39 +527,63 @@ def build_stamps(
         # Get global parameters
         hw_kernel = _hotpants_ffi.get_global_int("hwKernel")
 
-        # Convert images to C pointers
-        sci_ptr = array_to_cptr(science)
-        tpl_ptr = array_to_cptr(template)
-
         # Iterate over regions
         global_stamp_idx = 0
         for region_y in range(n_regions_y):
             for region_x in range(n_regions_x):
-                # Calculate region bounds
+                # Calculate region bounds (integer pixels, not including border)
                 r_x_min = region_x * region_width
                 r_x_max = min((region_x + 1) * region_width - 1, nx - 1)
                 r_y_min = region_y * region_height
                 r_y_max = min((region_y + 1) * region_height - 1, ny - 1)
 
-                # Add kernel border
+                # Add kernel border for edge handling
                 r_x_b_min = max(0, r_x_min - hw_kernel)
                 r_x_b_max = min(nx - 1, r_x_max + hw_kernel)
                 r_y_b_min = max(0, r_y_min - hw_kernel)
                 r_y_b_max = min(ny - 1, r_y_max + hw_kernel)
 
+                # Extract region data from full images (with border)
+                # Note: array indices are [y, x] for [row, col] order
+                region_t_data = (
+                    template[r_y_b_min : r_y_b_max + 1, r_x_b_min : r_x_b_max + 1]
+                    .astype(np.float32)
+                )
+                region_i_data = (
+                    science[r_y_b_min : r_y_b_max + 1, r_x_b_min : r_x_b_max + 1]
+                    .astype(np.float32)
+                )
+
+                # Ensure C-contiguous
+                if not region_t_data.flags["C_CONTIGUOUS"]:
+                    region_t_data = np.ascontiguousarray(region_t_data)
+                if not region_i_data.flags["C_CONTIGUOUS"]:
+                    region_i_data = np.ascontiguousarray(region_i_data)
+
+                # Get region dimensions
+                r_pix_y, r_pix_x = region_t_data.shape
+
+                # Set global region dimensions (required by C buildStamps)
+                _hotpants_ffi.set_global_int("rPixX", r_pix_x)
+                _hotpants_ffi.set_global_int("rPixY", r_pix_y)
+
+                # Convert region data to C pointers
+                region_t_ptr = array_to_cptr(region_t_data)
+                region_i_ptr = array_to_cptr(region_i_data)
+
                 # Iterate over stamps within region
                 for stamp_y in range(stamps_per_region_y):
                     for stamp_x in range(stamps_per_region_x):
-                        # Calculate stamp bounds within region
-                        stamp_width = (r_x_max - r_x_min + 1) // stamps_per_region_x
-                        stamp_height = (r_y_max - r_y_min + 1) // stamps_per_region_y
+                        # Calculate stamp bounds within region border
+                        stamp_width = (r_x_b_max - r_x_b_min + 1) // stamps_per_region_x
+                        stamp_height = (r_y_b_max - r_y_b_min + 1) // stamps_per_region_y
 
-                        s_x_min = r_x_b_min + stamp_x * stamp_width
-                        s_y_min = r_y_b_min + stamp_y * stamp_height
-                        s_x_max = min(s_x_min + stamp_width - 1, r_x_b_max)
-                        s_y_max = min(s_y_min + stamp_height - 1, r_y_b_max)
+                        s_x_min = stamp_x * stamp_width
+                        s_y_min = stamp_y * stamp_height
+                        s_x_max = min(s_x_min + stamp_width - 1, r_pix_x - 1)
+                        s_y_max = min(s_y_min + stamp_height - 1, r_pix_y - 1)
 
-                        # Stamp counters for this call
+                        # Stamp counters for this call (always start at 0)
                         ni_s = ctypes.c_int(0)
                         nt_s = ctypes.c_int(0)
 
@@ -573,12 +597,12 @@ def build_stamps(
                                 ctypes.byref(ni_s),  # *niS
                                 ctypes.byref(nt_s),  # *ntS
                                 1,  # getCenters: automatically find bright centers
-                                r_x_b_min,  # rXBMin
-                                r_y_b_min,  # rYBMin
+                                r_x_b_min,  # rXBMin: region origin in full image
+                                r_y_b_min,  # rYBMin: region origin in full image
                                 ctypes.byref(aux_i_stamps[global_stamp_idx]),  # *ciStamps
                                 ctypes.byref(aux_t_stamps[global_stamp_idx]),  # *ctStamps
-                                sci_ptr,  # float *iRData
-                                tpl_ptr,  # float *tRData
+                                region_i_ptr,  # float *iRData (region-sized)
+                                region_t_ptr,  # float *tRData (region-sized)
                                 0.0,  # hardX
                                 0.0,  # hardY
                             )
