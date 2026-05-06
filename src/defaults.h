@@ -104,7 +104,7 @@
    =====================================================================
    Centralized logging for clean, consistent terminal output.
    All macros respect the global 'verbose' verbosity level:
-     verbose = 0: silent (only errors)
+     verbose = 0: silent (only errors and warnings)
      verbose = 1: progress (major steps, FITS I/O, region processing)
      verbose = 2: debug (detailed diagnostics, stamp processing, kernel fitting)
 
@@ -115,11 +115,14 @@
 #define LOG_ERROR(fmt, ...) \
     do { fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__); } while(0)
 
+#define LOG_WARNING(fmt, ...) \
+    do { fprintf(stderr, "[WARNING] " fmt "\n", ##__VA_ARGS__); } while(0)
+
 #define LOG_PROGRESS(fmt, ...) \
     do { if (verbose >= 1) fprintf(stderr, "[PROGRESS] " fmt "\n", ##__VA_ARGS__); } while(0)
 
 #define LOG_DEBUG(fmt, ...) \
-    do { if (verbose >= 2) fprintf(stderr, "  [DEBUG] " fmt "\n", ##__VA_ARGS__); } while(0)
+    do { if (verbose >= 2) fprintf(stderr, "[DEBUG] " fmt "\n", ##__VA_ARGS__); } while(0)
 
 /* Indented debug output for nested contexts (regions, stamps, etc.) */
 #define LOG_DEBUG_INDENT(indent, fmt, ...) \

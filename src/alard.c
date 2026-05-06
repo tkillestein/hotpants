@@ -89,14 +89,12 @@ int fillStamp(stamp_struct *stamp, float *imConv, float *imRef) {
     halfPixX   = 0.5 * rPixX;
     halfPixY   = 0.5 * rPixY;
 
-    if (verbose >= 1)
-        fprintf(stderr, "    xs  : %4i ys  : %4i sig: %6.3f sscnt: %4i nss: %4i \n",
-                stamp->x, stamp->y, stamp->chi2, stamp->sscnt, stamp->nss);
+    LOG_DEBUG_INDENT(4, "xs  : %4i ys  : %4i sig: %6.3f sscnt: %4i nss: %4i",
+            stamp->x, stamp->y, stamp->chi2, stamp->sscnt, stamp->nss);
     if (stamp->sscnt >= stamp->nss) {
         /* have gone through all the good substamps, reject this stamp */
         /*if (verbose >= 2) fprintf(stderr, "    ******** REJECT stamp (out of substamps)\n");*/
-        if (verbose >= 1)
-            fprintf(stderr, "        Reject stamp\n");
+        LOG_DEBUG_INDENT(4, "Stamp rejected");
         return 1;
     }
 
@@ -483,8 +481,8 @@ static int solve_spd(double **a, int n, double *b) {
         for (matrixRowIdx = 0; matrixRowIdx < n; matrixRowIdx++)
             b[matrixRowIdx + 1] = rhsVector[matrixRowIdx];
     else
-        fprintf(stderr, "WARNING: solve_spd failed (LAPACKE status=%d); "
-                "kernel solution may be unreliable\n", (int)solveStatus);
+        LOG_WARNING("solve_spd failed (LAPACKE status=%d); "
+                "kernel solution may be unreliable", (int)solveStatus);
 
     free(flatMatrix);
     free(rhsVector);
@@ -539,7 +537,7 @@ void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise
 
     mat_size   = ncomp1 * ncomp2 + nbg_vec + 1;
 
-    if (verbose >= 2) fprintf(stderr, " Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i \n",
+    LOG_DEBUG("Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i",
                               mat_size, ncomp2, ncomp1, nbg_vec);
 
     /* allocate fitting matrix */
@@ -554,27 +552,27 @@ void fitKernel(stamp_struct *stamps, float *imRef, float *imConv, float *imNoise
 
 
 
-    if (verbose>=2) fprintf(stderr, " Expanding Matrix For Full Fit\n");
+    LOG_DEBUG("Expanding Matrix For Full Fit");
     build_matrix(stamps, nS, matrix);
     build_scprod(stamps, nS, imRef, kernelSol);
 
     solve_spd(matrix, mat_size, kernelSol);
 
-    if (verbose>=2) fprintf(stderr, " Checking again\n");
+    LOG_DEBUG("Checking again");
     convergedFlag = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps);
 
     while(convergedFlag) {
 
-        fprintf(stderr, "\n Re-Expanding Matrix\n");
+        LOG_PROGRESS("Re-Expanding Matrix");
         build_matrix(stamps, nS, matrix);
         build_scprod(stamps, nS, imRef, kernelSol);
 
         solve_spd(matrix, mat_size, kernelSol);
 
-        fprintf(stderr, " Checking again\n");
+        LOG_PROGRESS("Checking again");
         convergedFlag = check_again(stamps, kernelSol, imConv, imRef, imNoise, meansigSubstamps, scatterSubstamps, NskippedSubstamps);
     }
-    fprintf(stderr, " Sigma clipping of bad stamps converged, kernel determined\n");
+    LOG_PROGRESS("Sigma clipping of bad stamps converged, kernel determined");
 
     for (matrixRowIdx = 0; matrixRowIdx <= mat_size; matrixRowIdx++)
         free(matrix[matrixRowIdx]);
@@ -766,8 +764,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
     nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
     mat_size   = ncomp1 * ncomp2 + nbg_vec + 1;
 
-    if (verbose>=2) fprintf(stderr, " Mat_size0: %i ncomp2: %i ncomp1: %i nbg_vec: %i \n"
-                            , mat_size, ncomp2, ncomp1, nbg_vec);
+    LOG_DEBUG(" Mat_size0: %i ncomp2: %i ncomp1: %i nbg_vec: %i", mat_size, ncomp2, ncomp1, nbg_vec);
 
     /* for inital fit */
     nComps      = nCompKer + 1;
@@ -796,14 +793,14 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
         stamps[stampIdx].norm = sum;
         ks[nks++]      = sum;
 
-        if (verbose >= 2) fprintf(stderr, "    # %d    xss: %4i yss: %4i  ksum: %f\n", stampIdx,
+        LOG_DEBUG_INDENT(4, "# %d    xss: %4i yss: %4i  ksum: %f", stampIdx,
                                   stamps[stampIdx].xss[stamps[stampIdx].sscnt],
                                   stamps[stampIdx].yss[stamps[stampIdx].sscnt], sum);
     }
 
     sigma_clip(ks, nks, &kmean, &kstdev, 10);
 
-    fprintf(stderr, "    %.1f sigma clipped mean ksum : %.3f, stdev : %.3f, n : %i\n",
+    LOG_DEBUG_INDENT(4, "%.1f sigma clipped mean ksum : %.3f, stdev : %.3f, n : %i",
             kerSigReject, kmean, kstdev, nks);
 
     /* so we need some way to reject bad stamps here in the first test,
@@ -843,7 +840,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
                 ntestStamps++;
             }
             else {
-                if (verbose >= 2) fprintf(stderr, "    # %d    skipping xss: %4i yss: %4i ksum: %f sigma: %f\n", stampIdx,
+                LOG_DEBUG_INDENT(4, "# %d    skipping xss: %4i yss: %4i ksum: %f sigma: %f", stampIdx,
                                           stamps[stampIdx].xss[stamps[stampIdx].sscnt],
                                           stamps[stampIdx].yss[stamps[stampIdx].sscnt],
                                           stamps[stampIdx].norm, stamps[stampIdx].diff);
@@ -851,7 +848,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
 
         /* then allocate test stamp structure */
         if(!(testStamps = (stamp_struct *)calloc(ntestStamps, sizeof(stamp_struct)))) {
-            printf("Cannot Allocate Test Stamp List\n");
+            LOG_ERROR("Failed to allocate test stamp list");
             exit (1);
         }
         testKerSol = (double *)calloc((nCompTotal+1), sizeof(double));
@@ -863,7 +860,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
                 testStamps[ntestStamps++] = stamps[stampIdx];
 
         /* finally do fit */
-        if (verbose >= 2) fprintf(stderr, " Expanding Test Matrix For Fit\n");
+        LOG_DEBUG("Expanding Test Matrix For Fit");
         build_matrix(testStamps, ntestStamps, matrix);
         build_scprod(testStamps, ntestStamps, imRef, testKerSol);
         solve_spd(matrix, mat_size, testKerSol);
@@ -924,7 +921,7 @@ double check_stamps(stamp_struct *stamps, int nS, float *imRef, float *imNoise) 
         free(ks);
 
         /* average value of figures of merit across stamps */
-        fprintf(stderr, "    <var_merit> = %.3f, <sd_merit> = %.3f, <hist_merit> = %.3f\n", merit1, merit2, merit3);
+        LOG_PROGRESS("<var_merit> = %.3f, <sd_merit> = %.3f, <hist_merit> = %.3f", merit1, merit2, merit3);
 
         /* return what is asked for if possible, if not use backup */
         if (strncmp(figMerit, "v", 1)==0) {
@@ -1013,7 +1010,7 @@ void build_matrix_new(stamp_struct *stamps, int nS, double **matrix) {
     pixStamp   = fwKSStamp * fwKSStamp;
     
     mat_size = ncomp1 * ncomp2 + nbg_vec + 1;
-    if (verbose >= 2) fprintf(stderr, " Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i \n",mat_size,ncomp2,ncomp1,nbg_vec);
+    LOG_DEBUG("Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i",mat_size,ncomp2,ncomp1,nbg_vec);
     
     for(i = 0; i <= mat_size; i++)
         for(j = 0; j <= mat_size; j++)
@@ -1158,7 +1155,7 @@ void build_matrix(stamp_struct *stamps, int nS, double **matrix) {
     rPixY2   = 0.5 * rPixY;
 
     mat_size = ncomp1 * ncomp2 + nbg_vec + 1;
-    if (verbose >= 2) fprintf(stderr, " Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i \n",mat_size,ncomp2,ncomp1,nbg_vec);
+    LOG_DEBUG(" Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i",mat_size,ncomp2,ncomp1,nbg_vec);
 
     for(matrixRowIdx = 0; matrixRowIdx <= mat_size; matrixRowIdx++)
         for(matrixColIdx = 0; matrixColIdx <= mat_size; matrixColIdx++)
@@ -1552,7 +1549,7 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
                 (strncmp(figMerit, "h", 1)==0 && (sig3 == -1))) {
 
                 /* something went wrong with this one... */
-                if (verbose>=2) fprintf(stderr, "\n    # %d    xss: %4i yss: %4i sig: %6.3f sscnt: %2i nss: %2i ITERATE substamp (BAD)\n",
+                LOG_DEBUG_INDENT(4, "# %d    xss: %4i yss: %4i sig: %6.3f sscnt: %2i nss: %2i ITERATE substamp (BAD)",
                                         stampIdx,
                                         stamps[stampIdx].xss[stamps[stampIdx].sscnt],
                                         stamps[stampIdx].yss[stamps[stampIdx].sscnt],
@@ -1560,7 +1557,6 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
 
                 stamps[stampIdx].sscnt++;
                 fillStamp(&stamps[stampIdx], imConv, imRef);
-                if (verbose>=2) fprintf(stderr, "\n");
 
                 needsReiteration = 1;
 
@@ -1572,7 +1568,7 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
                 else if (strncmp(figMerit, "h", 1)==0)
                     qualityMetric = sig3;
 
-                if (verbose>=2) fprintf(stderr, "    # %d    xss: %4i yss: %4i sig: %6.3f sscnt: %2i nss: %2i OK\n",
+                LOG_DEBUG_INDENT(4, "# %d    xss: %4i yss: %4i sig: %6.3f sscnt: %2i nss: %2i OK",
                                         stampIdx,
                                         stamps[stampIdx].xss[stamps[stampIdx].sscnt],
                                         stamps[stampIdx].yss[stamps[stampIdx].sscnt],
@@ -1584,13 +1580,13 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
             }
         } else {
             (*NskippedSubstamps)++;
-            if (verbose>=2) fprintf(stderr, "    xs : %4i ys : %4i skipping... \n",stamps[stampIdx].x, stamps[stampIdx].y);
+            LOG_DEBUG_INDENT(4, "xs : %4i ys : %4i skipping...",stamps[stampIdx].x, stamps[stampIdx].y);
         }
     }
 
     sigma_clip(qualityMetrics, validStampCount, &mean, &stdev, 10);
-    fprintf(stderr, "    Mean sig: %6.3f stdev: %6.3f\n", mean, stdev);
-    fprintf(stderr, "    Iterating through stamps with sig > %.3f\n", mean + kerSigReject * stdev);
+    LOG_PROGRESS("Mean sig: %6.3f stdev: %6.3f", mean, stdev);
+    LOG_PROGRESS("Iterating through stamps with sig > %.3f", mean + kerSigReject * stdev);
 
     /* save the mean and scatter so that it can be saved in the fits header */
     (*meansigSubstamps)=mean;
@@ -1603,7 +1599,7 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
 
             /* no fabs() here, keep good stamps kerSigReject on the low side! */
             if ((stamps[stampIdx].chi2 - mean) > kerSigReject * stdev) {
-                if (verbose>=2) fprintf(stderr, "\n    # %d    xss: %4i yss: %4i sig: %6.3f sscnt: %2i nss: %2i ITERATE substamp (poor sig)\n",
+                LOG_DEBUG_INDENT(4, "# %d    xss: %4i yss: %4i sig: %6.3f sscnt: %2i nss: %2i ITERATE substamp (poor sig)",
                                         stampIdx,
                                         stamps[stampIdx].xss[stamps[stampIdx].sscnt],
                                         stamps[stampIdx].yss[stamps[stampIdx].sscnt],
@@ -1612,7 +1608,6 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
 
                 stamps[stampIdx].sscnt++;
                 goodStampCount += (!(fillStamp(&stamps[stampIdx], imConv, imRef)));
-                if (verbose>=2) fprintf(stderr, "\n");
 
                 needsReiteration = 1;
             }
@@ -1621,7 +1616,7 @@ char check_again(stamp_struct *stamps, double *kernelSol, float *imConv, float *
         }
     }
 
-    fprintf(stderr, "    %d out of %d stamps remain\n", goodStampCount, nS);
+    LOG_PROGRESS("%d out of %d stamps remain", goodStampCount, nS);
 
     free(qualityMetrics);
     return needsReiteration;
@@ -1757,7 +1752,7 @@ static void spatial_convolve_fft(float *image, float **variance,
     if (dovar) {
         vData = (float *)calloc((size_t)xSize * ySize, sizeof(float));
         if (!vData) {
-            fprintf(stderr, "spatial_convolve_fft: out of memory (vData)\n");
+            LOG_ERROR("Spatial_convolve_fft: out of memory (vData)");
             return;
         }
     }
@@ -1773,19 +1768,19 @@ static void spatial_convolve_fft(float *image, float **variance,
     effKernel = (double *)malloc((size_t)fwKernel * fwKernel * sizeof(double));
 
     if (!real_buf || !img_fft || !ker_fft || !effKernel) {
-        fprintf(stderr, "spatial_convolve_fft: out of memory (FFT buffers)\n");
+        LOG_ERROR("spatial_convolve_fft: out of memory (FFT buffers)");
         goto cleanup_fft;
     }
 
     effConv = (float **)calloc((size_t)nEffConv, sizeof(float *));
     if (!effConv) {
-        fprintf(stderr, "spatial_convolve_fft: out of memory (effConv)\n");
+        LOG_ERROR("spatial_convolve_fft: out of memory (effConv)");
         goto cleanup_fft;
     }
     for (i = 0; i < nEffConv; i++) {
         effConv[i] = (float *)malloc((size_t)xSize * ySize * sizeof(float));
         if (!effConv[i]) {
-            fprintf(stderr, "spatial_convolve_fft: out of memory (effConv[%d])\n", i);
+            LOG_ERROR("spatial_convolve_fft: out of memory (effConv[%d])", i);
             goto cleanup_fft;
         }
     }
@@ -1802,7 +1797,7 @@ static void spatial_convolve_fft(float *image, float **variance,
                                          ker_fft, real_buf, FFTW_ESTIMATE);
     }
     if (!plan_fwd || !plan_inv) {
-        fprintf(stderr, "spatial_convolve_fft: FFTW plan creation failed\n");
+        LOG_ERROR("spatial_convolve_fft: FFTW plan creation failed");
         goto cleanup_fft;
     }
 
@@ -1927,7 +1922,7 @@ static void spatial_convolve_fft(float *image, float **variance,
     lkernel        = (double *)calloc((size_t)fwKernel * fwKernel, sizeof(double));
     lkernel_coeffs = (double *)calloc((size_t)nCompKer,             sizeof(double));
     if (!lkernel || !lkernel_coeffs) {
-        fprintf(stderr, "spatial_convolve_fft: out of memory (mask loop)\n");
+        LOG_ERROR("spatial_convolve_fft: out of memory (mask loop)");
         goto cleanup_fft;
     }
 

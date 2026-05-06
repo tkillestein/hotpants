@@ -39,7 +39,7 @@ void loadxyfile(char *filename, int cmpfileflag){
     int Nalloc,c;
     char line[SCRLEN];
     xyfile   = fopen(filename, "r");
-    fprintf(stderr, "WARNING : INPUT FORMAT HARDCODED : X=1, Y=2; 1-indexed coordinates\n");
+    LOG_WARNING("Input format hardcoded: X=1, Y=2; 1-indexed coordinates");
     if (cmpfileflag) {
         for (;;){
             c=getc(xyfile);
@@ -248,8 +248,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
     float *refArea=NULL;
     double check;
     
-    if (verbose >= 1)
-        fprintf(stderr, "    Stamp in region : %d:%d,%d:%d\n",
+    LOG_DEBUG("Stamp in region: %d:%d,%d:%d",
                 sXMin, sXMax, sYMin, sYMax);
     
     /* global vars */
@@ -270,8 +269,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
                                    &ctStamps[*ntS].mode, &ctStamps[*ntS].sd, &ctStamps[*ntS].fwhm,
                                    &ctStamps[*ntS].lfwhm, 0x0, 0xffff, 3))) {
                 /* pointless */
-                if (verbose >= 1)
-                    fprintf(stderr, "    Tmpl  xs : %4i ys : %4i  (sky,dsky = %.1f,%.1f)\n",
+                LOG_PROGRESS("Template xs : %4i ys : %4i  (sky,dsky = %.1f,%.1f)",
                             ctStamps[*ntS].x, ctStamps[*ntS].y, ctStamps[*ntS].mode, ctStamps[*ntS].fwhm);
             }
             free(refArea);
@@ -294,8 +292,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
                 
                 /* pointless */
                 /* buildSigMask(&ciStamps[*niS], sPixX, sPixY, misRData); */
-                if (verbose >= 1)
-                    fprintf(stderr, "    Image xs : %4i ys : %4i  (sky,dsky = %.1f,%.1f)\n",
+                LOG_PROGRESS("Image xs : %4i ys : %4i  (sky,dsky = %.1f,%.1f)",
                             ciStamps[*niS].x, ciStamps[*niS].y, ciStamps[*niS].mode, ciStamps[*niS].fwhm);
             }
             free(refArea);
@@ -307,8 +304,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
         if (getCenters) {
             /* get potential centers for the kernel fit */
             getPsfCenters(&ctStamps[*ntS], tRData, sPixX, sPixY, tUKThresh, bbitt1, bbitt2);
-            if (verbose >= 1)
-                fprintf(stderr, "    Tmpl     : scnt = %2i nss = %2i\n",
+            LOG_PROGRESS("Template: scnt = %2i nss = %2i",
                         ctStamps[*ntS].sscnt, ctStamps[*ntS].nss);
             
         } else {
@@ -349,7 +345,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
                     ctStamps[*ntS].xss[nss] = xmax;
                     ctStamps[*ntS].yss[nss] = ymax;	    
                     ctStamps[*ntS].nss += 1;
-                    if (verbose >= 2) fprintf(stderr,"     #%d @ %4d,%4d\n", nss, xmax, ymax);
+                    LOG_DEBUG_INDENT(4, "#%d @ %4d,%4d", nss, xmax, ymax);
                 }
             }
         }
@@ -361,8 +357,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
         if (getCenters) {
             /* get potential centers for the kernel fit */
             getPsfCenters(&ciStamps[*niS], iRData, sPixX, sPixY, iUKThresh, bbiti1, bbiti2);
-            if (verbose >= 1)
-                fprintf(stderr, "    Image    : scnt = %2i nss = %2i\n",
+            LOG_PROGRESS("Image: scnt = %2i nss = %2i",
                         ciStamps[*niS].sscnt, ciStamps[*niS].nss);
         } else {
             /* don't increment niS inside subroutine, BUT MAKE SURE YOU DO IT OUTSIDE! */
@@ -402,7 +397,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int *niS, int *ntS,
                     ciStamps[*niS].xss[nss] = xmax;
                     ciStamps[*niS].yss[nss] = ymax;	    
                     ciStamps[*niS].nss += 1;
-                    if (verbose >= 2) fprintf(stderr,"     #%d @ %4d,%4d\n", nss, xmax, ymax);
+                    LOG_DEBUG_INDENT(4, "#%d @ %4d,%4d", nss, xmax, ymax);
                     
                 }
             }
@@ -493,19 +488,18 @@ int cutSStamp(stamp_struct *stamp, float *iData) {
     /* have gone through all the good substamps, reject this stamp */
     if (sscnt >= nss) {
         if (verbose >= 2)
-            fprintf(stderr, "    xs : %4i ys : %4i sig: %6.3f sscnt: %4i nss: %4i ******** REJECT stamp (out of substamps)\n",
+        /* This technically duplicates the verbosity check, but it'll all come out in the compiler */
+            LOG_DEBUG_INDENT(4, "xs : %4i ys : %4i sig: %6.3f sscnt: %4i nss: %4i ******** REJECT stamp (out of substamps)",
                     stamp->x, stamp->y, stamp->chi2, sscnt, nss);
-        else
-            if (verbose >= 1)
-                fprintf(stderr, "        Reject stamp\n");
+    else
+        LOG_PROGRESS("Stamp rejected");
         return 1;
     }
     /*
       fprintf(stderr, "    xs : %4i ys : %4i substamp (sscnt=%d, nss=%d) xss: %4i yss: %4i\n",
       stamp->x, stamp->y, sscnt, nss, stamp->xss[sscnt], stamp->yss[sscnt]);
     */
-    if (verbose >= 1)
-        fprintf(stderr, "    xss : %4i yss : %4i\n", stamp->xss[sscnt], stamp->yss[sscnt]);
+    LOG_DEBUG_INDENT(4, "xss: %4i yss: %4i", stamp->xss[sscnt], stamp->yss[sscnt]);
     
     for (substampRow = yStamp - hwKSStamp; substampRow <= yStamp + hwKSStamp; substampRow++) {
         y  = substampRow - (yStamp - hwKSStamp);
@@ -517,7 +511,7 @@ int cutSStamp(stamp_struct *stamp, float *iData) {
             k   = substampCol+stamp->x0 + rPixX*dy;
             dpt = iData[k];
 
-            stamp->krefArea[x+y*fwKSStamp] = dpt;
+            stamp -> krefArea[x+y*fwKSStamp] = dpt;
             sum += (mRData[k] & FLAG_INPUT_ISBAD) ? 0 : fabs(dpt);
         }
     }
@@ -653,7 +647,7 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
     float dfrac = 0.9;
     
     if (stamp->nss >= nKSStamps) {
-        fprintf(stderr,"    no need for automatic substamp search...\n");
+        LOG_PROGRESS("no need for automatic substamp search...");
         return(0);
     }
     
@@ -814,10 +808,10 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
     }
     
     if (pcnt+stamp->nss < nKSStamps) {
-        if (verbose >= 2) fprintf(stderr, "    ...only found %d good substamps by autosearch\n", pcnt);
+        LOG_DEBUG_INDENT(4, "...only found %d good substamps by autosearch", pcnt);
     }
     else {
-        if (verbose >= 2) fprintf(stderr, "    ...found %d good substamps by autosearch\n", pcnt);
+        LOG_DEBUG_INDENT(4, "...found %d good substamps by autosearch", pcnt);
     }
     
     /* coords are in region's pixels */
@@ -825,7 +819,7 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
     /* no good full stamps */
     if (pcnt == 0) {
         /* changed in v4.1.6, don't accept center pixel, could be bad, worse than not having one! */
-        if (verbose >= 2) fprintf(stderr, "    NO good pixels, skipping...\n");
+        LOG_DEBUG_INDENT(4, "No good pixels, skipping...");
         
         free(qs);
         free(xloc);
@@ -835,11 +829,11 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int xLen, int yLen, double 
     }
     else {
         quick_sort (peaks, qs, pcnt);
-        if (verbose >= 2) fprintf(stderr, "    Adding %d substamps found by autosearch\n", imin(pcnt, nKSStamps-stamp->nss));
+        LOG_DEBUG_INDENT(4, "Adding %d substamps found by autosearch", imin(pcnt, nKSStamps-stamp->nss));
         for (i = stamp->nss, j = 0; j < pcnt && i < nKSStamps; i++,j++) {
             stamp->xss[i] = xloc[qs[pcnt-j-1]] + sx0;
             stamp->yss[i] = yloc[qs[pcnt-j-1]] + sy0;
-            if (verbose >= 2) fprintf(stderr,"     #%d @ %4d,%4d,%8.1f\n", i, stamp->xss[i], stamp->yss[i], peaks[qs[pcnt-j-1]]); 
+            LOG_DEBUG_INDENT(4, "#%d @ %4d,%4d,%8.1f", i, stamp->xss[i], stamp->yss[i], peaks[qs[pcnt-j-1]]);
             stamp->nss++;
         }
     }
@@ -1508,7 +1502,7 @@ void getKernelInfo(char *kimage) {
     
     if (!(existsTable)) {
         fits_close_file(kPtr, &status);
-        fprintf(stderr, "This image does not appear to contain a kernel table, exiting...\n");
+        LOG_ERROR("This image does not appear to contain a kernel table, exiting...");
         exit(1);
     }
     
@@ -1605,7 +1599,7 @@ void readKernel(char *kimage, int nRegion, double **tKerSol, double **iKerSol,
     
     /* get extent of region */
     if (sscanf(hInfo, "[%d:%d,%d:%d]", rXMin, rXMax, rYMin, rYMax) != 4) {
-        fprintf(stderr, "Problem with region %d (%s), exiting...\n", nRegion, hInfo);
+        LOG_ERROR("Problem with region %d (%s), exiting...", nRegion, hInfo);
         exit(1);
     }
     /* fits indexing starts at 1, code at 0 */
