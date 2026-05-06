@@ -99,6 +99,43 @@ The choice of convolution direction depends on your PSF sizes:
 
 See [CLAUDE.md](CLAUDE.md) for algorithm details and performance tuning.
 
+### Python API (In Development)
+
+```python
+import numpy as np
+from hotpants import fit_kernel, spatial_convolve, KernelConfig
+
+# Load images (numpy arrays, float32)
+template = np.load('template.npy').astype(np.float32)
+science = np.load('science.npy').astype(np.float32)
+
+# Configure kernel fitting
+config = KernelConfig(
+    kernel_half_width=15,  # kernel region size
+    kernel_order=2,        # spatial polynomial order
+    fit_threshold=20.0,    # sigma threshold for stamps
+)
+
+# Fit kernel
+kernel_solution = fit_kernel(template, science, config=config)
+print(f"Fitted kernel chi2: {kernel_solution.chi2:.3f}")
+print(f"Kernel integral: {kernel_solution.kernel_norm:.3f}")
+
+# Apply kernel to create difference image
+difference = spatial_convolve(science, kernel_solution)
+
+# Save result
+np.save('difference.npy', difference)
+```
+
+**Note:** The Python API requires the C library to be built first:
+```bash
+cmake -B build && cmake --build build
+export LD_LIBRARY_PATH=$PWD/build:$LD_LIBRARY_PATH
+```
+
+The Python API is in active development. See [CLAUDE.md](CLAUDE.md) § Python API for details.
+
 ---
 
 ## Output

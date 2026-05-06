@@ -38,8 +38,9 @@ License: MIT (Andy Becker, 2013). See `LICENSE`.
 
 **In progress:**
 
-- ⧉ Python CFFI bindings (wrapper code)
-- ⧉ End-to-end integration tests
+- ⧉ Python ctypes bindings — Phase 1 complete (struct def, function bindings, high-level API; unit tests pass)
+- ⧉ End-to-end integration tests with real C library (skipped; infrastructure in place)
+- ⧉ Build system integration (wheel packaging with CMake)
 - ⧉ CONTRIBUTING.md guide
 
 ---
