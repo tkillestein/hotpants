@@ -31,6 +31,7 @@ add_library(hotpants SHARED
     src/allocate.c
     src/alard.c
     src/functions.c
+    src/hotpants_wrapper.c
 )
 
 target_include_directories(hotpants PUBLIC

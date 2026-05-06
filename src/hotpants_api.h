@@ -241,4 +241,58 @@ extern int nCompBG;  /* number of background polynomial terms (computed) */
 extern int verbose; /* verbosity level (0=silent, 1=progress, 2=debug) */
 extern int nThread; /* number of OpenMP threads */
 
+/* =====================================================================
+ * Wrapper Functions for Python Integration
+ * =====================================================================
+ * These functions manage global state and provide a clean interface
+ * for calling core algorithms from Python without exposing C complexity.
+ */
+
+/*
+ * Initialize buildStamps context for a complete image.
+ *
+ * Sets up global state and allocates region-level data structures needed
+ * for stamp building. Call this once before processing regions.
+ *
+ * Args:
+ *   template: template image (float*, ny×nx)
+ *   science: science image (float*, ny×nx)
+ *   ny, nx: image dimensions
+ *   n_regions_x, n_regions_y: number of regions per axis
+ *   stamps_per_region_x, stamps_per_region_y: stamps per region per axis
+ *
+ * Returns:
+ *   0 on success, -1 on allocation failure
+ */
+int initBuildStampsContext(float* template, float* science,
+                           int ny, int nx,
+                           int n_regions_x, int n_regions_y,
+                           int stamps_per_region_x, int stamps_per_region_y);
+
+/*
+ * Build stamps for a single region with proper global state management.
+ *
+ * Handles stamp extraction, statistics computation, and PSF center detection
+ * for all stamps within a region. Properly manages mask arrays and global
+ * state required by buildStamps().
+ *
+ * Args:
+ *   region_x, region_y: region coordinates (0-indexed)
+ *   stamps: output array of stamp_struct for this region
+ *   n_stamps: number of stamps expected in this region
+ *
+ * Returns:
+ *   Number of stamps successfully built, -1 on error
+ */
+int buildStampsRegion(int region_x, int region_y,
+                      stamp_struct* stamps, int n_stamps);
+
+/*
+ * Clean up buildStamps context and free allocated memory.
+ *
+ * Call this after processing all regions to free temporary buffers
+ * and restore global state.
+ */
+void cleanupBuildStampsContext(void);
+
 #endif /* HOTPANTS_API_H */

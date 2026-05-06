@@ -197,6 +197,39 @@ def get_hotpants_library_functions() -> dict[str, object]:
     ]
     functions["spatial_convolve"].restype = None
 
+    # Wrapper functions for buildStamps context management
+    # int initBuildStampsContext(float* template, float* science,
+    #                            int ny, int nx, int n_regions_x, int n_regions_y,
+    #                            int stamps_per_region_x, int stamps_per_region_y)
+    functions["initBuildStampsContext"] = lib.initBuildStampsContext
+    functions["initBuildStampsContext"].argtypes = [
+        ctypes.c_void_p,  # float *template
+        ctypes.c_void_p,  # float *science
+        ctypes.c_int,  # ny
+        ctypes.c_int,  # nx
+        ctypes.c_int,  # n_regions_x
+        ctypes.c_int,  # n_regions_y
+        ctypes.c_int,  # stamps_per_region_x
+        ctypes.c_int,  # stamps_per_region_y
+    ]
+    functions["initBuildStampsContext"].restype = ctypes.c_int
+
+    # int buildStampsRegion(int region_x, int region_y,
+    #                       stamp_struct* stamps, int n_stamps)
+    functions["buildStampsRegion"] = lib.buildStampsRegion
+    functions["buildStampsRegion"].argtypes = [
+        ctypes.c_int,  # region_x
+        ctypes.c_int,  # region_y
+        ctypes.c_void_p,  # stamp_struct *stamps
+        ctypes.c_int,  # n_stamps
+    ]
+    functions["buildStampsRegion"].restype = ctypes.c_int
+
+    # void cleanupBuildStampsContext(void)
+    functions["cleanupBuildStampsContext"] = lib.cleanupBuildStampsContext
+    functions["cleanupBuildStampsContext"].argtypes = []
+    functions["cleanupBuildStampsContext"].restype = None
+
     return functions
 
 

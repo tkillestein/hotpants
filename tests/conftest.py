@@ -238,6 +238,13 @@ def mock_hotpants_library(monkeypatch, request):
     mock_lib.buildStamps.return_value = None
     # freeStampMem returns void (None)
     mock_lib.freeStampMem.return_value = None
+    # Wrapper functions
+    # initBuildStampsContext should return 0 (success)
+    mock_lib.initBuildStampsContext.return_value = 0
+    # buildStampsRegion should return number of stamps built
+    mock_lib.buildStampsRegion.return_value = 100
+    # cleanupBuildStampsContext returns void (None)
+    mock_lib.cleanupBuildStampsContext.return_value = None
 
     # Patch the library loading and global variable functions
     monkeypatch.setattr(_hotpants_ffi, 'get_library', lambda: mock_lib)
