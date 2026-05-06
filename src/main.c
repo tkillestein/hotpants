@@ -1,9 +1,9 @@
-#include <ctype.h>
-#include <fitsio.h>
-#include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <stdlib.h>
+#include <fitsio.h>
+#include <ctype.h>
 #include <time.h>
 #include <unistd.h>
 #ifdef _OPENMP
@@ -12,8 +12,8 @@
 
 #include "defaults.h"
 #define HOTPANTS_DEFINE_GLOBALS
-#include "functions.h"
 #include "globals.h"
+#include "functions.h"
 
 int main(int argc, char* argv[]) {
   int i, j, k, l, m;                         /* generic indices */

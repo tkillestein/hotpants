@@ -1,9 +1,9 @@
 #include <assert.h>
-#include <fitsio.h>
-#include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <stdlib.h>
+#include <fitsio.h>
 
 #define D_FILLVAL 0
 #define D_MASK 0x8000

@@ -1,16 +1,16 @@
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include <stdlib.h>
 #include <fitsio.h>
 #include <lapacke.h>
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #ifdef USE_FFTW
 #include <fftw3.h>
 #endif
 
 #include "defaults.h"
-#include "functions.h"
 #include "globals.h"
+#include "functions.h"
 
 /*
 

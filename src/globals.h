@@ -123,7 +123,7 @@ EXTERN int* mRData; /* bad input data mask */
 #endif
 
 /* armin */
-/* a dummy variable to do some testing */
+/* a dummy varialbe to do some testing */
 EXTERN int dummy;
 /* verbose for debugging */
 EXTERN int verbose;

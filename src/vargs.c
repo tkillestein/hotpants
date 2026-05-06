@@ -1,11 +1,11 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "defaults.h"
-#include "fitsio.h"
-#include "functions.h"
 #include "globals.h"
+#include "functions.h"
+#include "fitsio.h"
 
 /*
 

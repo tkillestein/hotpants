@@ -1,14 +1,13 @@
-#include "functions.h"
-
-#include <ctype.h>
-#include <fitsio.h>
-#include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <stdlib.h>
+#include <fitsio.h>
+#include <ctype.h>
 
 #include "defaults.h"
 #include "globals.h"
+#include "functions.h"
 
 /*
 
