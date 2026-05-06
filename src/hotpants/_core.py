@@ -527,6 +527,28 @@ def build_stamps(
         # Get global parameters
         hw_kernel = _hotpants_ffi.get_global_int("hwKernel")
 
+        # Set required C globals for buildStamps
+        # These are used internally by the C buildStamps function
+        _hotpants_ffi.set_global_int("nKSStamps", 3)  # number of kernel test substamps
+        _hotpants_ffi.set_global_int("hwKSStamp", 15)  # half size of kernel substamp
+        _hotpants_ffi.set_global_float("tUKThresh", _hotpants_ffi.get_global_float("tUThresh"))
+
+        # Calculate fwKernel and fwStamp (kernel and stamp frame widths)
+        # fwKernel = hwKernel * 2 + 1 (full width of kernel)
+        # fwStamp = calculated based on image size and stamp grid
+        fw_kernel = hw_kernel * 2 + 1
+        _hotpants_ffi.set_global_int("fwKernel", fw_kernel)
+
+        # fwStamp is calculated based on stamp size within each region
+        # For simplicity, use fw_kernel as minimum stamp size
+        _hotpants_ffi.set_global_int("fwStamp", fw_kernel + 10)  # add some margin
+
+        # forceConvolve: process both images ("b"), template only ("t"), or science only ("i")
+        # Store in a way C code can access - this requires a special handling
+        # For now, set a reasonable default via a wrapper if needed
+        # Note: forceConvolve is a char* pointer, so we can't set it directly
+        # Instead, the C code should check the images and handle both
+
         # Iterate over regions
         global_stamp_idx = 0
         for region_y in range(n_regions_y):
