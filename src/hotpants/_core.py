@@ -619,7 +619,6 @@ def build_stamps(
         for region_y in range(n_regions_y):
             for region_x in range(n_regions_x):
                 region_start_idx = global_stamp_idx
-                logger.debug(f"Processing region ({region_x}, {region_y}), stamps {region_start_idx} to end")
 
                 # Get region boundaries in full image coordinates
                 r_x_min = region_x * region_width
@@ -697,9 +696,7 @@ def build_stamps(
                 # are still valid (mirrors main.c lines 1099-1119: fillStamp loop).
                 region_count = global_stamp_idx - region_start_idx
                 region_stamps_ptr = ctypes.addressof(stamps[region_start_idx])
-                logger.debug(f"Calling fillStampsForRegion with {region_count} stamps, ptr={region_stamps_ptr}")
                 ret = fill_region(region_stamps_ptr, region_count)
-                logger.debug(f"fillStampsForRegion returned {ret}")
                 if ret != 0:
                     msg = f"fillStampsForRegion failed for region ({region_x}, {region_y})"
                     raise RuntimeError(msg)
@@ -779,40 +776,9 @@ def fit_kernel_c(
     # Get address of stamp array pointer (c_void_p because argtypes specifies c_void_p)
     logger.debug(f"fit_kernel_c: stamps type={type(stamps)}, len={len(stamps)}")
 
-    # Validate stamp contents
-    valid_count = 0
-    for i in range(min(5, len(stamps))):  # Check first 5 stamps
-        nss = stamps[i].nss
-        sscnt = stamps[i].sscnt
-        vectors = stamps[i].vectors
-        mat = stamps[i].mat
-        scprod = stamps[i].scprod
-        xss = stamps[i].xss
-        yss = stamps[i].yss
-        logger.debug(
-            f"fit_kernel_c: stamps[{i}] nss={nss} sscnt={sscnt} xss={xss} yss={yss} vectors={vectors} mat={mat} scprod={scprod}"
-        )
-        if xss and yss:
-            try:
-                logger.debug(f"  xss[0]={xss[0]} yss[0]={yss[0]}")
-            except Exception as e:
-                logger.debug(f"  ERROR accessing xss/yss: {e}")
-        if nss > 0:
-            valid_count += 1
-
-    logger.debug(f"fit_kernel_c: found {valid_count} valid stamps in first 5")
-
-    # Use addressof to get the address of the array, then wrap in c_void_p
+    # Use addressof to get the address of the array
     stamps_addr = ctypes.addressof(stamps)
     stamps_ptr = ctypes.c_void_p(stamps_addr)
-    logger.debug(f"fit_kernel_c: stamps_addr={stamps_addr}, stamps_ptr={stamps_ptr.value}")
-
-    # Check globals
-    ncompker = _hotpants_ffi.get_global_int("nCompKer")
-    nc = _hotpants_ffi.get_global_int("nC")
-    ns = _hotpants_ffi.get_global_int("nS")
-    logger.debug(f"fit_kernel_c: nCompKer={ncompker}, nC={nc}, nS={ns}")
-    logger.debug(f"fit_kernel_c: calling fitKernel with n_coeffs={n_coeffs}")
     # Note: fitKernel signature is (stamps, imRef, imConv, imNoise, ...)
     # where imRef is the reference/target image and imConv is the image to be convolved.
     # In our case, we fit the kernel to convolve the template to match the science,
