@@ -196,9 +196,11 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "astropy" },
     { name = "numpy" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "scipy" },
     { name = "ty" },
 ]
 docs = [
@@ -222,9 +224,11 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "astropy", specifier = ">=6.0" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.15.12" },
+    { name = "scipy", specifier = ">=1.13" },
     { name = "ty", specifier = ">=0.0.34" },
 ]
 docs = [

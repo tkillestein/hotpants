@@ -109,6 +109,45 @@ def get_hotpants_library_functions() -> dict[str, object]:
     functions["freeStampMem"].argtypes = [ctypes.c_void_p, ctypes.c_int]
     functions["freeStampMem"].restype = None
 
+    # void buildStamps(int sXMin, sXMax, sYMin, sYMax, int *rPixX, *rPixY,
+    #                  int nStampX, nStampY, hwKSStamp,
+    #                  stamp_struct *stamps, *tStamps, *iStamps,
+    #                  float *iData, *tData, tUThresh, tLThresh)
+    functions["buildStamps"] = lib.buildStamps
+    functions["buildStamps"].argtypes = [
+        ctypes.c_int,  # sXMin
+        ctypes.c_int,  # sXMax
+        ctypes.c_int,  # sYMin
+        ctypes.c_int,  # sYMax
+        ctypes.c_void_p,  # int *rPixX
+        ctypes.c_void_p,  # int *rPixY
+        ctypes.c_int,  # nStampX
+        ctypes.c_int,  # nStampY
+        ctypes.c_int,  # hwKSStamp
+        ctypes.c_void_p,  # stamp_struct *stamps
+        ctypes.c_void_p,  # stamp_struct *tStamps
+        ctypes.c_void_p,  # stamp_struct *iStamps
+        ctypes.c_void_p,  # float *iData
+        ctypes.c_void_p,  # float *tData
+        ctypes.c_float,  # tUThresh
+        ctypes.c_float,  # tLThresh
+    ]
+    functions["buildStamps"].restype = None
+
+    # int getPsfCenters(stamp_struct *stamp, float *iData, int nsx, nsy,
+    #                   double smin, int nKSStamps, nKSEdge)
+    functions["getPsfCenters"] = lib.getPsfCenters
+    functions["getPsfCenters"].argtypes = [
+        ctypes.c_void_p,  # stamp_struct *stamp
+        ctypes.c_void_p,  # float *iData
+        ctypes.c_int,  # nsx
+        ctypes.c_int,  # nsy
+        ctypes.c_double,  # smin
+        ctypes.c_int,  # nKSStamps
+        ctypes.c_int,  # nKSEdge
+    ]
+    functions["getPsfCenters"].restype = ctypes.c_int
+
     # int getStampStats3(...)
     functions["getStampStats3"] = lib.getStampStats3
     functions["getStampStats3"].argtypes = [
@@ -128,6 +167,35 @@ def get_hotpants_library_functions() -> dict[str, object]:
         ctypes.c_int,  # nComp
     ]
     functions["getStampStats3"].restype = ctypes.c_int
+
+    # void fitKernel(stamp_struct *stamps, float *imRef, *imConv, *imNoise,
+    #                double *kernel_coeffs, *meansig, *scatter, int *n_skipped)
+    functions["fitKernel"] = lib.fitKernel
+    functions["fitKernel"].argtypes = [
+        ctypes.c_void_p,  # stamp_struct *stamps
+        ctypes.c_void_p,  # float *imRef
+        ctypes.c_void_p,  # float *imConv
+        ctypes.c_void_p,  # float *imNoise (nullable)
+        ctypes.c_void_p,  # double *kernel_coeffs
+        ctypes.POINTER(ctypes.c_double),  # *meansig
+        ctypes.POINTER(ctypes.c_double),  # *scatter
+        ctypes.POINTER(ctypes.c_int),  # *n_skipped
+    ]
+    functions["fitKernel"].restype = None
+
+    # void spatial_convolve(float *image, float **var_image, int ny, nx,
+    #                       double *kernel_coeffs, float *output, int *conv_method)
+    functions["spatial_convolve"] = lib.spatial_convolve
+    functions["spatial_convolve"].argtypes = [
+        ctypes.c_void_p,  # float *image
+        ctypes.c_void_p,  # float **var_image (nullable)
+        ctypes.c_int,  # ny
+        ctypes.c_int,  # nx
+        ctypes.c_void_p,  # double *kernel_coeffs
+        ctypes.c_void_p,  # float *output
+        ctypes.POINTER(ctypes.c_int),  # *conv_method
+    ]
+    functions["spatial_convolve"].restype = None
 
     return functions
 

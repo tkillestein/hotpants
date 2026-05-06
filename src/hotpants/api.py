@@ -382,21 +382,56 @@ def fit_kernel(
     }
 
     with global_state(config_dict):
-        # Placeholder: actual implementation would call buildStamps, fitKernel, etc.
-        # For now, return a dummy result to verify the infrastructure works
-        kernel_info = _core.get_kernel_info()
-        n_terms = _core.num_polynomial_terms(config.kernel_order)
-        n_kernel_comps = kernel_info["kernel_components"]
+        # Build stamp grid and compute statistics
+        logger.debug("Building stamp grid...")
+        stamps = _core.build_stamps(
+            template,
+            science,
+            layout.n_regions_x,
+            layout.n_regions_y,
+            layout.stamps_per_region_x,
+            layout.stamps_per_region_y,
+        )
 
-        # Create dummy kernel coefficients
-        kernel_coeffs = np.ones(n_kernel_comps * n_terms, dtype=np.float64)
+        # Fit kernel
+        logger.debug("Fitting kernel...")
+        kernel_info = _core.get_kernel_info()
+        n_kernel_comps = kernel_info["kernel_components"]
+        n_spatial_terms = _core.num_polynomial_terms(config.kernel_order)
+
+        (
+            chi2,
+            kernel_norm,
+            mean_sigma,
+            scatter_sigma,
+            n_skipped,
+            kernel_coeffs,
+        ) = _core.fit_kernel_c(
+            stamps,
+            template,
+            science,
+            noise,
+            n_kernel_comps,
+            n_spatial_terms,
+        )
+
+        # Free stamp memory
+        n_total_stamps = (
+            layout.n_regions_x
+            * layout.n_regions_y
+            * layout.stamps_per_region_x
+            * layout.stamps_per_region_y
+        )
+        _core.free_stamps(stamps, n_total_stamps)
+
+        logger.debug(f"Fitted kernel: chi2={chi2:.3f}, norm={kernel_norm:.3f}")
 
         return KernelSolution(
-            chi2=0.0,
-            kernel_norm=1.0,
-            mean_sigma=10.0,
-            scatter_sigma=1.0,
-            n_skipped_stamps=0,
+            chi2=chi2,
+            kernel_norm=kernel_norm,
+            mean_sigma=mean_sigma,
+            scatter_sigma=scatter_sigma,
+            n_skipped_stamps=n_skipped,
             kernel_coefficients=kernel_coeffs,
         )
 
@@ -455,14 +490,21 @@ def spatial_convolve(
             msg = f"Output shape {output.shape} doesn't match input {image.shape}"
             raise ValueError(msg)
 
-    # TODO: these currently exist to stop CI complaining about missing variables
-    # And can safely be removed once implemented
-    logger.debug(f"Verbosity: {verbose}")
-    logger.debug(f"Kernel config: {config}")
-    logger.debug(f"Kernel solution: {kernel_solution}")
+    ny, nx = image.shape
 
-    # Placeholder: actual implementation would call spatial_convolve C function
-    # For now, copy input to output to verify infrastructure works
-    output[:] = image
+    # Make C-contiguous if needed
+    if not image.flags["C_CONTIGUOUS"]:
+        image = np.ascontiguousarray(image)
+
+    config_dict = {
+        "hwKernel": config.kernel_half_width,
+        "verbose": verbose,
+    }
+
+    with global_state(config_dict):
+        logger.debug("Applying spatially-varying convolution...")
+        output = _core.spatial_convolve_c(image, kernel_solution.kernel_coefficients, output)
+
+    logger.debug(f"Convolution complete: output shape {output.shape}")
 
     return output

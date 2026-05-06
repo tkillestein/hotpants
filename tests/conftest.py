@@ -220,6 +220,18 @@ def mock_hotpants_library(monkeypatch, request):
     def mock_set_global_float(name, value):
         globals_state[name] = value
 
+    # Mock C function return values for kernel fitting
+    # allocateStamps should return 0 (success)
+    mock_lib.allocateStamps.return_value = 0
+    # fitKernel returns void (None)
+    mock_lib.fitKernel.return_value = None
+    # spatial_convolve returns void (None)
+    mock_lib.spatial_convolve.return_value = None
+    # buildStamps returns void (None)
+    mock_lib.buildStamps.return_value = None
+    # freeStampMem returns void (None)
+    mock_lib.freeStampMem.return_value = None
+
     # Patch the library loading and global variable functions
     monkeypatch.setattr(_hotpants_ffi, 'get_library', lambda: mock_lib)
     monkeypatch.setattr(_hotpants_ffi, 'get_global_int', mock_get_global_int)
