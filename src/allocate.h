@@ -35,7 +35,7 @@
  * @param size Number of bytes to allocate
  * @return Pointer to allocated memory (never NULL; exits on failure)
  */
-void *xmalloc(size_t size);
+void* xmalloc(size_t size);
 
 /**
  * Allocate memory like calloc(), but exit with error message on failure.
@@ -45,7 +45,7 @@ void *xmalloc(size_t size);
  * @param size  Size of each element in bytes
  * @return Pointer to allocated, zero-initialized memory (never NULL)
  */
-void *xcalloc(size_t count, size_t size);
+void* xcalloc(size_t count, size_t size);
 
 /* =====================================================================
  * Contiguous Multi-Dimensional Array Allocation
@@ -76,14 +76,14 @@ void *xcalloc(size_t count, size_t size);
  * @param cols Number of columns
  * @return Pointer to array of row pointers; free with free_matrix_contiguous()
  */
-double **alloc_matrix_contiguous(int rows, int cols);
+double** alloc_matrix_contiguous(int rows, int cols);
 
 /**
  * Free a 2D array allocated by alloc_matrix_contiguous().
  *
  * @param matrix Pointer returned from alloc_matrix_contiguous()
  */
-void free_matrix_contiguous(double **matrix);
+void free_matrix_contiguous(double** matrix);
 
 /**
  * Allocate a contiguous array of vectors (array of pointers to arrays).
@@ -99,13 +99,13 @@ void free_matrix_contiguous(double **matrix);
  * @param vectorSize Size of each vector (in elements, not bytes)
  * @return Array of nVectors pointers; free with free_vector_array()
  */
-double **alloc_vector_array(int nVectors, int vectorSize);
+double** alloc_vector_array(int nVectors, int vectorSize);
 
 /**
  * Free a vector array allocated by alloc_vector_array().
  *
  * @param vectors Pointer returned from alloc_vector_array()
  */
-void free_vector_array(double **vectors);
+void free_vector_array(double** vectors);
 
-#endif  /* ALLOCATE_H */
+#endif /* ALLOCATE_H */

@@ -25,31 +25,29 @@
  *
  * Reference: Alard & Lupton (1998), Section 2.1 (kernel parameterization).
  */
-typedef struct
-{
-   int       x0, y0;         /* origin of stamp in region coords */
-   int       x, y;           /* center of stamp in region coords */
-   int       nx, ny;         /* size of stamp in pixels */
-   int       *xss;           /* x location of kernel test substamp centers */
-   int       *yss;           /* y location of kernel test substamp centers */
-   int       nss;            /* number of detected kernel substamps (1 .. nss) */
-   int       sscnt;          /* which substamp to use (0 .. nss-1) */
-   double    **vectors;      /* convolved template basis vectors for this stamp */
-   double    *krefArea;      /* reference (template) kernel substamp data */
-   double    **mat;          /* fitting matrix (normal equations) */
-   double    *scprod;        /* scalar products (right-hand side) */
-   double    sum;            /* sum of fabs(data), used for sigma scaling */
-   double    mean;           /* stamp mean value */
-   double    median;         /* stamp median value */
-   double    mode;           /* estimated sky mode (background) */
-   double    sd;             /* standard deviation */
-   double    fwhm;           /* full width half max of PSF */
-   double    lfwhm;          /* log(fwhm) */
-   double    chi2;           /* chi-squared residual from kernel fit */
-   double    norm;           /* kernel sum (integral) */
-   double    diff;           /* (norm - mean_ksum) * sqrt(sum) */
+typedef struct {
+  int x0, y0;       /* origin of stamp in region coords */
+  int x, y;         /* center of stamp in region coords */
+  int nx, ny;       /* size of stamp in pixels */
+  int* xss;         /* x location of kernel test substamp centers */
+  int* yss;         /* y location of kernel test substamp centers */
+  int nss;          /* number of detected kernel substamps (1 .. nss) */
+  int sscnt;        /* which substamp to use (0 .. nss-1) */
+  double** vectors; /* convolved template basis vectors for this stamp */
+  double* krefArea; /* reference (template) kernel substamp data */
+  double** mat;     /* fitting matrix (normal equations) */
+  double* scprod;   /* scalar products (right-hand side) */
+  double sum;       /* sum of fabs(data), used for sigma scaling */
+  double mean;      /* stamp mean value */
+  double median;    /* stamp median value */
+  double mode;      /* estimated sky mode (background) */
+  double sd;        /* standard deviation */
+  double fwhm;      /* full width half max of PSF */
+  double lfwhm;     /* log(fwhm) */
+  double chi2;      /* chi-squared residual from kernel fit */
+  double norm;      /* kernel sum (integral) */
+  double diff;      /* (norm - mean_ksum) * sqrt(sum) */
 } stamp_struct;
-
 
 /* =====================================================================
  * Core API Functions
@@ -69,7 +67,7 @@ typedef struct
  * Returns:
  *   0 on success, -1 on allocation failure
  */
-int allocateStamps(stamp_struct *stamps, int n);
+int allocateStamps(stamp_struct* stamps, int n);
 
 /*
  * Free internal memory associated with stamp array.
@@ -78,7 +76,7 @@ int allocateStamps(stamp_struct *stamps, int n);
  *   stamps: stamp array to free
  *   n: number of stamps
  */
-void freeStampMem(stamp_struct *stamps, int n);
+void freeStampMem(stamp_struct* stamps, int n);
 
 /*
  * Divide image region into stamp grid and identify bright PSF centers.
@@ -101,11 +99,10 @@ void freeStampMem(stamp_struct *stamps, int n);
  *
  * Reference: Alard & Lupton (1998), Section 2.1
  */
-void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax,
-                 int *rPixX, int *rPixY, int nStampX, int nStampY,
-                 int hwKSStamp,
-                 stamp_struct *stamps, stamp_struct *tStamps, stamp_struct *iStamps,
-                 float *iData, float *tData,
+void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int* rPixX,
+                 int* rPixY, int nStampX, int nStampY, int hwKSStamp,
+                 stamp_struct* stamps, stamp_struct* tStamps,
+                 stamp_struct* iStamps, float* iData, float* tData,
                  float tUThresh, float tLThresh);
 
 /*
@@ -127,7 +124,7 @@ void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax,
  *
  * Reference: Alard & Lupton (1998), Section 2.1
  */
-int getPsfCenters(stamp_struct *stamp, float *iData, int nsx, int nsy,
+int getPsfCenters(stamp_struct* stamp, float* iData, int nsx, int nsy,
                   double smin, int nKSStamps, int nKSEdge);
 
 /*
@@ -151,11 +148,10 @@ int getPsfCenters(stamp_struct *stamp, float *iData, int nsx, int nsy,
  *
  * Reference: functions.c getStampStats3() for histogram algorithm.
  */
-int getStampStats3(float *data, int nx, int ny, int nsy,
-                   int stat_type,
-                   double *mean, double *median, double *mode,
-                   double *sd, double *fwhm, double *lfwhm,
-                   int verbose, int nThread, int nComp);
+int getStampStats3(float* data, int nx, int ny, int nsy, int stat_type,
+                   double* mean, double* median, double* mode, double* sd,
+                   double* fwhm, double* lfwhm, int verbose, int nThread,
+                   int nComp);
 
 /*
  * Fit spatially-varying convolution kernel via least-squares.
@@ -184,9 +180,9 @@ int getStampStats3(float *data, int nx, int ny, int nsy,
  *
  * Reference: Alard & Lupton (1998), Section 2.2 (kernel fitting)
  */
-void fitKernel(stamp_struct *stamps, float *imRef, float *imConv,
-               float *imNoise, double *kernel_coeffs,
-               double *meansig, double *scatter, int *n_skipped);
+void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
+               float* imNoise, double* kernel_coeffs, double* meansig,
+               double* scatter, int* n_skipped);
 
 /*
  * Apply spatially-varying kernel as convolution to full image.
@@ -212,9 +208,8 @@ void fitKernel(stamp_struct *stamps, float *imRef, float *imConv,
  *
  * Reference: Alard & Lupton (1998), Section 3 (convolution)
  */
-void spatial_convolve(float *image, float **var_image, int ny, int nx,
-                      double *kernel_coeffs, float *output, int *conv_method);
-
+void spatial_convolve(float* image, float** var_image, int ny, int nx,
+                      double* kernel_coeffs, float* output, int* conv_method);
 
 /* =====================================================================
  * Global Configuration Variables (set by Python before calling core functions)
@@ -223,27 +218,27 @@ void spatial_convolve(float *image, float **var_image, int ny, int nx,
  * The Python API must set these before calling fitKernel() or buildStamps().
  */
 
-extern int       hwKernel;           /* half-width of kernel region */
-extern int       kerOrder;           /* spatial polynomial order of kernel */
-extern int       bgOrder;            /* spatial polynomial order of background */
-extern float     kerFitThresh;       /* sigma threshold for kernel fit */
-extern float     scaleFitThresh;     /* scale factor for fit threshold */
-extern int       nKSStamps;          /* number of kernel substamps per stamp */
-extern int       hwKSStamp;          /* half-width of kernel substamp */
-extern int       nStampX, nStampY;   /* stamps per region, each axis */
-extern int       useFullSS;          /* maximally divide image into kernel-sized stamps */
+extern int hwKernel;         /* half-width of kernel region */
+extern int kerOrder;         /* spatial polynomial order of kernel */
+extern int bgOrder;          /* spatial polynomial order of background */
+extern float kerFitThresh;   /* sigma threshold for kernel fit */
+extern float scaleFitThresh; /* scale factor for fit threshold */
+extern int nKSStamps;        /* number of kernel substamps per stamp */
+extern int hwKSStamp;        /* half-width of kernel substamp */
+extern int nStampX, nStampY; /* stamps per region, each axis */
+extern int useFullSS; /* maximally divide image into kernel-sized stamps */
 
-extern float     tUThresh, tLThresh; /* template upper/lower thresholds */
-extern float     iUThresh, iLThresh; /* science image upper/lower thresholds */
-extern float     tGain, iGain;       /* template and science gain (e-/ADU) */
-extern float     tRdnoise, iRdnoise; /* template and science readnoise (e-) */
-extern float     tPedestal, iPedestal; /* pedestals (ADU) */
+extern float tUThresh, tLThresh;   /* template upper/lower thresholds */
+extern float iUThresh, iLThresh;   /* science image upper/lower thresholds */
+extern float tGain, iGain;         /* template and science gain (e-/ADU) */
+extern float tRdnoise, iRdnoise;   /* template and science readnoise (e-) */
+extern float tPedestal, iPedestal; /* pedestals (ADU) */
 
-extern int       nCompKer;           /* number of kernel basis components (computed) */
-extern int       nComp;              /* number of spatial polynomial terms (computed) */
-extern int       nCompBG;            /* number of background polynomial terms (computed) */
+extern int nCompKer; /* number of kernel basis components (computed) */
+extern int nComp;    /* number of spatial polynomial terms (computed) */
+extern int nCompBG;  /* number of background polynomial terms (computed) */
 
-extern int       verbose;            /* verbosity level (0=silent, 1=progress, 2=debug) */
-extern int       nThread;            /* number of OpenMP threads */
+extern int verbose; /* verbosity level (0=silent, 1=progress, 2=debug) */
+extern int nThread; /* number of OpenMP threads */
 
-#endif  /* HOTPANTS_API_H */
+#endif /* HOTPANTS_API_H */

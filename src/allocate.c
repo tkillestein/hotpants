@@ -6,35 +6,42 @@
  * contiguous multi-dimensional array allocation for efficiency.
  */
 
+#include "allocate.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "allocate.h"
 
 /**
  * Allocate memory with automatic error checking and diagnostic message.
  * Exits the program if allocation fails.
  */
-void *xmalloc(size_t size) {
-    void *ptr = malloc(size);
-    if (!ptr) {
-        fprintf(stderr, "[ERROR] Memory allocation failed: malloc(%zu bytes) returned NULL\n", size);
-        exit(1);
-    }
-    return ptr;
+void* xmalloc(size_t size) {
+  void* ptr = malloc(size);
+  if (!ptr) {
+    fprintf(
+        stderr,
+        "[ERROR] Memory allocation failed: malloc(%zu bytes) returned NULL\n",
+        size);
+    exit(1);
+  }
+  return ptr;
 }
 
 /**
  * Allocate and zero-initialize memory with automatic error checking.
  * Exits the program if allocation fails.
  */
-void *xcalloc(size_t count, size_t size) {
-    void *ptr = calloc(count, size);
-    if (!ptr) {
-        fprintf(stderr, "[ERROR] Memory allocation failed: calloc(%zu, %zu) returned NULL\n", count, size);
-        exit(1);
-    }
-    return ptr;
+void* xcalloc(size_t count, size_t size) {
+  void* ptr = calloc(count, size);
+  if (!ptr) {
+    fprintf(
+        stderr,
+        "[ERROR] Memory allocation failed: calloc(%zu, %zu) returned NULL\n",
+        count, size);
+    exit(1);
+  }
+  return ptr;
 }
 
 /**
@@ -51,23 +58,23 @@ void *xcalloc(size_t count, size_t size) {
  *
  * Free with: free_matrix_contiguous(matrix)
  */
-double **alloc_matrix_contiguous(int rows, int cols) {
-    double *data;
-    double **ptrs;
-    int i;
+double** alloc_matrix_contiguous(int rows, int cols) {
+  double* data;
+  double** ptrs;
+  int i;
 
-    /* Allocate the flat data array */
-    data = (double *)xcalloc((size_t)rows * cols, sizeof(double));
+  /* Allocate the flat data array */
+  data = (double*)xcalloc((size_t)rows * cols, sizeof(double));
 
-    /* Allocate the array of row pointers */
-    ptrs = (double **)xmalloc((size_t)rows * sizeof(double *));
+  /* Allocate the array of row pointers */
+  ptrs = (double**)xmalloc((size_t)rows * sizeof(double*));
 
-    /* Initialize each row pointer to point into the data block */
-    for (i = 0; i < rows; i++) {
-        ptrs[i] = data + (size_t)i * cols;
-    }
+  /* Initialize each row pointer to point into the data block */
+  for (i = 0; i < rows; i++) {
+    ptrs[i] = data + (size_t)i * cols;
+  }
 
-    return ptrs;
+  return ptrs;
 }
 
 /**
@@ -76,14 +83,14 @@ double **alloc_matrix_contiguous(int rows, int cols) {
  * Only two free() calls are needed: one for the row pointer array,
  * one for the contiguous data block (stored as ptrs[0]).
  */
-void free_matrix_contiguous(double **matrix) {
-    if (!matrix) return;
+void free_matrix_contiguous(double** matrix) {
+  if (!matrix) return;
 
-    /* Free the contiguous data block (pointed to by matrix[0]) */
-    free(matrix[0]);
+  /* Free the contiguous data block (pointed to by matrix[0]) */
+  free(matrix[0]);
 
-    /* Free the row pointer array */
-    free(matrix);
+  /* Free the row pointer array */
+  free(matrix);
 }
 
 /**
@@ -94,7 +101,8 @@ void free_matrix_contiguous(double **matrix) {
  * malloc() calls.
  *
  * Example usage (stamp allocation):
- *   stamp->vectors = alloc_vector_array(nCompKer + nBGVectors, fwKSStamp*fwKSStamp);
+ *   stamp->vectors = alloc_vector_array(nCompKer + nBGVectors,
+ * fwKSStamp*fwKSStamp);
  *
  * Layout:
  *   vectors[0] -> data[0*vectorSize .. 0*vectorSize+vectorSize-1]
@@ -103,23 +111,23 @@ void free_matrix_contiguous(double **matrix) {
  *
  * Free with: free_vector_array(vectors)
  */
-double **alloc_vector_array(int nVectors, int vectorSize) {
-    double *data;
-    double **ptrs;
-    int i;
+double** alloc_vector_array(int nVectors, int vectorSize) {
+  double* data;
+  double** ptrs;
+  int i;
 
-    /* Allocate the contiguous data block for all vectors */
-    data = (double *)xcalloc((size_t)nVectors * vectorSize, sizeof(double));
+  /* Allocate the contiguous data block for all vectors */
+  data = (double*)xcalloc((size_t)nVectors * vectorSize, sizeof(double));
 
-    /* Allocate the array of vector pointers */
-    ptrs = (double **)xmalloc((size_t)nVectors * sizeof(double *));
+  /* Allocate the array of vector pointers */
+  ptrs = (double**)xmalloc((size_t)nVectors * sizeof(double*));
 
-    /* Initialize each vector pointer to point into the data block */
-    for (i = 0; i < nVectors; i++) {
-        ptrs[i] = data + (size_t)i * vectorSize;
-    }
+  /* Initialize each vector pointer to point into the data block */
+  for (i = 0; i < nVectors; i++) {
+    ptrs[i] = data + (size_t)i * vectorSize;
+  }
 
-    return ptrs;
+  return ptrs;
 }
 
 /**
@@ -128,12 +136,12 @@ double **alloc_vector_array(int nVectors, int vectorSize) {
  * Only two free() calls: one for the pointer array, one for the
  * contiguous data block.
  */
-void free_vector_array(double **vectors) {
-    if (!vectors) return;
+void free_vector_array(double** vectors) {
+  if (!vectors) return;
 
-    /* Free the contiguous data block */
-    free(vectors[0]);
+  /* Free the contiguous data block */
+  free(vectors[0]);
 
-    /* Free the pointer array */
-    free(vectors);
+  /* Free the pointer array */
+  free(vectors);
 }
