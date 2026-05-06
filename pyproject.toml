@@ -1,3 +1,17 @@
+# ===================================================================
+# Build System Configuration
+# ===================================================================
+# The C library (libhotpants) must be built separately via CMake
+# before installing the Python package:
+#
+#   cmake -B build -DCMAKE_BUILD_TYPE=Release
+#   cmake --build build
+#   export LD_LIBRARY_PATH=$PWD/build:$LD_LIBRARY_PATH
+#   pip install -e .
+#
+# See CONTRIBUTING.md for full development setup instructions.
+# ===================================================================
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
