@@ -32,7 +32,7 @@ import numpy as np
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from . import _core
+from . import _core, _hotpants_ffi
 from ._core import allocate_array, global_state, validate_image_array
 
 # =====================================================================
@@ -87,10 +87,7 @@ class KernelConfig(BaseModel):
     @field_validator("hw_ks_stamp")
     @classmethod
     def validate_ks_stamp_size(cls, v: int, info) -> int:
-        """Ensure hw_ks_stamp <= kernel_half_width."""
-        if "kernel_half_width" in info.data and v > info.data["kernel_half_width"]:
-            msg = "hw_ks_stamp must be <= kernel_half_width"
-            raise ValueError(msg)
+        """hw_ks_stamp is independent of kernel_half_width; just ensure positive."""
         return v
 
 
@@ -360,28 +357,48 @@ def fit_kernel(
             layout.stamps_per_region_x,
             layout.stamps_per_region_y,
         )
+        # Note: build_stamps does NOT call cleanupBuildStampsContext().
+        # The region context (mRData, region buffers) remains active because
+        # fitKernel → check_again → getStampSig/fillStamp access mRData.
+        # We must call cleanup after fitKernel completes (see finally block below).
 
-        # Fit kernel
-        logger.debug("Fitting kernel...")
-        kernel_info = _core.get_kernel_info()
-        n_kernel_comps = kernel_info["kernel_components"]
-        n_spatial_terms = _core.num_polynomial_terms(config.kernel_order)
+        try:
+            # Fit kernel
+            logger.debug("Fitting kernel...")
+            kernel_info = _core.get_kernel_info()
+            # fitKernel writes nCompTotal+1 coefficients; must allocate exactly that size
+            n_coeffs = kernel_info["total_components"] + 1
 
-        (
-            chi2,
-            kernel_norm,
-            mean_sigma,
-            scatter_sigma,
-            n_skipped,
-            kernel_coeffs,
-        ) = _core.fit_kernel_c(
-            stamps,
-            template,
-            science,
-            noise,
-            n_kernel_comps,
-            n_spatial_terms,
-        )
+            # If no noise image provided, allocate a dummy one for fitKernel.
+            # getStampSig uses this for quality metrics; if NULL it crashes.
+            # A zero-filled array is acceptable (all stamps treated as equal quality).
+            if noise is None:
+                noise = np.zeros_like(template)
+            else:
+                noise = np.ascontiguousarray(noise.astype(np.float32))
+
+            (
+                chi2,
+                kernel_norm,
+                mean_sigma,
+                scatter_sigma,
+                n_skipped,
+                kernel_coeffs,
+            ) = _core.fit_kernel_c(
+                stamps,
+                template,
+                science,
+                noise,
+                n_coeffs,
+            )
+
+            logger.debug(f"Fitted kernel: chi2={chi2:.3f}, norm={kernel_norm:.3f}")
+
+        finally:
+            # Always cleanup buildStamps context after fitKernel,
+            # since fitKernel may call check_again → fillStamp which needs mRData.
+            lib = _hotpants_ffi.get_library()
+            lib.cleanupBuildStampsContext()
 
         # Free stamp memory
         n_total_stamps = (
@@ -391,8 +408,6 @@ def fit_kernel(
             * layout.stamps_per_region_y
         )
         _core.free_stamps(stamps, n_total_stamps)
-
-        logger.debug(f"Fitted kernel: chi2={chi2:.3f}, norm={kernel_norm:.3f}")
 
         return KernelSolution(
             chi2=chi2,
@@ -466,6 +481,8 @@ def spatial_convolve(
 
     config_dict = {
         "hwKernel": config.kernel_half_width,
+        "kerOrder": config.kernel_order,
+        "bgOrder": config.bg_order,
         "verbose": verbose,
     }
 

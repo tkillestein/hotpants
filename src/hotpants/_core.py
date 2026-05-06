@@ -16,6 +16,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 import numpy as np
+from loguru import logger
 from numpy.typing import DTypeLike
 
 from . import _hotpants_ffi
@@ -152,6 +153,8 @@ def global_state(config_dict: dict[str, int | float]) -> Generator:
         "nCompKer",
         "nComp",
         "nCompBG",
+        "nCompTotal",
+        "nS",
     }
     float_vars = {
         "kerFitThresh",
@@ -430,6 +433,7 @@ def get_kernel_info() -> dict[str, int]:
         "bg_order": _hotpants_ffi.get_global_int("bgOrder"),
         "kernel_terms": _hotpants_ffi.get_global_int("nComp"),
         "bg_terms": _hotpants_ffi.get_global_int("nCompBG"),
+        "total_components": _hotpants_ffi.get_global_int("nCompTotal"),
     }
 
 
@@ -486,20 +490,24 @@ def build_stamps(
     # Total stamps across all regions
     n_stamps = n_regions_x * n_regions_y * stamps_per_region_x * stamps_per_region_y
 
-    # Allocate primary stamp array
-    stamps = allocate_stamps(n_stamps)
-    if not stamps:
-        msg = "Failed to allocate stamp array"
-        raise RuntimeError(msg)
-
     try:
         # Get wrapper functions from the C library
         lib = _hotpants_ffi.get_library()
+        init_globals = lib.initKernelGlobals
         init_context = lib.initBuildStampsContext
         build_region = lib.buildStampsRegion
         cleanup_context = lib.cleanupBuildStampsContext
 
-        # Set argtypes for wrapper functions
+        init_globals.argtypes = [
+            ctypes.c_int,  # image_nx
+            ctypes.c_int,  # image_ny
+            ctypes.c_int,  # n_reg_x
+            ctypes.c_int,  # n_reg_y
+            ctypes.c_int,  # n_stamp_x
+            ctypes.c_int,  # n_stamp_y
+        ]
+        init_globals.restype = ctypes.c_int
+
         init_context.argtypes = [
             ctypes.c_void_p,  # float *template
             ctypes.c_void_p,  # float *science
@@ -536,28 +544,41 @@ def build_stamps(
             ctypes.POINTER(StampStruct),  # *ctStamps (template stamps)
             ctypes.c_void_p,  # float *iRData (science region data)
             ctypes.c_void_p,  # float *tRData (template region data)
-            ctypes.c_float,  # hardX (hard-coded x center, 0.0 to skip)
-            ctypes.c_float,  # hardY (hard-coded y center, 0.0 to skip)
+            ctypes.c_float,  # hardX
+            ctypes.c_float,  # hardY
         ]
         build_c.restype = None
 
         cleanup_context.argtypes = []
         cleanup_context.restype = None
 
+        # Set basis globals before allocating stamps:
+        # hwKernel, kerOrder, bgOrder, nKSStamps, hwKSStamp must be in place
+        _hotpants_ffi.set_global_int("nKSStamps", _hotpants_ffi.get_global_int("nKSStamps") or 3)
+        _hotpants_ffi.set_global_int("hwKSStamp", _hotpants_ffi.get_global_int("hwKSStamp") or 15)
+        # Kernel fit upper thresholds: vargs.c sets these from tUThresh/iUThresh;
+        # Python callers must mirror that assignment or getPsfCenters treats all
+        # pixels as saturated (hiThresh=0 causes dpt >= hiThresh for every pixel).
+        _hotpants_ffi.set_global_float("tUKThresh", _hotpants_ffi.get_global_float("tUThresh"))
+        _hotpants_ffi.set_global_float("iUKThresh", _hotpants_ffi.get_global_float("iUThresh"))
+
+        # initKernelGlobals computes nCompKer, nC, fwKSStamp, fwKernel, fwStamp
+        # (and sets up the Gaussian basis) — must run BEFORE allocateStamps
+        ret = init_globals(nx, ny, n_regions_x, n_regions_y,
+                           stamps_per_region_x, stamps_per_region_y)
+        if ret != 0:
+            msg = "Failed to initialize kernel globals"
+            raise RuntimeError(msg)
+
+        # Now that nCompKer, nC, fwKSStamp, nKSStamps are set, allocate stamps
+        stamps = allocate_stamps(n_stamps)
+        if not stamps:
+            msg = "Failed to allocate stamp array"
+            raise RuntimeError(msg)
+
         # Get C function pointers for images
         template_ptr = array_to_cptr(template)
         science_ptr = array_to_cptr(science)
-
-        # Set required C globals for buildStamps
-        _hotpants_ffi.set_global_int("nKSStamps", 3)  # number of kernel test substamps
-        _hotpants_ffi.set_global_int("hwKSStamp", 15)  # half size of kernel substamp
-        _hotpants_ffi.set_global_float("tUKThresh", _hotpants_ffi.get_global_float("tUThresh"))
-
-        # Get kernel parameters
-        hw_kernel = _hotpants_ffi.get_global_int("hwKernel")
-        fw_kernel = hw_kernel * 2 + 1
-        _hotpants_ffi.set_global_int("fwKernel", fw_kernel)
-        _hotpants_ffi.set_global_int("fwStamp", fw_kernel + 10)
 
         # Initialize buildStamps context with full images
         ret = init_context(
@@ -575,87 +596,134 @@ def build_stamps(
             msg = "Failed to initialize buildStamps context"
             raise RuntimeError(msg)
 
-        try:
-            # Process each region
-            stamps_per_region = stamps_per_region_x * stamps_per_region_y
-            global_stamp_idx = 0
+        # Set up fillStampsForRegion wrapper
+        fill_region = lib.fillStampsForRegion
+        fill_region.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        fill_region.restype = ctypes.c_int
 
-            # Calculate region dimensions
-            region_width = nx // n_regions_x
-            region_height = ny // n_regions_y
+        # Process each region.  For each region:
+        #   1. buildStampsRegion extracts the region buffer and sets mRData/rPixX/rPixY
+        #   2. buildStamps is called per stamp to find PSF centres (fills xss/yss/nss)
+        #   3. fillStampsForRegion fills stamp->vectors/mat/scprod via fillStamp()
+        #      while the region context (mRData, buffers) is still active
+        # The region context is NOT cleaned up here; the caller (api.py) must
+        # call cleanupBuildStampsContext() after fitKernel() has completed.
+        stamps_per_region = stamps_per_region_x * stamps_per_region_y
+        global_stamp_idx = 0
 
-            for region_y in range(n_regions_y):
-                for region_x in range(n_regions_x):
-                    # Get region boundaries in full image coordinates
-                    r_x_min = region_x * region_width
-                    r_x_max = min((region_x + 1) * region_width - 1, nx - 1)
-                    r_y_min = region_y * region_height
-                    r_y_max = min((region_y + 1) * region_height - 1, ny - 1)
+        # Calculate region dimensions
+        region_width = nx // n_regions_x
+        region_height = ny // n_regions_y
+        hw_kernel = _hotpants_ffi.get_global_int("hwKernel")
 
-                    # Add kernel border for edge handling
-                    r_x_b_min = max(0, r_x_min - hw_kernel)
-                    r_x_b_max = min(nx - 1, r_x_max + hw_kernel)
-                    r_y_b_min = max(0, r_y_min - hw_kernel)
-                    r_y_b_max = min(ny - 1, r_y_max + hw_kernel)
+        for region_y in range(n_regions_y):
+            for region_x in range(n_regions_x):
+                region_start_idx = global_stamp_idx
+                logger.debug(f"Processing region ({region_x}, {region_y}), stamps {region_start_idx} to end")
 
-                    # Call wrapper to extract region data and setup globals
-                    region_t_ptr = ctypes.c_void_p()
-                    region_i_ptr = ctypes.c_void_p()
-                    ret = build_region(
-                        region_x,  # region x coordinate
-                        region_y,  # region y coordinate
-                        ctypes.byref(region_t_ptr),  # output template region pointer
-                        ctypes.byref(region_i_ptr),  # output science region pointer
-                    )
+                # Get region boundaries in full image coordinates
+                r_x_min = region_x * region_width
+                r_x_max = min((region_x + 1) * region_width - 1, nx - 1)
+                r_y_min = region_y * region_height
+                r_y_max = min((region_y + 1) * region_height - 1, ny - 1)
 
-                    if ret != 0:
-                        msg = f"Failed to extract region ({region_x}, {region_y})"
-                        raise RuntimeError(msg)
+                # Add kernel border for edge handling
+                r_x_b_min = max(0, r_x_min - hw_kernel)
+                r_x_b_max = min(nx - 1, r_x_max + hw_kernel)
+                r_y_b_min = max(0, r_y_min - hw_kernel)
+                r_y_b_max = min(ny - 1, r_y_max + hw_kernel)
 
-                    # Now call buildStamps directly with extracted region data
-                    # Iterate over stamps within this region
-                    for stamp_y in range(stamps_per_region_y):
-                        for stamp_x in range(stamps_per_region_x):
-                            # Calculate stamp bounds relative to region borders
-                            stamp_width = (r_x_b_max - r_x_b_min + 1) // stamps_per_region_x
-                            stamp_height = (r_y_b_max - r_y_b_min + 1) // stamps_per_region_y
+                # Call wrapper to extract region data and setup globals
+                region_t_ptr = ctypes.c_void_p()
+                region_i_ptr = ctypes.c_void_p()
+                ret = build_region(
+                    region_x,  # region x coordinate
+                    region_y,  # region y coordinate
+                    ctypes.byref(region_t_ptr),  # output template region pointer
+                    ctypes.byref(region_i_ptr),  # output science region pointer
+                )
 
-                            s_x_min = stamp_x * stamp_width
-                            s_y_min = stamp_y * stamp_height
-                            s_x_max = min(s_x_min + stamp_width - 1, (r_x_b_max - r_x_b_min))
-                            s_y_max = min(s_y_min + stamp_height - 1, (r_y_b_max - r_y_b_min))
+                if ret != 0:
+                    msg = f"Failed to extract region ({region_x}, {region_y})"
+                    raise RuntimeError(msg)
 
-                            # Stamp counters
-                            ni_s = ctypes.c_int(0)
-                            nt_s = ctypes.c_int(0)
+                # Now call buildStamps directly with extracted region data.
+                # Coordinates mirror main.c lines 931-934: stamp origins are
+                # evenly spaced across rPixX/rPixY in full-image coords; stamp
+                # extent is fwStamp (not rPixX/nStampX) matching C behaviour.
+                r_pix_x = r_x_b_max - r_x_b_min + 1
+                r_pix_y = r_y_b_max - r_y_b_min + 1
+                fw_stamp = _hotpants_ffi.get_global_int("fwStamp")
 
-                            # Call buildStamps with region data
-                            build_c(
-                                s_x_min,  # sXMin
-                                s_x_max,  # sXMax
-                                s_y_min,  # sYMin
-                                s_y_max,  # sYMax
-                                ctypes.byref(ni_s),  # *niS
-                                ctypes.byref(nt_s),  # *ntS
-                                1,  # getCenters: automatically find bright centers
-                                r_x_b_min,  # rXBMin: region origin in full image
-                                r_y_b_min,  # rYBMin: region origin in full image
-                                ctypes.byref(stamps[global_stamp_idx]),  # *ciStamps
-                                ctypes.byref(stamps[global_stamp_idx]),  # *ctStamps
-                                region_i_ptr,  # float *iRData (region-sized)
-                                region_t_ptr,  # float *tRData (region-sized)
-                                0.0,  # hardX
-                                0.0,  # hardY
-                            )
+                for stamp_y in range(stamps_per_region_y):
+                    for stamp_x in range(stamps_per_region_x):
+                        # Full-image stamp coordinates (matches main.c)
+                        s_x_min = r_x_b_min + stamp_x * r_pix_x // stamps_per_region_x
+                        s_y_min = r_y_b_min + stamp_y * r_pix_y // stamps_per_region_y
+                        s_x_max = min(s_x_min + fw_stamp - 1, r_x_b_max)
+                        s_y_max = min(s_y_min + fw_stamp - 1, r_y_b_max)
 
-                            global_stamp_idx += 1
+                        # Reset stamp state before buildStamps (matches main.c lines 938-943)
+                        stamps[global_stamp_idx].nss = 0
+                        stamps[global_stamp_idx].sscnt = 0
+                        stamps[global_stamp_idx].chi2 = 0.0
 
-        finally:
-            # Always clean up context
-            cleanup_context()
+                        # Stamp counters (buildStamps uses *niS to index into ciStamps)
+                        ni_s = ctypes.c_int(0)
+                        nt_s = ctypes.c_int(0)
+
+                        # Call buildStamps with region data
+                        build_c(
+                            s_x_min,  # sXMin (full-image coords)
+                            s_x_max,  # sXMax (full-image coords)
+                            s_y_min,  # sYMin (full-image coords)
+                            s_y_max,  # sYMax (full-image coords)
+                            ctypes.byref(ni_s),  # *niS
+                            ctypes.byref(nt_s),  # *ntS
+                            1,  # getCenters: find bright PSF centers
+                            r_x_b_min,  # rXBMin: region buffer origin (full-image)
+                            r_y_b_min,  # rYBMin: region buffer origin (full-image)
+                            ctypes.byref(stamps[global_stamp_idx]),  # *ciStamps
+                            ctypes.byref(stamps[global_stamp_idx]),  # *ctStamps
+                            region_i_ptr,  # float *iRData (region buffer)
+                            region_t_ptr,  # float *tRData (region buffer)
+                            0.0,  # hardX
+                            0.0,  # hardY
+                        )
+
+                        global_stamp_idx += 1
+
+                # Fill stamp vectors for this region while mRData + region buffers
+                # are still valid (mirrors main.c lines 1099-1119: fillStamp loop).
+                region_count = global_stamp_idx - region_start_idx
+                region_stamps_ptr = ctypes.addressof(stamps[region_start_idx])
+                logger.debug(f"Calling fillStampsForRegion with {region_count} stamps, ptr={region_stamps_ptr}")
+                ret = fill_region(region_stamps_ptr, region_count)
+                logger.debug(f"fillStampsForRegion returned {ret}")
+                if ret != 0:
+                    msg = f"fillStampsForRegion failed for region ({region_x}, {region_y})"
+                    raise RuntimeError(msg)
+
+        # Set TLS global nS = count of valid stamps (nss > 0).
+        # main.c sets nS = ntS after incrementing ntS only for valid stamps;
+        # fitKernel uses nS to know how many stamps to accumulate.
+        n_valid = sum(1 for i in range(n_stamps) if stamps[i].nss > 0)
+        _hotpants_ffi.set_global_int("nS", n_valid)
+
+        # Region context (mRData, region buffers) is intentionally left active.
+        # Caller must call cleanupBuildStampsContext() after fitKernel() completes,
+        # because fitKernel() → check_again() → getStampSig/fillStamp access mRData.
 
     except Exception:
-        free_stamps(stamps, n_stamps)
+        # On error, clean up context and stamps before re-raising
+        try:
+            cleanup_context()
+        except Exception:
+            pass
+        try:
+            free_stamps(stamps, n_stamps)
+        except (UnboundLocalError, Exception):
+            pass
         raise
 
     return stamps
@@ -666,8 +734,7 @@ def fit_kernel_c(
     template: np.ndarray,
     science: np.ndarray,
     noise: np.ndarray | None = None,
-    n_kernel_components: int = 3,
-    n_spatial_terms: int = 6,
+    n_coeffs: int = 298,
 ) -> tuple[float, float, float, float, int, np.ndarray]:
     """
     Fit kernel via least-squares.
@@ -677,8 +744,7 @@ def fit_kernel_c(
         template: template image
         science: science image
         noise: noise image (optional)
-        n_kernel_components: number of kernel basis components
-        n_spatial_terms: number of spatial polynomial terms
+        n_coeffs: total coefficient array size = nCompTotal + 1
 
     Returns:
         Tuple: (chi2, kernel_norm, mean_sigma, scatter_sigma, n_skipped, coefficients)
@@ -697,8 +763,7 @@ def fit_kernel_c(
     ]
     fit_c.restype = None
 
-    # Allocate output variables
-    n_coeffs = n_kernel_components * n_spatial_terms
+    # Allocate coefficient array: fitKernel writes nCompTotal+1 values
     kernel_coeffs = np.zeros(n_coeffs, dtype=np.float64)
     meansig = ctypes.c_double()
     scatter = ctypes.c_double()
@@ -711,16 +776,58 @@ def fit_kernel_c(
     coeffs_ptr = array_to_double_cptr(kernel_coeffs)
 
     # Call fitKernel
+    # Get address of stamp array pointer (c_void_p because argtypes specifies c_void_p)
+    logger.debug(f"fit_kernel_c: stamps type={type(stamps)}, len={len(stamps)}")
+
+    # Validate stamp contents
+    valid_count = 0
+    for i in range(min(5, len(stamps))):  # Check first 5 stamps
+        nss = stamps[i].nss
+        sscnt = stamps[i].sscnt
+        vectors = stamps[i].vectors
+        mat = stamps[i].mat
+        scprod = stamps[i].scprod
+        xss = stamps[i].xss
+        yss = stamps[i].yss
+        logger.debug(
+            f"fit_kernel_c: stamps[{i}] nss={nss} sscnt={sscnt} xss={xss} yss={yss} vectors={vectors} mat={mat} scprod={scprod}"
+        )
+        if xss and yss:
+            try:
+                logger.debug(f"  xss[0]={xss[0]} yss[0]={yss[0]}")
+            except Exception as e:
+                logger.debug(f"  ERROR accessing xss/yss: {e}")
+        if nss > 0:
+            valid_count += 1
+
+    logger.debug(f"fit_kernel_c: found {valid_count} valid stamps in first 5")
+
+    # Use addressof to get the address of the array, then wrap in c_void_p
+    stamps_addr = ctypes.addressof(stamps)
+    stamps_ptr = ctypes.c_void_p(stamps_addr)
+    logger.debug(f"fit_kernel_c: stamps_addr={stamps_addr}, stamps_ptr={stamps_ptr.value}")
+
+    # Check globals
+    ncompker = _hotpants_ffi.get_global_int("nCompKer")
+    nc = _hotpants_ffi.get_global_int("nC")
+    ns = _hotpants_ffi.get_global_int("nS")
+    logger.debug(f"fit_kernel_c: nCompKer={ncompker}, nC={nc}, nS={ns}")
+    logger.debug(f"fit_kernel_c: calling fitKernel with n_coeffs={n_coeffs}")
+    # Note: fitKernel signature is (stamps, imRef, imConv, imNoise, ...)
+    # where imRef is the reference/target image and imConv is the image to be convolved.
+    # In our case, we fit the kernel to convolve the template to match the science,
+    # so: imRef = science (reference), imConv = template (to be convolved)
     fit_c(
-        stamps,
-        tpl_ptr,
-        sci_ptr,
-        noise_ptr,
+        stamps_ptr,
+        sci_ptr,  # imRef (science/reference)
+        tpl_ptr,  # imConv (template to be convolved)
+        noise_ptr,  # imNoise
         coeffs_ptr,
         ctypes.byref(meansig),
         ctypes.byref(scatter),
         ctypes.byref(n_skipped),
     )
+    logger.debug("fit_kernel_c: fitKernel returned successfully")
 
     # TODO: fitKernel in C doesn't return chi2 directly; need to compute or extract from stamps
     chi2 = 0.0  # placeholder
@@ -748,13 +855,13 @@ def spatial_convolve_c(
     lib = _hotpants_ffi.get_library()
     convolve_c = lib.spatial_convolve
     convolve_c.argtypes = [
-        ctypes.c_void_p,  # float *image
-        ctypes.c_void_p,  # float **var_image
-        ctypes.c_int,  # ny
-        ctypes.c_int,  # nx
-        ctypes.c_void_p,  # double *kernel_coeffs
-        ctypes.c_void_p,  # float *output
-        ctypes.POINTER(ctypes.c_int),  # *conv_method
+        ctypes.c_void_p,                    # float *image
+        ctypes.POINTER(ctypes.c_void_p),    # float **var_image (pointer to nullable ptr)
+        ctypes.c_int,                        # xSize (= nx, image width)
+        ctypes.c_int,                        # ySize (= ny, image height)
+        ctypes.c_void_p,                    # double *kernel_coeffs
+        ctypes.c_void_p,                    # float *output (cRdata)
+        ctypes.c_void_p,                    # int *cMask (full ny*nx mask array)
     ]
     convolve_c.restype = None
 
@@ -765,10 +872,20 @@ def spatial_convolve_c(
     out_ptr = array_to_cptr(output)
     coeffs_ptr = array_to_double_cptr(kernel_coeffs)
 
-    # Get convolution method (0=direct, 1=FFT)
-    conv_method = ctypes.c_int(1)  # Use FFT if available
+    # spatial_convolve takes float** variance and immediately dereferences it
+    # (if (*variance) == NULL → no variance image). We must pass a pointer to
+    # a NULL float* — not NULL itself — to avoid a segfault on *variance.
+    null_var_ptr = ctypes.c_void_p(None)
 
-    # Call spatial_convolve
-    convolve_c(img_ptr, None, ny, nx, coeffs_ptr, out_ptr, ctypes.byref(conv_method))
+    # Set up globals needed by spatial_convolve: rPixX, rPixY, mRData, kcStep.
+    # setupSpatialConvolve allocates a zeroed mask buffer, sets mRData to it,
+    # and sets rPixX/rPixY so make_kernel_local can normalise pixel coordinates.
+    # C convention: xSize=nx (width), ySize=ny (height); setupSpatialConvolve
+    # uses the same convention (rPixX=nx, rPixY=ny).
+    mask_ptr = lib.setupSpatialConvolve(nx, ny)
+    try:
+        convolve_c(img_ptr, ctypes.byref(null_var_ptr), nx, ny, coeffs_ptr, out_ptr, mask_ptr)
+    finally:
+        lib.cleanupSpatialConvolve()
 
     return output

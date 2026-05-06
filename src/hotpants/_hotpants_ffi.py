@@ -197,6 +197,20 @@ def get_hotpants_library_functions() -> dict[str, object]:
     ]
     functions["spatial_convolve"].restype = None
 
+    # int initKernelGlobals(int image_nx, int image_ny,
+    #                       int n_reg_x, int n_reg_y,
+    #                       int n_stamp_x, int n_stamp_y)
+    functions["initKernelGlobals"] = lib.initKernelGlobals
+    functions["initKernelGlobals"].argtypes = [
+        ctypes.c_int,  # image_nx
+        ctypes.c_int,  # image_ny
+        ctypes.c_int,  # n_reg_x
+        ctypes.c_int,  # n_reg_y
+        ctypes.c_int,  # n_stamp_x
+        ctypes.c_int,  # n_stamp_y
+    ]
+    functions["initKernelGlobals"].restype = ctypes.c_int
+
     # Wrapper functions for buildStamps context management
     # int initBuildStampsContext(float* template, float* science,
     #                            int ny, int nx, int n_regions_x, int n_regions_y,
@@ -229,6 +243,21 @@ def get_hotpants_library_functions() -> dict[str, object]:
     functions["cleanupBuildStampsContext"] = lib.cleanupBuildStampsContext
     functions["cleanupBuildStampsContext"].argtypes = []
     functions["cleanupBuildStampsContext"].restype = None
+
+    # int fillStampsForRegion(stamp_struct* stamps, int n_stamps)
+    functions["fillStampsForRegion"] = lib.fillStampsForRegion
+    functions["fillStampsForRegion"].argtypes = [ctypes.c_void_p, ctypes.c_int]
+    functions["fillStampsForRegion"].restype = ctypes.c_int
+
+    # int* setupSpatialConvolve(int nx, int ny)
+    functions["setupSpatialConvolve"] = lib.setupSpatialConvolve
+    functions["setupSpatialConvolve"].argtypes = [ctypes.c_int, ctypes.c_int]
+    functions["setupSpatialConvolve"].restype = ctypes.c_void_p
+
+    # void cleanupSpatialConvolve(void)
+    functions["cleanupSpatialConvolve"] = lib.cleanupSpatialConvolve
+    functions["cleanupSpatialConvolve"].argtypes = []
+    functions["cleanupSpatialConvolve"].restype = None
 
     return functions
 

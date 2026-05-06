@@ -249,6 +249,29 @@ extern int nThread; /* number of OpenMP threads */
  */
 
 /*
+ * Initialize derived kernel globals from hwKernel/kerOrder/bgOrder.
+ *
+ * Must be called before allocateStamps() or buildStamps(). Computes:
+ *   nCompKer, nComp, nC, fwKSStamp, fwKernel, fwStamp
+ * and initialises the Gaussian basis arrays (ngauss, deg_fixe, sigma_gauss)
+ * with standard defaults matching the 3-Gaussian HOTPANTS basis.
+ *
+ * The hwKernel, kerOrder, bgOrder, nKSStamps, hwKSStamp globals must be set
+ * by the caller before invoking this function.
+ *
+ * Args:
+ *   image_nx, image_ny: full image dimensions
+ *   n_reg_x, n_reg_y: number of regions per axis
+ *   n_stamp_x, n_stamp_y: stamps per region per axis
+ *
+ * Returns:
+ *   0 on success, -1 on allocation failure
+ */
+int initKernelGlobals(int image_nx, int image_ny,
+                      int n_reg_x, int n_reg_y,
+                      int n_stamp_x, int n_stamp_y);
+
+/*
  * Initialize buildStamps context for a complete image.
  *
  * Sets up global state and allocates region-level data structures needed
@@ -298,5 +321,23 @@ int buildStampsRegion(int region_x, int region_y,
  * and restore global state.
  */
 void cleanupBuildStampsContext(void);
+
+/*
+ * Set up globals for a full-image spatial_convolve() call.
+ *
+ * Allocates a zero-filled pixel mask of size nx*ny, sets the TLS globals
+ * rPixX, rPixY, and mRData so that spatial_convolve() works correctly on
+ * the full image.
+ *
+ * Returns:
+ *   Pointer to the mask array (pass as cMask to spatial_convolve), or NULL on error.
+ */
+int* setupSpatialConvolve(int nx, int ny);
+
+/*
+ * Clean up after a spatial_convolve() call.
+ * Resets mRData to NULL.
+ */
+void cleanupSpatialConvolve(void);
 
 #endif /* HOTPANTS_API_H */

@@ -211,6 +211,8 @@ def mock_hotpants_library(monkeypatch, request):
         'nCompKer': 3,
         'nComp': 6,  # (2+1)*(2+2)/2 for kerOrder=2
         'nCompBG': 3,  # (1+1)*(1+2)/2 for bgOrder=1
+        'nCompTotal': 21,  # nCompKer*nComp + nBGVectors = 3*6+3
+        'nS': 0,           # valid stamp count, set by build_stamps
         'verbose': 0,
         'nThread': 1,
     }
@@ -239,6 +241,8 @@ def mock_hotpants_library(monkeypatch, request):
     # freeStampMem returns void (None)
     mock_lib.freeStampMem.return_value = None
     # Wrapper functions
+    # initKernelGlobals should return 0 (success)
+    mock_lib.initKernelGlobals.return_value = 0
     # initBuildStampsContext should return 0 (success)
     mock_lib.initBuildStampsContext.return_value = 0
     # buildStampsRegion should return 0 (success) and set output pointers

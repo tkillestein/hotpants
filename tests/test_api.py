@@ -35,7 +35,7 @@ class TestKernelConfig:
         assert config.kernel_half_width == 15
         assert config.kernel_order == 2
         assert config.bg_order == 1
-        assert config.hw_ks_stamp == 10  # Must be <= kernel_half_width
+        assert config.hw_ks_stamp == 10
 
     def test_custom_config(self):
         """Custom config with valid parameters."""
@@ -48,10 +48,10 @@ class TestKernelConfig:
         with pytest.raises(ValidationError):
             KernelConfig(kernel_half_width=-1)
 
-    def test_hw_ks_stamp_too_large(self):
-        """hw_ks_stamp > kernel_half_width should raise ValidationError."""
-        with pytest.raises(ValidationError):
-            KernelConfig(kernel_half_width=10, hw_ks_stamp=15)
+    def test_hw_ks_stamp_larger_than_kernel(self):
+        """hw_ks_stamp > kernel_half_width is valid (HOTPANTS defaults: hwKSStamp=15, hwKernel=10)."""
+        config = KernelConfig(kernel_half_width=10, hw_ks_stamp=15)
+        assert config.hw_ks_stamp == 15
 
     def test_invalid_scale_fit_threshold(self):
         """scale_fit_threshold outside (0, 1] should raise ValidationError."""

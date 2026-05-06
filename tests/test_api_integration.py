@@ -84,10 +84,21 @@ class TestPythonAPIvsCLI:
         # Load CLI output (raw 2D array)
         cli_diff_raw = fits.getdata(str(diff_fits)).astype(np.float64)
 
-        # Run Python API
-        config = KernelConfig(kernel_half_width=10, kernel_order=2, bg_order=1)
-        layout = RegionLayout(n_regions_x=1, n_regions_y=1)
-        thresholds = NoiseThresholds()
+        # Run Python API — parameters must match CLI args above:
+        #   -r 10 -ko 2 -bgo 1 -ft 8 -nsx 5 -nsy 5
+        #   -tu 60000 -tl -200 -iu 60000 -il -200 -tg 1 -ig 1 -tr 5 -ir 5
+        config = KernelConfig(
+            kernel_half_width=10, kernel_order=2, bg_order=1, fit_threshold=8,
+            n_ks_stamps=3, hw_ks_stamp=15,
+        )
+        layout = RegionLayout(n_regions_x=1, n_regions_y=1,
+                              stamps_per_region_x=5, stamps_per_region_y=5)
+        thresholds = NoiseThresholds(
+            template_upper_threshold=60000, template_lower_threshold=-200,
+            science_upper_threshold=60000, science_lower_threshold=-200,
+            template_gain=1.0, science_gain=1.0,
+            template_readnoise=5.0, science_readnoise=5.0,
+        )
 
         kernel_solution = fit_kernel(
             template,
