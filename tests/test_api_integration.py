@@ -11,6 +11,7 @@ complete), but they document the expected behavior for the Python API.
 
 import pytest
 import numpy as np
+from astropy.io import fits
 
 from .conftest import (
     NX, NY,
@@ -73,10 +74,11 @@ class TestPythonAPIvsCLI:
             template_fits,
             science_fits,
             diff_fits,
-            extra_args=["-r", "10", "-k", "2", "-bg", "1"],
+            extra_args=["-r", "10", "-ko", "2", "-bgo", "1"],
         )
 
-        cli_diff = load_diff(diff_fits)
+        # Load CLI output (raw 2D array)
+        cli_diff_raw = fits.getdata(str(diff_fits)).astype(np.float64)
 
         # Run Python API
         config = KernelConfig(kernel_half_width=10, kernel_order=2, bg_order=1)
@@ -95,12 +97,17 @@ class TestPythonAPIvsCLI:
             science,
             kernel_solution,
             config=config,
-        )
+        ).astype(np.float64)
+
+        # Apply the same masking to both (remove hotpants fill pixels)
+        valid_mask = np.abs(cli_diff_raw - 1e-30) > 1e-35
+        cli_diff = cli_diff_raw[valid_mask]
+        api_diff_masked = api_diff[valid_mask]
 
         # Compare (allow small numerical differences)
         # Note: differences due to floating-point order of operations
         np.testing.assert_allclose(
-            cli_diff, api_diff,
+            cli_diff, api_diff_masked,
             rtol=1e-4, atol=1e-3,
             err_msg="Python API and CLI produce different results"
         )

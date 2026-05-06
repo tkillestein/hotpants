@@ -449,24 +449,155 @@ def build_stamps(
     """
     Build stamp grid and compute statistics.
 
-    Allocates stamp array and initializes via C buildStamps function.
+    Divides image into regions and stamp grids, identifies PSF centers,
+    and computes stamp statistics via C buildStamps function.
+
+    Algorithm:
+    1. Divide image into regions (nRegX × nRegY)
+    2. For each region, lay out stamp grid (nStampX × nStampY)
+    3. For each stamp, call C buildStamps to identify PSF centers
+    4. Compute statistics (mean, median, FWHM) for each stamp
 
     Args:
-        template: template image (float32)
-        science: science image (float32)
-        n_regions_x, n_regions_y: number of regions
-        stamps_per_region_x, stamps_per_region_y: stamps per region
+        template: template image (float32, shape ny×nx)
+        science: science image (float32, same shape as template)
+        n_regions_x, n_regions_y: number of regions per axis
+        stamps_per_region_x, stamps_per_region_y: stamps per region per axis
 
     Returns:
-        Pointer to allocated stamp array
+        Pointer to allocated stamp array (total: nRegX×nRegY×nStampX×nStampY)
+
+    Reference: Alard & Lupton (1998) Section 2.1; src/main.c lines 919-985
     """
+    validate_image_array(template, "template")
+    validate_image_array(science, "science")
+
+    if template.shape != science.shape:
+        msg = f"Template and science images must have same shape, got {template.shape} vs {science.shape}"
+        raise ValueError(msg)
+
     ny, nx = science.shape
 
-    # Total stamps
+    # Ensure images are C-contiguous
+    if not template.flags["C_CONTIGUOUS"]:
+        template = np.ascontiguousarray(template)
+    if not science.flags["C_CONTIGUOUS"]:
+        science = np.ascontiguousarray(science)
+
+    # Calculate region dimensions
+    region_width = nx // n_regions_x
+    region_height = ny // n_regions_y
+
+    # Total stamps across all regions
     n_stamps = n_regions_x * n_regions_y * stamps_per_region_x * stamps_per_region_y
 
-    # Allocate stamps
+    # Allocate primary stamp arrays
     stamps = allocate_stamps(n_stamps)
+    if not stamps:
+        msg = "Failed to allocate stamp array"
+        raise RuntimeError(msg)
+
+    # Allocate auxiliary stamp arrays
+    aux_t_stamps = allocate_stamps(n_stamps)
+    aux_i_stamps = allocate_stamps(n_stamps)
+
+    try:
+        # Get C buildStamps function with actual signature from functions.c
+        lib = _hotpants_ffi.get_library()
+        build_c = lib.buildStamps
+        build_c.argtypes = [
+            ctypes.c_int,  # sXMin
+            ctypes.c_int,  # sXMax
+            ctypes.c_int,  # sYMin
+            ctypes.c_int,  # sYMax
+            ctypes.POINTER(ctypes.c_int),  # *niS (science stamp counter)
+            ctypes.POINTER(ctypes.c_int),  # *ntS (template stamp counter)
+            ctypes.c_int,  # getCenters (0=use center, 1=find bright centers)
+            ctypes.c_int,  # rXBMin (region x boundary minimum)
+            ctypes.c_int,  # rYBMin (region y boundary minimum)
+            ctypes.POINTER(StampStruct),  # *ciStamps (science stamps)
+            ctypes.POINTER(StampStruct),  # *ctStamps (template stamps)
+            ctypes.c_void_p,  # float *iRData (science region data)
+            ctypes.c_void_p,  # float *tRData (template region data)
+            ctypes.c_float,  # hardX (hard-coded x center, 0.0 to skip)
+            ctypes.c_float,  # hardY (hard-coded y center, 0.0 to skip)
+        ]
+        build_c.restype = None
+
+        # Get global parameters
+        hw_kernel = _hotpants_ffi.get_global_int("hwKernel")
+
+        # Convert images to C pointers
+        sci_ptr = array_to_cptr(science)
+        tpl_ptr = array_to_cptr(template)
+
+        # Iterate over regions
+        global_stamp_idx = 0
+        for region_y in range(n_regions_y):
+            for region_x in range(n_regions_x):
+                # Calculate region bounds
+                r_x_min = region_x * region_width
+                r_x_max = min((region_x + 1) * region_width - 1, nx - 1)
+                r_y_min = region_y * region_height
+                r_y_max = min((region_y + 1) * region_height - 1, ny - 1)
+
+                # Add kernel border
+                r_x_b_min = max(0, r_x_min - hw_kernel)
+                r_x_b_max = min(nx - 1, r_x_max + hw_kernel)
+                r_y_b_min = max(0, r_y_min - hw_kernel)
+                r_y_b_max = min(ny - 1, r_y_max + hw_kernel)
+
+                # Iterate over stamps within region
+                for stamp_y in range(stamps_per_region_y):
+                    for stamp_x in range(stamps_per_region_x):
+                        # Calculate stamp bounds within region
+                        stamp_width = (r_x_max - r_x_min + 1) // stamps_per_region_x
+                        stamp_height = (r_y_max - r_y_min + 1) // stamps_per_region_y
+
+                        s_x_min = r_x_b_min + stamp_x * stamp_width
+                        s_y_min = r_y_b_min + stamp_y * stamp_height
+                        s_x_max = min(s_x_min + stamp_width - 1, r_x_b_max)
+                        s_y_max = min(s_y_min + stamp_height - 1, r_y_b_max)
+
+                        # Stamp counters for this call
+                        ni_s = ctypes.c_int(0)
+                        nt_s = ctypes.c_int(0)
+
+                        # Call C buildStamps for this stamp
+                        try:
+                            build_c(
+                                s_x_min,  # sXMin
+                                s_x_max,  # sXMax
+                                s_y_min,  # sYMin
+                                s_y_max,  # sYMax
+                                ctypes.byref(ni_s),  # *niS
+                                ctypes.byref(nt_s),  # *ntS
+                                1,  # getCenters: automatically find bright centers
+                                r_x_b_min,  # rXBMin
+                                r_y_b_min,  # rYBMin
+                                ctypes.byref(aux_i_stamps[global_stamp_idx]),  # *ciStamps
+                                ctypes.byref(aux_t_stamps[global_stamp_idx]),  # *ctStamps
+                                sci_ptr,  # float *iRData
+                                tpl_ptr,  # float *tRData
+                                0.0,  # hardX
+                                0.0,  # hardY
+                            )
+
+                            # Copy populated stamp to output array if valid
+                            if ni_s.value > 0:
+                                stamps[global_stamp_idx] = aux_i_stamps[global_stamp_idx]
+                            if nt_s.value > 0:
+                                stamps[global_stamp_idx] = aux_t_stamps[global_stamp_idx]
+
+                            global_stamp_idx += 1
+                        except Exception as e:
+                            msg = f"C buildStamps failed at region ({region_x}, {region_y}), stamp ({stamp_x}, {stamp_y}): {e}"
+                            raise RuntimeError(msg) from e
+
+    finally:
+        # Clean up auxiliary stamp arrays
+        free_stamps(aux_t_stamps, n_stamps)
+        free_stamps(aux_i_stamps, n_stamps)
 
     return stamps
 

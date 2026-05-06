@@ -138,14 +138,18 @@ def write_fits(path, data):
 
 
 def run_hotpants(binary, tmpl, sci, diff, extra_args=()):
-    """Run hotpants; return the CompletedProcess."""
+    """Run hotpants; raise error if command fails."""
     cmd = (
         [str(binary)]
         + ["-inim", str(sci), "-tmplim", str(tmpl), "-outim", str(diff)]
         + HOTPANTS_BASE_ARGS
         + list(extra_args)
     )
-    return subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        msg = f"hotpants failed with exit code {result.returncode}\nStdout: {result.stdout}\nStderr: {result.stderr}"
+        raise RuntimeError(msg)
+    return result
 
 
 def load_diff(path):
@@ -161,15 +165,18 @@ def load_diff(path):
 @pytest.fixture(autouse=True)
 def mock_hotpants_library(monkeypatch, request):
     """
-    Auto-mock the HOTPANTS C library for Python API tests.
+    Auto-mock the HOTPANTS C library for Python API unit tests.
 
     Provides dummy implementations of C library functions so tests can run
     without requiring the compiled C library to be available.
 
     This fixture is automatically applied to all tests in test_api.py.
+    Integration tests (test_api_integration.py) use the real C library.
     """
-    # Only mock for test_api.py and test_api_integration.py
-    if 'test_api' not in str(request.fspath):
+    # Only mock for test_api.py (unit tests), not integration or regression tests
+    if 'test_api_integration' in str(request.fspath) or 'test_regression' in str(request.fspath):
+        return None
+    if 'test_api.py' not in str(request.fspath):
         return None
 
     from unittest.mock import MagicMock
