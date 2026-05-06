@@ -10,6 +10,8 @@ Tests cover:
 
 import pytest
 import numpy as np
+from pydantic import ValidationError
+
 from hotpants import (
     fit_kernel,
     spatial_convolve,
@@ -42,20 +44,20 @@ class TestKernelConfig:
         assert config.kernel_order == 3
 
     def test_negative_kernel_half_width(self):
-        """Negative kernel_half_width should raise ValueError."""
-        with pytest.raises(ValueError, match="kernel_half_width must be positive"):
+        """Negative kernel_half_width should raise ValidationError."""
+        with pytest.raises(ValidationError):
             KernelConfig(kernel_half_width=-1)
 
     def test_hw_ks_stamp_too_large(self):
-        """hw_ks_stamp > kernel_half_width should raise ValueError."""
-        with pytest.raises(ValueError, match="hw_ks_stamp must be <="):
+        """hw_ks_stamp > kernel_half_width should raise ValidationError."""
+        with pytest.raises(ValidationError):
             KernelConfig(kernel_half_width=10, hw_ks_stamp=15)
 
     def test_invalid_scale_fit_threshold(self):
-        """scale_fit_threshold outside (0, 1] should raise ValueError."""
-        with pytest.raises(ValueError, match="scale_fit_threshold"):
+        """scale_fit_threshold outside (0, 1] should raise ValidationError."""
+        with pytest.raises(ValidationError):
             KernelConfig(scale_fit_threshold=1.5)
-        with pytest.raises(ValueError, match="scale_fit_threshold"):
+        with pytest.raises(ValidationError):
             KernelConfig(scale_fit_threshold=0.0)
 
 
@@ -71,8 +73,8 @@ class TestRegionLayout:
         assert layout.stamps_per_region_y == 10
 
     def test_invalid_regions(self):
-        """Invalid region counts should raise ValueError."""
-        with pytest.raises(ValueError, match="n_regions_"):
+        """Invalid region counts should raise ValidationError."""
+        with pytest.raises(ValidationError):
             RegionLayout(n_regions_x=0)
 
 
@@ -85,13 +87,13 @@ class TestNoiseThresholds:
         assert thresh.template_upper_threshold > thresh.template_lower_threshold
 
     def test_invalid_gain(self):
-        """Non-positive gain should raise ValueError."""
-        with pytest.raises(ValueError, match="gain"):
+        """Non-positive gain should raise ValidationError."""
+        with pytest.raises(ValidationError):
             NoiseThresholds(template_gain=0.0)
 
     def test_invalid_threshold_order(self):
-        """upper_threshold <= lower_threshold should raise ValueError."""
-        with pytest.raises(ValueError, match="upper_threshold"):
+        """upper_threshold <= lower_threshold should raise ValidationError."""
+        with pytest.raises(ValidationError):
             NoiseThresholds(
                 template_upper_threshold=100.0,
                 template_lower_threshold=200.0

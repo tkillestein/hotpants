@@ -28,22 +28,19 @@ Example usage:
 Reference: Alard & Lupton (1998), ApJ 503:325
 """
 
-from dataclasses import dataclass
-
 import numpy as np
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from . import _core
 from ._core import allocate_array, global_state, validate_image_array
 
 # =====================================================================
-# Configuration Dataclasses
+# Configuration Models (Pydantic)
 # =====================================================================
 
 
-# TODO: replace dataclasses with Pydantic models for better validation and UX.
-@dataclass
-class KernelConfig:
+class KernelConfig(BaseModel):
     """
     Kernel fitting and basis configuration.
 
@@ -79,44 +76,25 @@ class KernelConfig:
             (Maps to C global: hwKSStamp)
     """
 
-    kernel_half_width: int = 15
-    kernel_order: int = 2
-    bg_order: int = 1
-    fit_threshold: float = 20.0
-    scale_fit_threshold: float = 0.5
-    n_ks_stamps: int = 3
-    hw_ks_stamp: int = 10
+    kernel_half_width: int = Field(default=15, gt=0)
+    kernel_order: int = Field(default=2, ge=0)
+    bg_order: int = Field(default=1, ge=0)
+    fit_threshold: float = Field(default=20.0, gt=0)
+    scale_fit_threshold: float = Field(default=0.5, gt=0, le=1)
+    n_ks_stamps: int = Field(default=3, gt=0)
+    hw_ks_stamp: int = Field(default=10, gt=0)
 
-    def __post_init__(self) -> None:
-        """Validate configuration parameters."""
-        if self.kernel_half_width <= 0:
-            msg = "kernel_half_width must be positive"
+    @field_validator("hw_ks_stamp")
+    @classmethod
+    def validate_ks_stamp_size(cls, v: int, info) -> int:
+        """Ensure hw_ks_stamp <= kernel_half_width."""
+        if "kernel_half_width" in info.data and v > info.data["kernel_half_width"]:
+            msg = "hw_ks_stamp must be <= kernel_half_width"
             raise ValueError(msg)
-        if self.kernel_order < 0:
-            msg_0 = "kernel_order must be >= 0"
-            raise ValueError(msg_0)
-        if self.bg_order < 0:
-            msg_1 = "bg_order must be >= 0"
-            raise ValueError(msg_1)
-        if self.fit_threshold <= 0:
-            msg_2 = "fit_threshold must be positive"
-            raise ValueError(msg_2)
-        if not (0 < self.scale_fit_threshold <= 1):
-            msg_3 = "scale_fit_threshold must be in (0, 1]"
-            raise ValueError(msg_3)
-        if self.n_ks_stamps <= 0:
-            msg_4 = "n_ks_stamps must be positive"
-            raise ValueError(msg_4)
-        if self.hw_ks_stamp <= 0:
-            msg_5 = "hw_ks_stamp must be positive"
-            raise ValueError(msg_5)
-        if self.hw_ks_stamp > self.kernel_half_width:
-            msg_6 = "hw_ks_stamp must be <= kernel_half_width"
-            raise ValueError(msg_6)
+        return v
 
 
-@dataclass
-class RegionLayout:
+class RegionLayout(BaseModel):
     """
     Image tiling and stamp grid configuration.
 
@@ -141,24 +119,14 @@ class RegionLayout:
             (Maps to C global: useFullSS)
     """
 
-    n_regions_x: int = 1
-    n_regions_y: int = 1
-    stamps_per_region_x: int = 10
-    stamps_per_region_y: int = 10
+    n_regions_x: int = Field(default=1, ge=1)
+    n_regions_y: int = Field(default=1, ge=1)
+    stamps_per_region_x: int = Field(default=10, ge=1)
+    stamps_per_region_y: int = Field(default=10, ge=1)
     use_full_substamps: bool = False
 
-    def __post_init__(self) -> None:
-        """Validate layout parameters."""
-        if self.n_regions_x < 1 or self.n_regions_y < 1:
-            msg = "n_regions_* must be >= 1"
-            raise ValueError(msg)
-        if self.stamps_per_region_x < 1 or self.stamps_per_region_y < 1:
-            msg = "stamps_per_region_* must be >= 1"
-            raise ValueError(msg)
 
-
-@dataclass
-class NoiseThresholds:
+class NoiseThresholds(BaseModel):
     """
     Data quality thresholds and noise model.
 
@@ -201,28 +169,26 @@ class NoiseThresholds:
     template_lower_threshold: float = 0.0
     science_upper_threshold: float = 25000.0
     science_lower_threshold: float = 0.0
-    template_gain: float = 1.0
-    science_gain: float = 1.0
-    template_readnoise: float = 0.0
-    science_readnoise: float = 0.0
+    template_gain: float = Field(default=1.0, gt=0)
+    science_gain: float = Field(default=1.0, gt=0)
+    template_readnoise: float = Field(default=0.0, ge=0)
+    science_readnoise: float = Field(default=0.0, ge=0)
     template_pedestal: float = 0.0
     science_pedestal: float = 0.0
 
-    def __post_init__(self) -> None:
-        """Validate threshold parameters."""
-        if self.template_gain <= 0 or self.science_gain <= 0:
-            msg = "gain values must be positive"
-            raise ValueError(msg)
-        if self.template_readnoise < 0 or self.science_readnoise < 0:
-            msg = "readnoise values must be >= 0"
-            raise ValueError(msg)
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> "NoiseThresholds":
+        """Ensure upper thresholds > lower thresholds."""
         if self.template_upper_threshold <= self.template_lower_threshold:
-            msg = "upper_threshold must be > lower_threshold"
+            msg = "template_upper_threshold must be > template_lower_threshold"
             raise ValueError(msg)
+        if self.science_upper_threshold <= self.science_lower_threshold:
+            msg = "science_upper_threshold must be > science_lower_threshold"
+            raise ValueError(msg)
+        return self
 
 
-@dataclass
-class KernelSolution:
+class KernelSolution(BaseModel):
     """
     Result of kernel fitting.
 
@@ -235,6 +201,8 @@ class KernelSolution:
         kernel_coefficients: Array of fitted kernel polynomial coefficients.
             Shape: (n_kernel_components,)
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     chi2: float
     kernel_norm: float
