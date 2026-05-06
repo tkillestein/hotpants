@@ -27,25 +27,13 @@ typedef struct {
   double diff;
 } stamp_struct;
 
-/* Declare globals without TLS - we'll access them via proper extern with threadprivate pragma */
-#ifdef _OPENMP
+/* Declare globals accessed by wrapper */
 extern __thread int rPixX, rPixY;
 extern __thread int* mRData;
-#else
-extern int rPixX, rPixY;
-extern int* mRData;
-#endif
-
 extern char* forceConvolve;
 extern int fwKernel, fwStamp;
 
 /* Forward declarations - defined in functions.c */
-extern void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int* niS, int* ntS,
-                        int getCenters, int rXBMin, int rYBMin, stamp_struct* ciStamps,
-                        stamp_struct* ctStamps, float* iRData, float* tRData,
-                        float hardX, float hardY);
-extern void cutRegion(float* inArray, float* outArray, int xBMin, int xBMax,
-                      int yBMin, int yBMax, int nx);
 extern void makeInputMask(float* iRData, float* tRData, int* mRData);
 
 /* Wrapper context: global state for buildStamps operations */
@@ -59,8 +47,6 @@ static struct {
   float* region_t_buffer;     /* Per-region template buffer */
   float* region_i_buffer;     /* Per-region science buffer */
   int* region_mask_buffer;    /* Per-region mask array */
-  int* region_i_mask_buffer;  /* Per-region science image mask */
-  int* region_t_mask_buffer;  /* Per-region template mask */
 
   int initialized;            /* Flag to track initialization */
 } wrapper_context = {
@@ -89,7 +75,7 @@ int initBuildStampsContext(float* template, float* science,
                            int stamps_per_region_x, int stamps_per_region_y) {
   if (wrapper_context.initialized) {
     fprintf(stderr, "WARNING: Context already initialized\n");
-    return -1; /* Already initialized */
+    return -1;
   }
 
   /* Validate inputs */
@@ -120,14 +106,11 @@ int initBuildStampsContext(float* template, float* science,
   wrapper_context.region_t_buffer = (float*)calloc(max_region_size, sizeof(float));
   wrapper_context.region_i_buffer = (float*)calloc(max_region_size, sizeof(float));
   wrapper_context.region_mask_buffer = (int*)calloc(max_region_size, sizeof(int));
-  wrapper_context.region_i_mask_buffer = (int*)calloc(max_region_size, sizeof(int));
-  wrapper_context.region_t_mask_buffer = (int*)calloc(max_region_size, sizeof(int));
 
   if (!wrapper_context.region_t_buffer || !wrapper_context.region_i_buffer ||
-      !wrapper_context.region_mask_buffer || !wrapper_context.region_i_mask_buffer ||
-      !wrapper_context.region_t_mask_buffer) {
+      !wrapper_context.region_mask_buffer) {
     fprintf(stderr, "ERROR: Failed to allocate region buffers\n");
-    return -1; /* Allocation failed */
+    return -1;
   }
 
   /* Set global forceConvolve to "i" (convolve science image, matching template) */
@@ -138,11 +121,17 @@ int initBuildStampsContext(float* template, float* science,
   return 0;
 }
 
-/* Build stamps for a single region */
+/* Extract and setup region data for buildStamps
+ *
+ * This function extracts a region from the full images, sets up global state,
+ * and prepares data for the C buildStamps function. Python code then calls
+ * buildStamps directly with the returned pointers.
+ */
 int buildStampsRegion(int region_x, int region_y,
-                      stamp_struct* stamps, int n_stamps) {
+                      float** out_template_region, float** out_science_region) {
   if (!wrapper_context.initialized) {
-    return -1; /* Context not initialized */
+    fprintf(stderr, "ERROR: Context not initialized\n");
+    return -1;
   }
 
   /* Compute region boundaries */
@@ -154,12 +143,14 @@ int buildStampsRegion(int region_x, int region_y,
                     &rx_min, &rx_max, &ry_min, &ry_max,
                     &r_pix_x, &r_pix_y);
 
-  /* Set global region dimensions (used by buildStamps internally) */
+  /* Set global region dimensions (required by C buildStamps) */
   rPixX = r_pix_x;
   rPixY = r_pix_y;
 
-  /* Extract region data from full images using numpy slicing equivalent */
-  /* This is done in Python, so here we just use the pre-extracted buffers */
+  fprintf(stderr, "DEBUG: buildStampsRegion(%d, %d): region_size=%dx%d\n",
+          region_x, region_y, r_pix_x, r_pix_y);
+
+  /* Extract region data from full images */
   for (int y = 0; y < r_pix_y; y++) {
     for (int x = 0; x < r_pix_x; x++) {
       int region_idx = y * r_pix_x + x;
@@ -169,10 +160,8 @@ int buildStampsRegion(int region_x, int region_y,
     }
   }
 
-  /* Initialize mask arrays */
+  /* Initialize mask array */
   memset(wrapper_context.region_mask_buffer, 0, r_pix_x * r_pix_y * sizeof(int));
-  memset(wrapper_context.region_i_mask_buffer, 0, r_pix_x * r_pix_y * sizeof(int));
-  memset(wrapper_context.region_t_mask_buffer, 0, r_pix_x * r_pix_y * sizeof(int));
 
   /* Set the global mask array pointer */
   mRData = wrapper_context.region_mask_buffer;
@@ -181,41 +170,11 @@ int buildStampsRegion(int region_x, int region_y,
   makeInputMask(wrapper_context.region_i_buffer, wrapper_context.region_t_buffer,
                 wrapper_context.region_mask_buffer);
 
-  /* Build stamps - iterate through stamp grid */
-  int niS = 0, ntS = 0;  /* Stamp counters for this region */
-  int stamps_built = 0;
+  /* Return pointers to extracted region data */
+  *out_template_region = wrapper_context.region_t_buffer;
+  *out_science_region = wrapper_context.region_i_buffer;
 
-  for (int stamp_y = 0; stamp_y < wrapper_context.stamps_per_region_y; stamp_y++) {
-    for (int stamp_x = 0; stamp_x < wrapper_context.stamps_per_region_x; stamp_x++) {
-      if (stamps_built >= n_stamps) {
-        break; /* Don't exceed expected stamp count */
-      }
-
-      /* Compute stamp boundaries in full image coordinates */
-      int sXMin = rx_min + (stamp_x * r_pix_x) / wrapper_context.stamps_per_region_x;
-      int sXMax = rx_min + (((stamp_x + 1) * r_pix_x) / wrapper_context.stamps_per_region_x) - 1;
-      int sYMin = ry_min + (stamp_y * r_pix_y) / wrapper_context.stamps_per_region_y;
-      int sYMax = ry_min + (((stamp_y + 1) * r_pix_y) / wrapper_context.stamps_per_region_y) - 1;
-
-      /* Clamp to region boundaries */
-      if (sXMax >= wrapper_context.full_nx) sXMax = wrapper_context.full_nx - 1;
-      if (sYMax >= wrapper_context.full_ny) sYMax = wrapper_context.full_ny - 1;
-
-      /* Call buildStamps with region-relative coordinates */
-      /* Note: buildStamps signature expects rXBMin, rYBMin for offset calculation */
-      buildStamps(sXMin, sXMax, sYMin, sYMax, &niS, &ntS, 1,
-                  rx_min, ry_min,
-                  &stamps[stamps_built],  /* Single stamp per call */
-                  &stamps[stamps_built],  /* Both point to same stamp for simplicity */
-                  wrapper_context.region_i_buffer,
-                  wrapper_context.region_t_buffer,
-                  (float)fwKernel, (float)fwStamp);
-
-      stamps_built++;
-    }
-  }
-
-  return stamps_built; /* Return number of stamps built */
+  return 0; /* Success */
 }
 
 /* Clean up buildStamps context */
@@ -223,6 +182,8 @@ void cleanupBuildStampsContext(void) {
   if (!wrapper_context.initialized) {
     return;
   }
+
+  fprintf(stderr, "DEBUG: cleanupBuildStampsContext called\n");
 
   /* Free allocated buffers */
   if (wrapper_context.region_t_buffer) {
@@ -236,14 +197,6 @@ void cleanupBuildStampsContext(void) {
   if (wrapper_context.region_mask_buffer) {
     free(wrapper_context.region_mask_buffer);
     wrapper_context.region_mask_buffer = NULL;
-  }
-  if (wrapper_context.region_i_mask_buffer) {
-    free(wrapper_context.region_i_mask_buffer);
-    wrapper_context.region_i_mask_buffer = NULL;
-  }
-  if (wrapper_context.region_t_mask_buffer) {
-    free(wrapper_context.region_t_mask_buffer);
-    wrapper_context.region_t_mask_buffer = NULL;
   }
 
   /* Reset global pointers */

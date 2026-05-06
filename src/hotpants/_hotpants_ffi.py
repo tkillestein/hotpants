@@ -215,13 +215,13 @@ def get_hotpants_library_functions() -> dict[str, object]:
     functions["initBuildStampsContext"].restype = ctypes.c_int
 
     # int buildStampsRegion(int region_x, int region_y,
-    #                       stamp_struct* stamps, int n_stamps)
+    #                       float** out_template_region, float** out_science_region)
     functions["buildStampsRegion"] = lib.buildStampsRegion
     functions["buildStampsRegion"].argtypes = [
         ctypes.c_int,  # region_x
         ctypes.c_int,  # region_y
-        ctypes.c_void_p,  # stamp_struct *stamps
-        ctypes.c_int,  # n_stamps
+        ctypes.POINTER(ctypes.c_void_p),  # *out_template_region
+        ctypes.POINTER(ctypes.c_void_p),  # *out_science_region
     ]
     functions["buildStampsRegion"].restype = ctypes.c_int
 

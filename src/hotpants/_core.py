@@ -515,10 +515,31 @@ def build_stamps(
         build_region.argtypes = [
             ctypes.c_int,  # region_x
             ctypes.c_int,  # region_y
-            ctypes.POINTER(StampStruct),  # stamp_struct *stamps
-            ctypes.c_int,  # n_stamps (stamps per region)
+            ctypes.POINTER(ctypes.c_void_p),  # *out_template_region
+            ctypes.POINTER(ctypes.c_void_p),  # *out_science_region
         ]
         build_region.restype = ctypes.c_int
+
+        # Get the C buildStamps function for direct calls
+        build_c = lib.buildStamps
+        build_c.argtypes = [
+            ctypes.c_int,  # sXMin
+            ctypes.c_int,  # sXMax
+            ctypes.c_int,  # sYMin
+            ctypes.c_int,  # sYMax
+            ctypes.POINTER(ctypes.c_int),  # *niS (science stamp counter)
+            ctypes.POINTER(ctypes.c_int),  # *ntS (template stamp counter)
+            ctypes.c_int,  # getCenters (0=use center, 1=find bright centers)
+            ctypes.c_int,  # rXBMin (region x boundary minimum)
+            ctypes.c_int,  # rYBMin (region y boundary minimum)
+            ctypes.POINTER(StampStruct),  # *ciStamps (science stamps)
+            ctypes.POINTER(StampStruct),  # *ctStamps (template stamps)
+            ctypes.c_void_p,  # float *iRData (science region data)
+            ctypes.c_void_p,  # float *tRData (template region data)
+            ctypes.c_float,  # hardX (hard-coded x center, 0.0 to skip)
+            ctypes.c_float,  # hardY (hard-coded y center, 0.0 to skip)
+        ]
+        build_c.restype = None
 
         cleanup_context.argtypes = []
         cleanup_context.restype = None
@@ -555,25 +576,79 @@ def build_stamps(
             raise RuntimeError(msg)
 
         try:
-            # Process each region using the wrapper function
+            # Process each region
             stamps_per_region = stamps_per_region_x * stamps_per_region_y
             global_stamp_idx = 0
 
+            # Calculate region dimensions
+            region_width = nx // n_regions_x
+            region_height = ny // n_regions_y
+
             for region_y in range(n_regions_y):
                 for region_x in range(n_regions_x):
-                    # Call C wrapper to build stamps for this region
-                    n_built = build_region(
+                    # Get region boundaries in full image coordinates
+                    r_x_min = region_x * region_width
+                    r_x_max = min((region_x + 1) * region_width - 1, nx - 1)
+                    r_y_min = region_y * region_height
+                    r_y_max = min((region_y + 1) * region_height - 1, ny - 1)
+
+                    # Add kernel border for edge handling
+                    r_x_b_min = max(0, r_x_min - hw_kernel)
+                    r_x_b_max = min(nx - 1, r_x_max + hw_kernel)
+                    r_y_b_min = max(0, r_y_min - hw_kernel)
+                    r_y_b_max = min(ny - 1, r_y_max + hw_kernel)
+
+                    # Call wrapper to extract region data and setup globals
+                    region_t_ptr = ctypes.c_void_p()
+                    region_i_ptr = ctypes.c_void_p()
+                    ret = build_region(
                         region_x,  # region x coordinate
                         region_y,  # region y coordinate
-                        ctypes.byref(stamps[global_stamp_idx]),  # output stamp array
-                        stamps_per_region,  # number of stamps per region
+                        ctypes.byref(region_t_ptr),  # output template region pointer
+                        ctypes.byref(region_i_ptr),  # output science region pointer
                     )
 
-                    if n_built < 0:
-                        msg = f"Failed to build stamps for region ({region_x}, {region_y})"
+                    if ret != 0:
+                        msg = f"Failed to extract region ({region_x}, {region_y})"
                         raise RuntimeError(msg)
 
-                    global_stamp_idx += stamps_per_region
+                    # Now call buildStamps directly with extracted region data
+                    # Iterate over stamps within this region
+                    for stamp_y in range(stamps_per_region_y):
+                        for stamp_x in range(stamps_per_region_x):
+                            # Calculate stamp bounds relative to region borders
+                            stamp_width = (r_x_b_max - r_x_b_min + 1) // stamps_per_region_x
+                            stamp_height = (r_y_b_max - r_y_b_min + 1) // stamps_per_region_y
+
+                            s_x_min = stamp_x * stamp_width
+                            s_y_min = stamp_y * stamp_height
+                            s_x_max = min(s_x_min + stamp_width - 1, (r_x_b_max - r_x_b_min))
+                            s_y_max = min(s_y_min + stamp_height - 1, (r_y_b_max - r_y_b_min))
+
+                            # Stamp counters
+                            ni_s = ctypes.c_int(0)
+                            nt_s = ctypes.c_int(0)
+
+                            # Call buildStamps with region data
+                            build_c(
+                                s_x_min,  # sXMin
+                                s_x_max,  # sXMax
+                                s_y_min,  # sYMin
+                                s_y_max,  # sYMax
+                                ctypes.byref(ni_s),  # *niS
+                                ctypes.byref(nt_s),  # *ntS
+                                1,  # getCenters: automatically find bright centers
+                                r_x_b_min,  # rXBMin: region origin in full image
+                                r_y_b_min,  # rYBMin: region origin in full image
+                                ctypes.byref(stamps[global_stamp_idx]),  # *ciStamps
+                                ctypes.byref(stamps[global_stamp_idx]),  # *ctStamps
+                                region_i_ptr,  # float *iRData (region-sized)
+                                region_t_ptr,  # float *tRData (region-sized)
+                                0.0,  # hardX
+                                0.0,  # hardY
+                            )
+
+                            global_stamp_idx += 1
 
         finally:
             # Always clean up context

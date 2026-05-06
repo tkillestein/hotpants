@@ -272,20 +272,24 @@ int initBuildStampsContext(float* template, float* science,
 /*
  * Build stamps for a single region with proper global state management.
  *
- * Handles stamp extraction, statistics computation, and PSF center detection
- * for all stamps within a region. Properly manages mask arrays and global
- * state required by buildStamps().
+ * Handles region data extraction, mask setup, and global state configuration
+ * for a single region. Returns pointers to extracted region buffers that can
+ * be passed directly to the C buildStamps function.
  *
  * Args:
  *   region_x, region_y: region coordinates (0-indexed)
- *   stamps: output array of stamp_struct for this region
- *   n_stamps: number of stamps expected in this region
+ *   out_template_region: output pointer to extracted template region buffer
+ *   out_science_region: output pointer to extracted science region buffer
  *
  * Returns:
- *   Number of stamps successfully built, -1 on error
+ *   0 on success, -1 on error
+ *
+ * Note: After calling this function, rPixX and rPixY globals are set to the
+ * region dimensions, and mRData points to the mask array. Use these values
+ * when calling buildStamps with the returned region buffers.
  */
 int buildStampsRegion(int region_x, int region_y,
-                      stamp_struct* stamps, int n_stamps);
+                      float** out_template_region, float** out_science_region);
 
 /*
  * Clean up buildStamps context and free allocated memory.

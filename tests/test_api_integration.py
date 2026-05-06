@@ -31,22 +31,6 @@ pytest.importorskip("hotpants")
 from hotpants import fit_kernel, spatial_convolve, KernelConfig, RegionLayout, NoiseThresholds
 
 
-@pytest.mark.skip(reason="""
-C integration blocked: buildStamps requires extensive global state initialization
-beyond simple parameter passing. The C function depends on:
-1. forceConvolve (char* string) - requires C wrapper to set
-2. Multiple thresholds: tUKThresh, tLThresh, various mask flags
-3. Hardware params: nKSStamps, hwKSStamp, hwKernel, fwKernel, fwStamp
-4. Image masking arrays: mRData, mask flags (FLAG_*_BAD, FLAG_*_SKIP)
-
-The Python wrapper would need to either:
-- Call a C initialization function that sets all globals
-- Implement region-based wrapper functions in hotpants_api.h
-- Refactor the entire Python layer to manage all C state
-
-For now, the Python API is production-ready for structural validation.
-Full C integration is future work.
-""")
 class TestPythonAPIvsCLI:
     """
     Compare Python API results to C CLI.
@@ -54,10 +38,9 @@ class TestPythonAPIvsCLI:
     These tests ensure that the Python API wrapper and C CLI produce
     numerically identical results on the same inputs.
 
-    NOTE: Skipped pending completion of C function integration. The C buildStamps
-    function depends on global state setup that happens in main.c. Future work:
-    either create proper C wrapper functions in hotpants_api.h or initialize
-    all required globals (rPixX, rPixY, forceConvolve, thresholds, etc).
+    C integration is now complete via wrapper functions (initBuildStampsContext,
+    buildStampsRegion, cleanupBuildStampsContext) in hotpants_wrapper.c that manage
+    all required global state internally.
     """
 
     @pytest.fixture

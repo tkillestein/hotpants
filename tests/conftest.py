@@ -241,8 +241,10 @@ def mock_hotpants_library(monkeypatch, request):
     # Wrapper functions
     # initBuildStampsContext should return 0 (success)
     mock_lib.initBuildStampsContext.return_value = 0
-    # buildStampsRegion should return number of stamps built
-    mock_lib.buildStampsRegion.return_value = 100
+    # buildStampsRegion should return 0 (success) and set output pointers
+    mock_lib.buildStampsRegion.return_value = 0
+    # buildStamps returns void (None)
+    mock_lib.buildStamps.return_value = None
     # cleanupBuildStampsContext returns void (None)
     mock_lib.cleanupBuildStampsContext.return_value = None
 
