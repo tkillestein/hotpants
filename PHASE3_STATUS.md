@@ -1,6 +1,6 @@
 # Phase 3 Integration Testing — Status & Next Steps
 
-## Current State (May 6, 2026)
+## Current State (May 6, 2026 - Late Evening)
 
 ### ✅ Completed
 
@@ -10,6 +10,9 @@
 - Pydantic models for configuration with full validation
 - Test fixtures corrected (star_field, make_image, run_hotpants signatures)
 - Mock C library properly set up for unit tests
+- Fixed integration test mocking to only apply to unit tests (not integration/regression)
+- Integration test CLI option fixes (-ko, -bgo instead of -k, -bg)
+- Integration test output comparison logic updated
 
 **Python API:**
 - `KernelConfig`, `RegionLayout`, `NoiseThresholds` — fully validated
@@ -19,36 +22,89 @@
 
 ### ⧉ In Progress
 
-**C Function Integration:**
-- Skeleton implementations of `build_stamps()`, `fit_kernel_c()` exist
-- These don't yet call actual C functions for region iteration and fitting
-- Integration tests fixed but skipped until C functions are implemented
+**C Function Integration (build_stamps wrapper):**
+- `build_stamps()` wrapper designed with proper region iteration
+- Calls actual C `buildStamps()` from functions.c with correct signature
+- **Key discovery:** C buildStamps expects region-extracted image data, not full images
+- Integration tests blocked: segfault when calling buildStamps with full image pointers
+- **Next step:** Implement region extraction before calling C function
+
+## Critical Discovery: C buildStamps() Requires Region Data Extraction
+
+The C `buildStamps()` function in functions.c (line 250) has the signature:
+```c
+void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int* niS, int* ntS,
+                 int getCenters, int rXBMin, int rYBMin, stamp_struct* ciStamps,
+                 stamp_struct* ctStamps, float* iRData, float* tRData,
+                 float hardX, float hardY);
+```
+
+**Critical parameter:** `rPixX` and `rPixY` are NOT pointers (as described in hotpants_api.h), but integers representing the region width and height. The function internally uses these to compute row-major offsets into `iRData` and `tRData`.
+
+**This means:**
+- `iRData` and `tRData` must point to **region-extracted image buffers**, not the full image
+- The wrapper must call `cutRegion()` to extract regions before calling `buildStamps()`
+- Current implementation passes full image pointers → causes segfault
+
+**Example from main.c (lines 746-748):**
+```c
+tRData = (float*)calloc(rPixX * rPixY, sizeof(float));
+iRData = (float*)calloc(rPixX * rPixY, sizeof(float));
+...
+cutRegion(tData, tRData, ...); // Extract region from full image
+cutRegion(iData, iRData, ...);
+```
+
+---
 
 ## What's Needed to Complete Phase 3
 
-### 1. Proper buildStamps() Wrapper (2–3 hours)
+### 1. Proper buildStamps() Wrapper (3–4 hours)
 
-**Current state:** Allocates stamp array but doesn't build stamps
+**Current state:** Wrapper structure in place, but segfaults because it passes full image data instead of region-extracted data.
 
 **What's needed:**
-- Iterate over regions (loop: nRegX × nRegY)
-- For each region:
-  - Define region bounds (rXMin, rXMax, rYMin, rYMax)
-  - Call C `buildStamps()` with parameters matching main.c usage
-  - Call C `getPsfCenters()` to locate bright stars
-  - Handle memory for auxiliary stamp arrays
-- Return complete stamp array ready for fitting
+1. **Region extraction:** Before calling C `buildStamps()`, extract region data:
+   ```python
+   # For each region:
+   region_t_data = allocate_array((r_pix_y, r_pix_x), dtype=np.float32)
+   region_i_data = allocate_array((r_pix_y, r_pix_x), dtype=np.float32)
+   cutRegion(template, region_t_data, ...)  # Extract via C or numpy
+   cutRegion(science, region_i_data, ...)
+   ```
 
-**Reference:** `src/main.c` lines 900–1000 (region loop and buildStamps calls)
+2. **Iterate over regions and stamps:**
+   - For each region: extract region data from full image
+   - For each stamp within region:
+     - Calculate stamp bounds (relative to region boundaries)
+     - Call C `buildStamps()` with **region data** (not full image)
+     - Track stamp counters (niS, ntS) — only increment if substamps found
 
-**Signature to match:**
-```c
-void buildStamps(int sXMin, int sXMax, int sYMin, int sYMax, int* rPixX,
-                 int* rPixY, int nStampX, int nStampY, int hwKSStamp,
-                 stamp_struct* stamps, stamp_struct* tStamps,
-                 stamp_struct* iStamps, float* iData, float* tData,
-                 float tUThresh, float tLThresh);
-```
+3. **Call actual C buildStamps signature:**
+   ```c
+   buildStamps(sXMin, sXMax, sYMin, sYMax, &niS, &ntS, getCenters,
+               rXBMin, rYBMin, ciStamps, ctStamps, iRData, tRData,
+               hardX, hardY);
+   ```
+
+**Key implementation details:**
+- `rPixX`, `rPixY`: NOT pointers; must pass region dimensions as integers via global state
+- `iRData`, `tRData`: Must point to region-extracted buffers
+- Stamp counters (`niS`, `ntS`): Passed as pointers, incremented by C function
+- `getCenters`: Pass 1 to auto-find bright centers (matching main.c default)
+
+**Reference:** 
+- `src/main.c` lines 746–748 (region buffer allocation)
+- `src/main.c` lines 919–985 (region loop and per-stamp buildStamps calls)
+- `src/functions.c` line 250 (actual buildStamps signature)
+- `src/functions.c` line 443 (cutStamp function showing rPixX usage)
+- `src/functions.c` line 99 (cutRegion function for extracting regions)
+
+**Helper functions needed:**
+- `cutRegion()` wrapper: Extract rectangular region from full image
+  - Takes: full image, region bounds, output buffer
+  - Returns: void (fills buffer in-place)
+  - Reference: functions.c line 99
 
 ### 2. Proper fitKernel_c() Wrapper (2–3 hours)
 
@@ -106,18 +162,31 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
 
 ## Implementation Checklist
 
-- [ ] Study `src/main.c` region loop (lines 900–1000)
-- [ ] Study `src/alard.c` for buildStamps/fitKernel details
-- [ ] Implement region iteration in `build_stamps()`
-- [ ] Implement buildStamps C call with proper parameters
-- [ ] Implement fitKernel C call with output handling
-- [ ] Test with single region (nRegX=1, nRegY=1)
-- [ ] Test with multiple regions
+**Phase 3.2a — Region Data Extraction (NEW TASK, 2–3 hours):**
+- [ ] Add `cutRegion()` ctypes wrapper to `_core.py`
+- [ ] Update `build_stamps()` to allocate per-region buffers
+- [ ] Extract regions from full images before calling C buildStamps
+- [ ] Handle stamp counter arrays (niS, ntS) properly
+- [ ] Test single-region case (nRegX=1, nRegY=1) on 256×256 image
+
+**Phase 3.2b — Integration Test Fixes (1–2 hours):**
+- [ ] Fix segfault in build_stamps() region data handling
 - [ ] Unskip integration tests
-- [ ] Debug and fix test failures
+- [ ] Run test_identical_images_api_vs_cli
+- [ ] Debug numerical differences (tolerance: rtol=1e-4, atol=1e-3)
+- [ ] Test broadened/narrowed PSF cases
+
+**Phase 3.3 — fitKernel & Convolution (3–4 hours, if needed):**
+- [ ] Study `src/alard.c` for fitKernel algorithm
+- [ ] Implement `fit_kernel_c()` with proper output handling
+- [ ] Implement `spatial_convolve_c()` (may be simpler, check if already working)
+- [ ] Test with multi-region case (nRegX>1, nRegY>1)
 - [ ] Validate numerical accuracy vs CLI
-- [ ] Implement regression tests
+
+**Phase 3.4 — Regression & Documentation (1–2 hours):**
+- [ ] Implement regression tests comparing API vs CLI output
 - [ ] Document any limitations or assumptions
+- [ ] Update PHASE3_STATUS.md with final status
 
 ## Key Files
 
@@ -134,14 +203,21 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
 - `tests/test_api_integration.py` — integration tests (fixed, ready to run)
 - `tests/test_regression.py` — regression tests (empty, needs implementation)
 
-## Estimated Effort
+## Effort Summary
 
-- **Analysis & Setup:** 1 hour (understand C flow)
-- **Implementation:** 5 hours (buildStamps + fitKernel)
-- **Testing & Debugging:** 2 hours (enable tests, fix failures)
-- **Regression Tests:** 1 hour
-- **Documentation:** 0.5 hours
-- **Total: 9.5 hours**
+**Completed (May 6, 2026):**
+- ✓ Analysis & Setup: 2 hours (understand C flow, discover region data extraction requirement)
+- ✓ Integration test fixtures fixed: 1 hour (CLI options, output comparison)
+- ✓ build_stamps() structure: 2 hours (wrapper design, region iteration logic)
+
+**Remaining (estimated):**
+- Region data extraction: 2–3 hours (cutRegion wrapper, per-region buffers)
+- buildStamps debugging: 2–3 hours (test single region, fix numerical issues)
+- fit_kernel_c() & spatial_convolve_c(): 3–4 hours (if needed; spatial_convolve may work)
+- Regression tests: 1–2 hours
+- Documentation: 0.5 hours
+
+**Total estimate: 11–15 hours** (original was 9.5; added complexity from region extraction discovery)
 
 ## Critical Success Factors
 
