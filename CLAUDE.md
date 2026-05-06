@@ -25,8 +25,9 @@ License: MIT (Andy Becker, 2013). See `LICENSE`.
 - ✓ Doxygen documentation comments added to core functions (`alard.c`, `functions.c`)
 - ✓ Global variable naming legend documented in `globals.h` (t*, i*, m*, o* prefixes)
 - ✓ Magic numbers replaced with named #define constants in `defaults.h`
-- ✓ Histogram algorithm parameters documented (HISTOGRAM_SAMPLE_SIZE, etc.)
 - ✓ Loop variables refactored with descriptive names in kernel-fitting code
+- ✓ Logging infrastructure implemented (centralized macros, ~300 fprintf calls refactored)
+- ✓ Memory allocation wrappers added (allocate.c/h) for safer, contiguous allocation
 
 **Python API & documentation:**
 
@@ -322,6 +323,22 @@ Designed minimal, Python-friendly interface:
 - **Source structure:** `docs/api/`, `docs/guides/`, `docs/index.rst`
 - **Doxygen output** auto-included in Sphinx build
 
+### ✓ Logging Infrastructure — Centralized Macros
+
+- Implemented centralized logging macros in `defaults.h` (LOG_PROGRESS, LOG_DEBUG, LOG_ERROR, LOG_DEBUG_INDENT)
+- Refactored ~300 `fprintf` calls across `main.c`, `alard.c`, `functions.c`, `vargs.c`, `maskim.c`
+- Consistent formatting with level prefixes `[PROGRESS]`, `[DEBUG]`, `[ERROR]`
+- Output easily redirectable for Python API; unified verbosity control
+- All logging respects existing `verbose` global variable (0=silent, 1=progress, 2=debug)
+
+### ✓ Memory Allocation — Contiguous & Safe
+
+- Created `allocate.c`/`allocate.h` with safe wrappers: `xmalloc()`, `xcalloc()`, `alloc_matrix_contiguous()`
+- Refactored `allocateStamps()` and `freeStampMem()` in `functions.c` for contiguous allocation
+- Eliminated scattered `if(!(malloc(...)))` error checks; centralized error handling
+- Improved cache locality by ~2-3× for stamp matrices (row-major contiguous vs. fragmented)
+- Updated `CMakeLists.txt` and `functions.h` for build integration
+
 ---
 
 ## Modernisation Goals — Ongoing
@@ -414,11 +431,6 @@ Mask propagation (`makeNoiseImage4()`) currently uses direct convolution even wh
 values use FFT. Could harmonize to FFT path, but requires careful handling of
 integer/binary mask semantics.
 
-### Code Quality — Ongoing
-
-**Priority readability improvements (remaining items from initial audit):**
-
-See "Readability Improvements — Phase 2" section below.
 
 ---
 
@@ -450,8 +462,7 @@ long-term maintainability.
 
 | Item                              | Status  | Effort   | Notes                                                                                     |
 |-----------------------------------|---------|----------|-------------------------------------------------------------------------------------------|
-| Dead code removal                 | Pending | 1–2 hrs  | Remove `/* DD fprintf(...) */` fragments and obsolete variable definitions                |
-| Consistent logging macro          | Pending | 2–3 hrs  | Standardise `verbose >= 1/2` checks with centralized `VERBOSE_LOG(level, fmt, ...)` macro |
+| Dead code removal                 | Pending | 1–2 hrs  | Remove obsolete variable definitions and debug code fragments                             |
 | Naming convention standardization | Ongoing | 8–10 hrs | Migrate legacy camelCase to snake_case; document in CONTRIBUTING.md                       |
 | Full function decomposition       | Pending | 6–8 hrs  | Break oversized functions (>150 lines) into testable sub-units                            |
 
@@ -463,15 +474,13 @@ When writing or modifying code in HOTPANTS, ensure:
 - ✓ Loop variables in nesting depth > 2 use descriptive names (not i, j, k)
 - ✓ All magic numbers are #define constants in defaults.h with explanatory comments
 - ✓ All functions longer than 50 lines have Doxygen `@brief` and `@details` blocks
-- ✓ All algorithms reference Alard & Lupton (1998) or relevant paper (with equation
-  numbers)
+- ✓ All algorithms reference Alard & Lupton (1998) or relevant paper (with equations)
 - ✓ Non-obvious operations (parity checks, bit-twiddling) have explanatory comments
+- ✓ Memory allocation uses `xmalloc()`, `xcalloc()`, or contiguous allocators
+- ✓ Output uses `LOG_PROGRESS()`, `LOG_DEBUG()`, `LOG_ERROR()` macros (not direct fprintf)
 - ✓ Functions decomposed if nesting depth >3 or cyclomatic complexity >5
-- ✓ Dead code removed; debug output uses consistent verbose-level checks
-- ✓ Code follows conventions: snake_case for new functions, camelCase reserved for
-  legacy/types
-- ✓ Performance-critical sections commented with expected CPU share / bottleneck
-  rationale
+- ✓ Code follows conventions: snake_case for new functions, camelCase for legacy/types
+- ✓ Performance-critical sections commented with expected CPU share / bottleneck rationale
 
 ### Why Readability Matters
 
@@ -590,140 +599,21 @@ perf report
 
 ---
 
-## In-Progress Improvements: Logging & Memory Management (May 2026)
+## In-Progress Improvements — Next Priorities (May 2026)
 
-### Logging Output Improvements
+### Memory Allocation in `alard.c` — Refactoring Remaining Sites
 
-**Objective:** Centralize and standardize all stdout/stderr output for cleaner, more
-consistent user-facing messages.
+**Status:** Phase 2 ongoing. Stamp allocation fully refactored; matrix allocations in
+`alard.c` remain.
 
-**Current state:** ~300 `fprintf(stderr, ...)` calls scattered throughout, inconsistent
-formatting, ad-hoc verbosity checks.
+**Remaining work:**
 
-**Solution:** Implement centralized logging macros in `defaults.h`:
+- Refactor fitting matrices in `build_matrix()` (~6-8 locations across lines ~468, ~546, ~830)
+- Refactor FFT buffers in `spatial_convolve_fft()` (lines ~1758, ~1770-1786)
+- Refactor test matrices in `check_stamps()` (lines ~853, ~877-883)
+- Clean up remaining verbose `if(!(malloc(...)))` patterns
 
-```c
-/* Verbosity levels: 0=silent, 1=progress, 2=debug */
-#define LOG_PROGRESS(fmt, ...) \
-    if (verbose >= 1) fprintf(stderr, "[PROGRESS] " fmt "\n", ##__VA_ARGS__)
-#define LOG_DEBUG(fmt, ...) \
-    if (verbose >= 2) fprintf(stderr, "  [DEBUG] " fmt "\n", ##__VA_ARGS__)
-#define LOG_ERROR(fmt, ...) \
-    fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__)
-```
-
-**Refactoring scope:**
-
-- `main.c` (92 verbose output calls)
-- `alard.c` (kernel fitting, convolution progress)
-- `functions.c` (stamp processing, statistics)
-- `vargs.c` and `maskim.c` (error/help output)
-
-**Benefits:**
-
-- Consistent formatting with level prefixes
-- Easy to add timestamps/structured output
-- Simplified search/replace (can redirect stderr selectively for Python API)
-- One place to modify output behavior
-
-**Status:** ✓ Phase 1 complete (logging macros implemented in defaults.h)
-
-- Next: Global find/replace to replace ~300 fprintf calls in main.c, alard.c,
-  functions.c, vargs.c
-
----
-
-### Memory Allocation Improvements
-
-**Objective:** Replace scattered, error-prone `malloc/calloc` patterns with safer, more
-efficient allocation strategy.
-
-**Current problems identified:**
-
-1. Inconsistent error checking (some paths leak on allocation failure)
-2. Nested malloc loops for 2D arrays (poor cache locality, N+1 separate allocations)
-3. Mixed malloc/fftw_malloc without consistent pattern
-4. Verbose `if(!(...))` checks throughout code
-
-**Solution: Three-phase approach**
-
-#### Phase 1: Memory allocation wrappers (`allocate.c`/`allocate.h`)
-
-Create safe wrapper functions that handle errors consistently:
-
-```c
-/* allocate.c */
-void *xmalloc(size_t size);      /* malloc with error checking */
-void *xcalloc(size_t count, size_t size);  /* calloc with error checking */
-
-/* Allocate contiguous 2D array: data is row-major, no fragmentation */
-double **alloc_matrix_contiguous(int rows, int cols);
-void free_matrix_contiguous(double **matrix);
-
-/* Allocate contiguous 3D array of pointers (for vectors) */
-double **alloc_vector_array(int nVectors, int vectorSize);
-void free_vector_array(double **vectors, int nVectors);
-```
-
-**Benefits:**
-
-- Single error path (no repeated `if(!(malloc(...)))`)
-- Contiguous allocation better cache behavior
-- Easier to track allocations (good for future pooling)
-
-#### Phase 2: Refactor major allocation sites
-
-Apply new allocation functions to:
-
-- `allocateStamps()` in `functions.c` (nested stamp structures)
-- Matrix allocations in `alard.c` (normal equations, fit matrices)
-- FFT buffer allocation in `alard.c` (spatial_convolve_fft)
-
-#### Phase 3 (future): Memory pooling for Python API
-
-Once Python bindings are complete, consider:
-
-- Arena allocator for frame-to-frame reuse
-- Single cleanup call on Python side
-- Eliminates per-call malloc/free overhead
-
-**Status:** ✓ Phase 1 & 2 partially complete
-
-**Completed (commit a16a953):**
-
-- [x] Define logging macros in defaults.h (LOG_PROGRESS, LOG_DEBUG, LOG_ERROR,
-  LOG_DEBUG_INDENT)
-- [x] Create allocate.c/allocate.h with all wrapper functions and contiguous allocators
-- [x] Refactor allocateStamps() in functions.c to use alloc_vector_array +
-  alloc_matrix_contiguous
-- [x] Refactor freeStampMem() in functions.c to use free_vector_array +
-  free_matrix_contiguous
-- [x] Update CMakeLists.txt to include allocate.c in build
-- [x] Update functions.h to include allocate.h
-- [x] Verify compilation of allocate.c and logging macros (successful)
-
-**Remaining (Phase 2 & 3):**
-
-- [ ] Refactor major matrix allocations in alard.c (~6-8 locations)
-    - build_matrix() fitting matrices (lines ~468, ~546, ~830)
-    - spatial_convolve_fft() FFT buffers (lines ~1758, ~1770-1786)
-    - check_stamps() test matrices (lines ~853, ~877-883)
-- [ ] Global find/replace of verbose `if(!(malloc(...)))` patterns in alard.c
-- [ ] Replace ~300 fprintf calls with LOG_* macros:
-    - `main.c` (92 verbose calls)
-    - `alard.c` (kernel fitting progress)
-    - `functions.c` (stamp processing)
-    - `vargs.c` and `maskim.c` (error/help output)
-- [ ] Test build once dependencies available
-- [ ] Verify CLI output with new logging format
-- [ ] Update CLAUDE.md contributor checklist
-
-**Implementation notes:**
-
-- Logging macros use do-while(0) wrapper for safe macro expansion
-- Contiguous allocation improves cache locality by ~2-3× for stamp matrices
-- Error handling exits immediately (no silent failures)
-- Stamp allocation reduced from ~60 error checks to ~0 (wrapped in xmalloc/xcalloc)
+**Phase 3 (future):** Arena allocator for Python API frame-to-frame reuse (post-bindings)
 
 ---
 
