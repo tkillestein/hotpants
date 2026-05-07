@@ -667,7 +667,7 @@ def build_stamps(
                         stamps[global_stamp_idx].sscnt = 0
                         stamps[global_stamp_idx].chi2 = 0.0
 
-                        # Stamp counters (buildStamps uses *niS to index into ciStamps)
+                        # Stamp counters (buildStamps uses *niS/*ntS to index ciStamps/ctStamps)
                         ni_s = ctypes.c_int(0)
                         nt_s = ctypes.c_int(0)
 
@@ -690,7 +690,11 @@ def build_stamps(
                             0.0,  # hardY
                         )
 
-                        global_stamp_idx += 1
+                        # Mirror main.c: only advance the stamp index when PSF centers
+                        # were found (nss > 0). This densely packs valid stamps so
+                        # fitKernel processes exactly the same stamps as the CLI.
+                        if stamps[global_stamp_idx].nss > 0:
+                            global_stamp_idx += 1
 
                 # Fill stamp vectors for this region while mRData + region buffers
                 # are still valid (mirrors main.c lines 1099-1119: fillStamp loop).
@@ -701,11 +705,9 @@ def build_stamps(
                     msg = f"fillStampsForRegion failed for region ({region_x}, {region_y})"
                     raise RuntimeError(msg)
 
-        # Set TLS global nS = count of valid stamps (nss > 0).
-        # main.c sets nS = ntS after incrementing ntS only for valid stamps;
-        # fitKernel uses nS to know how many stamps to accumulate.
-        n_valid = sum(1 for i in range(n_stamps) if stamps[i].nss > 0)
-        _hotpants_ffi.set_global_int("nS", n_valid)
+        # Set nS = number of valid stamps (densely packed at indices 0..nS-1).
+        # Mirrors main.c: nS = ntS (only valid template stamps are counted).
+        _hotpants_ffi.set_global_int("nS", global_stamp_idx)
 
         # Region context (mRData, region buffers) is intentionally left active.
         # Caller must call cleanupBuildStampsContext() after fitKernel() completes,
@@ -795,10 +797,17 @@ def fit_kernel_c(
     )
     logger.debug("fit_kernel_c: fitKernel returned successfully")
 
-    # TODO: fitKernel in C doesn't return chi2 directly; need to compute or extract from stamps
-    chi2 = 0.0  # placeholder
+    # Compute actual kernel norm by evaluating the fitted kernel at the image centre.
+    # computeKernelNorm sets rPixX/rPixY then calls make_kernel(nx/2, ny/2, coeffs).
+    compute_norm_c = lib.computeKernelNorm
+    compute_norm_c.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    compute_norm_c.restype = ctypes.c_double
+    ny, nx = template.shape
+    kernel_norm = compute_norm_c(coeffs_ptr, nx, ny)
 
-    return (chi2, 1.0, meansig.value, scatter.value, n_skipped.value, kernel_coeffs)
+    chi2 = 0.0  # fitKernel doesn't return chi2 directly; placeholder
+
+    return (chi2, kernel_norm, meansig.value, scatter.value, n_skipped.value, kernel_coeffs)
 
 
 def spatial_convolve_c(
