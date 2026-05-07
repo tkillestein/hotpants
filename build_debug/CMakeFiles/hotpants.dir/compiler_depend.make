@@ -279,6 +279,7 @@ CMakeFiles/hotpants.dir/src/globals.c.o: /home/user/hotpants/src/globals.c \
   /usr/include/stdc-predef.h
 
 CMakeFiles/hotpants.dir/src/hotpants_wrapper.c.o: /home/user/hotpants/src/hotpants_wrapper.c \
+  /home/user/hotpants/src/defaults.h \
   /usr/include/alloca.h \
   /usr/include/endian.h \
   /usr/include/features-time64.h \

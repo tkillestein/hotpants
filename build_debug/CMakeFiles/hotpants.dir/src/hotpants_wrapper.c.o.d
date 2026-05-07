@@ -60,4 +60,5 @@ CMakeFiles/hotpants.dir/src/hotpants_wrapper.c.o: \
  /usr/include/x86_64-linux-gnu/bits/stdio_lim.h \
  /usr/include/x86_64-linux-gnu/bits/stdio2-decl.h \
  /usr/include/x86_64-linux-gnu/bits/stdio.h \
- /usr/include/x86_64-linux-gnu/bits/stdio2.h
+ /usr/include/x86_64-linux-gnu/bits/stdio2.h \
+ /home/user/hotpants/src/defaults.h

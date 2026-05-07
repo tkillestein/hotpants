@@ -543,3 +543,27 @@ double computeKernelNorm(double* kernel_coeffs, int nx, int ny) {
   rPixY = ny;
   return make_kernel(nx / 2, ny / 2, kernel_coeffs);
 }
+
+/*
+ * Set forceConvolve flag for spatial_convolve.
+ *
+ * The Python API always convolves the template ("t") to match science,
+ * matching the CLI behavior with -c t flag. This must be set before
+ * calling spatial_convolve() because it determines which image is convolved.
+ *
+ * Args:
+ *   mode: "t" = template, "i" = science, "b" = both (try both directions)
+ */
+void set_force_convolve(const char* mode) {
+  if (mode == NULL) {
+    forceConvolve = D_CONVOLVE;  /* Reset to default */
+  } else if (strncmp(mode, "t", 1) == 0) {
+    forceConvolve = "t";
+  } else if (strncmp(mode, "i", 1) == 0) {
+    forceConvolve = "i";
+  } else if (strncmp(mode, "b", 1) == 0) {
+    forceConvolve = "b";
+  } else {
+    forceConvolve = D_CONVOLVE;  /* Invalid, use default */
+  }
+}

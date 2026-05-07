@@ -28,6 +28,8 @@ Example usage:
 Reference: Alard & Lupton (1998), ApJ 503:325
 """
 
+import ctypes
+
 import numpy as np
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -497,6 +499,14 @@ def spatial_convolve(
 
     with global_state(config_dict):
         logger.debug("Applying spatially-varying convolution...")
+        # Ensure forceConvolve="t": Python API always convolves the first image (template)
+        # to match the second (science). This matches main.c behavior when called with -c t.
+        lib = _hotpants_ffi.get_library()
+        set_force_convolve = lib.set_force_convolve
+        set_force_convolve.argtypes = [ctypes.c_char_p]
+        set_force_convolve.restype = None
+        set_force_convolve(b"t")
+
         output = _core.spatial_convolve_c(image, kernel_solution.kernel_coefficients, output)
 
         # Add the fitted background polynomial, matching CLI behavior:
