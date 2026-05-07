@@ -138,14 +138,18 @@ def write_fits(path, data):
 
 
 def run_hotpants(binary, tmpl, sci, diff, extra_args=()):
-    """Run hotpants; return the CompletedProcess."""
+    """Run hotpants; raise error if command fails."""
     cmd = (
         [str(binary)]
         + ["-inim", str(sci), "-tmplim", str(tmpl), "-outim", str(diff)]
         + HOTPANTS_BASE_ARGS
         + list(extra_args)
     )
-    return subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        msg = f"hotpants failed with exit code {result.returncode}\nStdout: {result.stdout}\nStderr: {result.stderr}"
+        raise RuntimeError(msg)
+    return result
 
 
 def load_diff(path):
@@ -161,15 +165,18 @@ def load_diff(path):
 @pytest.fixture(autouse=True)
 def mock_hotpants_library(monkeypatch, request):
     """
-    Auto-mock the HOTPANTS C library for Python API tests.
+    Auto-mock the HOTPANTS C library for Python API unit tests.
 
     Provides dummy implementations of C library functions so tests can run
     without requiring the compiled C library to be available.
 
     This fixture is automatically applied to all tests in test_api.py.
+    Integration tests (test_api_integration.py) use the real C library.
     """
-    # Only mock for test_api.py and test_api_integration.py
-    if 'test_api' not in str(request.fspath):
+    # Only mock for test_api.py (unit tests), not integration or regression tests
+    if 'test_api_integration' in str(request.fspath) or 'test_regression' in str(request.fspath):
+        return None
+    if 'test_api.py' not in str(request.fspath):
         return None
 
     from unittest.mock import MagicMock
@@ -204,6 +211,8 @@ def mock_hotpants_library(monkeypatch, request):
         'nCompKer': 3,
         'nComp': 6,  # (2+1)*(2+2)/2 for kerOrder=2
         'nCompBG': 3,  # (1+1)*(1+2)/2 for bgOrder=1
+        'nCompTotal': 21,  # nCompKer*nComp + nBGVectors = 3*6+3
+        'nS': 0,           # valid stamp count, set by build_stamps
         'verbose': 0,
         'nThread': 1,
     }
@@ -219,6 +228,29 @@ def mock_hotpants_library(monkeypatch, request):
 
     def mock_set_global_float(name, value):
         globals_state[name] = value
+
+    # Mock C function return values for kernel fitting
+    # allocateStamps should return 0 (success)
+    mock_lib.allocateStamps.return_value = 0
+    # fitKernel returns void (None)
+    mock_lib.fitKernel.return_value = None
+    # spatial_convolve returns void (None)
+    mock_lib.spatial_convolve.return_value = None
+    # buildStamps returns void (None)
+    mock_lib.buildStamps.return_value = None
+    # freeStampMem returns void (None)
+    mock_lib.freeStampMem.return_value = None
+    # Wrapper functions
+    # initKernelGlobals should return 0 (success)
+    mock_lib.initKernelGlobals.return_value = 0
+    # initBuildStampsContext should return 0 (success)
+    mock_lib.initBuildStampsContext.return_value = 0
+    # buildStampsRegion should return 0 (success) and set output pointers
+    mock_lib.buildStampsRegion.return_value = 0
+    # buildStamps returns void (None)
+    mock_lib.buildStamps.return_value = None
+    # cleanupBuildStampsContext returns void (None)
+    mock_lib.cleanupBuildStampsContext.return_value = None
 
     # Patch the library loading and global variable functions
     monkeypatch.setattr(_hotpants_ffi, 'get_library', lambda: mock_lib)

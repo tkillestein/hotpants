@@ -11,6 +11,7 @@ complete), but they document the expected behavior for the Python API.
 
 import pytest
 import numpy as np
+from astropy.io import fits
 
 from .conftest import (
     NX, NY,
@@ -30,27 +31,30 @@ pytest.importorskip("hotpants")
 from hotpants import fit_kernel, spatial_convolve, KernelConfig, RegionLayout, NoiseThresholds
 
 
-@pytest.mark.skip(reason="C binding integration not yet complete")
 class TestPythonAPIvsCLI:
     """
     Compare Python API results to C CLI.
 
     These tests ensure that the Python API wrapper and C CLI produce
     numerically identical results on the same inputs.
+
+    C integration is now complete via wrapper functions (initBuildStampsContext,
+    buildStampsRegion, cleanupBuildStampsContext) in hotpants_wrapper.c that manage
+    all required global state internally.
     """
 
     @pytest.fixture
-    def identical_images(self, tmp_path):
+    def identical_images(self, tmp_path, star_field, hotpants_binary):
         """Create identical template and science images."""
+        rng = np.random.default_rng(42)
         template = make_image(
-            seed=42,
-            psf_sigma=PSF_SIGMA_TEMPLATE,
-            background=BACKGROUND,
-            rdnoise=RDNOISE,
-        )
+            star_field['noiseless'],
+            PSF_SIGMA_TEMPLATE,
+            rng,
+        ).astype(np.float32)
         science = template.copy()
 
-        return template, science, tmp_path
+        return template, science, tmp_path, hotpants_binary
 
     def test_identical_images_api_vs_cli(self, identical_images):
         """
@@ -59,7 +63,7 @@ class TestPythonAPIvsCLI:
         When template == science, difference should be pure noise.
         Both API and CLI should produce similar results.
         """
-        template, science, tmp_path = identical_images
+        template, science, tmp_path, hotpants_binary = identical_images
 
         # Run C CLI
         template_fits = tmp_path / "template.fits"
@@ -70,58 +74,77 @@ class TestPythonAPIvsCLI:
         write_fits(science_fits, science)
 
         run_hotpants(
-            str(template_fits), str(science_fits), str(diff_fits),
-            hwKernel=10, kerOrder=2, bgOrder=1,
-            nRegX=1, nRegY=1,
+            hotpants_binary,
+            template_fits,
+            science_fits,
+            diff_fits,
+            extra_args=["-r", "10", "-ko", "2", "-bgo", "1"],
         )
 
-        cli_diff = load_diff(diff_fits)
+        # Load CLI output (raw 2D array)
+        cli_diff_raw = fits.getdata(str(diff_fits)).astype(np.float64)
 
-        # Run Python API
-        config = KernelConfig(kernel_half_width=10, kernel_order=2, bg_order=1)
-        layout = RegionLayout(n_regions_x=1, n_regions_y=1)
-        thresholds = NoiseThresholds()
+        # Run Python API — parameters must match CLI args above:
+        #   -r 10 -ko 2 -bgo 1 -ft 8 -nsx 5 -nsy 5
+        #   -tu 60000 -tl -200 -iu 60000 -il -200 -tg 1 -ig 1 -tr 5 -ir 5
+        config = KernelConfig(
+            kernel_half_width=10, kernel_order=2, bg_order=1, fit_threshold=8,
+            n_ks_stamps=3, hw_ks_stamp=15,
+        )
+        layout = RegionLayout(n_regions_x=1, n_regions_y=1,
+                              stamps_per_region_x=5, stamps_per_region_y=5)
+        thresholds = NoiseThresholds(
+            template_upper_threshold=60000, template_lower_threshold=-200,
+            science_upper_threshold=60000, science_lower_threshold=-200,
+            template_gain=1.0, science_gain=1.0,
+            template_readnoise=5.0, science_readnoise=5.0,
+        )
 
         kernel_solution = fit_kernel(
-            template.astype(np.float32),
-            science.astype(np.float32),
+            template,
+            science,
             config=config,
             layout=layout,
             thresholds=thresholds,
         )
 
         api_diff = spatial_convolve(
-            science.astype(np.float32),
+            science,
             kernel_solution,
             config=config,
-        )
+        ).astype(np.float64)
+
+        # Apply the same masking to both (remove hotpants fill pixels)
+        valid_mask = np.abs(cli_diff_raw - 1e-30) > 1e-35
+        cli_diff = cli_diff_raw[valid_mask]
+        api_diff_masked = api_diff[valid_mask]
 
         # Compare (allow small numerical differences)
         # Note: differences due to floating-point order of operations
         np.testing.assert_allclose(
-            cli_diff, api_diff,
+            cli_diff, api_diff_masked,
             rtol=1e-4, atol=1e-3,
             err_msg="Python API and CLI produce different results"
         )
 
-    def test_broadened_psf_api_vs_cli(self, tmp_path):
+    def test_broadened_psf_api_vs_cli(self, tmp_path, star_field, hotpants_binary):
         """
         Python API vs CLI when science PSF is broader than template.
 
         The fitted kernel should act as a broadening kernel.
         """
+        rng1 = np.random.default_rng(42)
+        rng2 = np.random.default_rng(43)
         template = make_image(
-            seed=42,
-            psf_sigma=PSF_SIGMA_TEMPLATE,
-            background=BACKGROUND,
-            rdnoise=RDNOISE,
-        )
+            star_field['noiseless'],
+            PSF_SIGMA_TEMPLATE,
+            rng1,
+        ).astype(np.float32)
         science = make_image(
-            seed=43,
-            psf_sigma=PSF_SIGMA_SCIENCE,  # Broader than template
-            background=BACKGROUND,
-            rdnoise=RDNOISE,
-        )
+            star_field['noiseless'],
+            PSF_SIGMA_SCIENCE,  # Broader than template
+            rng2,
+        ).astype(np.float32)
 
         # Run C CLI
         template_fits = tmp_path / "template.fits"
@@ -132,8 +155,10 @@ class TestPythonAPIvsCLI:
         write_fits(science_fits, science)
 
         run_hotpants(
-            str(template_fits), str(science_fits), str(diff_fits),
-            hwKernel=10, kerOrder=2, bgOrder=1,
+            hotpants_binary,
+            template_fits,
+            science_fits,
+            diff_fits,
         )
 
         cli_diff = load_diff(diff_fits)
@@ -144,15 +169,15 @@ class TestPythonAPIvsCLI:
         thresholds = NoiseThresholds()
 
         kernel_solution = fit_kernel(
-            template.astype(np.float32),
-            science.astype(np.float32),
+            template,
+            science,
             config=config,
             layout=layout,
             thresholds=thresholds,
         )
 
         api_diff = spatial_convolve(
-            science.astype(np.float32),
+            science,
             kernel_solution,
             config=config,
         )
@@ -164,24 +189,24 @@ class TestPythonAPIvsCLI:
             rtol=1e-3, atol=1e-2,
         )
 
-    def test_narrowed_psf_api_vs_cli(self, tmp_path):
+    def test_narrowed_psf_api_vs_cli(self, tmp_path, star_field, hotpants_binary):
         """
         Python API vs CLI when science PSF is narrower than template.
 
         The fitted kernel should act as a sharpening kernel.
         """
+        rng1 = np.random.default_rng(42)
+        rng2 = np.random.default_rng(43)
         template = make_image(
-            seed=42,
-            psf_sigma=PSF_SIGMA_SCIENCE,  # Broader
-            background=BACKGROUND,
-            rdnoise=RDNOISE,
-        )
+            star_field['noiseless'],
+            PSF_SIGMA_SCIENCE,  # Broader
+            rng1,
+        ).astype(np.float32)
         science = make_image(
-            seed=43,
-            psf_sigma=PSF_SIGMA_TEMPLATE,  # Narrower
-            background=BACKGROUND,
-            rdnoise=RDNOISE,
-        )
+            star_field['noiseless'],
+            PSF_SIGMA_TEMPLATE,  # Narrower
+            rng2,
+        ).astype(np.float32)
 
         # Run C CLI
         template_fits = tmp_path / "template.fits"
@@ -192,8 +217,10 @@ class TestPythonAPIvsCLI:
         write_fits(science_fits, science)
 
         run_hotpants(
-            str(template_fits), str(science_fits), str(diff_fits),
-            hwKernel=10, kerOrder=2, bgOrder=1,
+            hotpants_binary,
+            template_fits,
+            science_fits,
+            diff_fits,
         )
 
         cli_diff = load_diff(diff_fits)
@@ -204,15 +231,15 @@ class TestPythonAPIvsCLI:
         thresholds = NoiseThresholds()
 
         kernel_solution = fit_kernel(
-            template.astype(np.float32),
-            science.astype(np.float32),
+            template,
+            science,
             config=config,
             layout=layout,
             thresholds=thresholds,
         )
 
         api_diff = spatial_convolve(
-            science.astype(np.float32),
+            science,
             kernel_solution,
             config=config,
         )

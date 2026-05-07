@@ -36,11 +36,15 @@ License: MIT (Andy Becker, 2013). See `LICENSE`.
 - ✓ `pyproject.toml` configured for Python ≥ 3.11, numpy/pytest dependencies
 - ✓ Sphinx + Breathe setup for API documentation
 
+**Completed:**
+
+- ✓ Python ctypes bindings — Phase 1 (struct def, function bindings, high-level API; 33/33 unit tests pass)
+- ✓ Configuration models migrated to Pydantic (better validation, serialization)
+- ✓ Build system documentation — Phase 2 (CONTRIBUTING.md, updated README, pyproject.toml notes)
+
 **In progress:**
 
-- ⧉ Python CFFI bindings (wrapper code)
-- ⧉ End-to-end integration tests
-- ⧉ CONTRIBUTING.md guide
+- ⧉ End-to-end integration tests with real C library (Phase 3; infrastructure in place, skipped pending full C function implementation)
 
 ---
 

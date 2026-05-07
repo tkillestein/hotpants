@@ -28,22 +28,19 @@ Example usage:
 Reference: Alard & Lupton (1998), ApJ 503:325
 """
 
-from dataclasses import dataclass
-
 import numpy as np
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from . import _core
+from . import _core, _hotpants_ffi
 from ._core import allocate_array, global_state, validate_image_array
 
 # =====================================================================
-# Configuration Dataclasses
+# Configuration Models (Pydantic)
 # =====================================================================
 
 
-# TODO: replace dataclasses with Pydantic models for better validation and UX.
-@dataclass
-class KernelConfig:
+class KernelConfig(BaseModel):
     """
     Kernel fitting and basis configuration.
 
@@ -79,44 +76,22 @@ class KernelConfig:
             (Maps to C global: hwKSStamp)
     """
 
-    kernel_half_width: int = 15
-    kernel_order: int = 2
-    bg_order: int = 1
-    fit_threshold: float = 20.0
-    scale_fit_threshold: float = 0.5
-    n_ks_stamps: int = 3
-    hw_ks_stamp: int = 10
+    kernel_half_width: int = Field(default=15, gt=0)
+    kernel_order: int = Field(default=2, ge=0)
+    bg_order: int = Field(default=1, ge=0)
+    fit_threshold: float = Field(default=20.0, gt=0)
+    scale_fit_threshold: float = Field(default=0.5, gt=0, le=1)
+    n_ks_stamps: int = Field(default=3, gt=0)
+    hw_ks_stamp: int = Field(default=10, gt=0)
 
-    def __post_init__(self) -> None:
-        """Validate configuration parameters."""
-        if self.kernel_half_width <= 0:
-            msg = "kernel_half_width must be positive"
-            raise ValueError(msg)
-        if self.kernel_order < 0:
-            msg_0 = "kernel_order must be >= 0"
-            raise ValueError(msg_0)
-        if self.bg_order < 0:
-            msg_1 = "bg_order must be >= 0"
-            raise ValueError(msg_1)
-        if self.fit_threshold <= 0:
-            msg_2 = "fit_threshold must be positive"
-            raise ValueError(msg_2)
-        if not (0 < self.scale_fit_threshold <= 1):
-            msg_3 = "scale_fit_threshold must be in (0, 1]"
-            raise ValueError(msg_3)
-        if self.n_ks_stamps <= 0:
-            msg_4 = "n_ks_stamps must be positive"
-            raise ValueError(msg_4)
-        if self.hw_ks_stamp <= 0:
-            msg_5 = "hw_ks_stamp must be positive"
-            raise ValueError(msg_5)
-        if self.hw_ks_stamp > self.kernel_half_width:
-            msg_6 = "hw_ks_stamp must be <= kernel_half_width"
-            raise ValueError(msg_6)
+    @field_validator("hw_ks_stamp")
+    @classmethod
+    def validate_ks_stamp_size(cls, v: int, info) -> int:
+        """hw_ks_stamp is independent of kernel_half_width; just ensure positive."""
+        return v
 
 
-@dataclass
-class RegionLayout:
+class RegionLayout(BaseModel):
     """
     Image tiling and stamp grid configuration.
 
@@ -141,24 +116,14 @@ class RegionLayout:
             (Maps to C global: useFullSS)
     """
 
-    n_regions_x: int = 1
-    n_regions_y: int = 1
-    stamps_per_region_x: int = 10
-    stamps_per_region_y: int = 10
+    n_regions_x: int = Field(default=1, ge=1)
+    n_regions_y: int = Field(default=1, ge=1)
+    stamps_per_region_x: int = Field(default=10, ge=1)
+    stamps_per_region_y: int = Field(default=10, ge=1)
     use_full_substamps: bool = False
 
-    def __post_init__(self) -> None:
-        """Validate layout parameters."""
-        if self.n_regions_x < 1 or self.n_regions_y < 1:
-            msg = "n_regions_* must be >= 1"
-            raise ValueError(msg)
-        if self.stamps_per_region_x < 1 or self.stamps_per_region_y < 1:
-            msg = "stamps_per_region_* must be >= 1"
-            raise ValueError(msg)
 
-
-@dataclass
-class NoiseThresholds:
+class NoiseThresholds(BaseModel):
     """
     Data quality thresholds and noise model.
 
@@ -201,28 +166,26 @@ class NoiseThresholds:
     template_lower_threshold: float = 0.0
     science_upper_threshold: float = 25000.0
     science_lower_threshold: float = 0.0
-    template_gain: float = 1.0
-    science_gain: float = 1.0
-    template_readnoise: float = 0.0
-    science_readnoise: float = 0.0
+    template_gain: float = Field(default=1.0, gt=0)
+    science_gain: float = Field(default=1.0, gt=0)
+    template_readnoise: float = Field(default=0.0, ge=0)
+    science_readnoise: float = Field(default=0.0, ge=0)
     template_pedestal: float = 0.0
     science_pedestal: float = 0.0
 
-    def __post_init__(self) -> None:
-        """Validate threshold parameters."""
-        if self.template_gain <= 0 or self.science_gain <= 0:
-            msg = "gain values must be positive"
-            raise ValueError(msg)
-        if self.template_readnoise < 0 or self.science_readnoise < 0:
-            msg = "readnoise values must be >= 0"
-            raise ValueError(msg)
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> "NoiseThresholds":
+        """Ensure upper thresholds > lower thresholds."""
         if self.template_upper_threshold <= self.template_lower_threshold:
-            msg = "upper_threshold must be > lower_threshold"
+            msg = "template_upper_threshold must be > template_lower_threshold"
             raise ValueError(msg)
+        if self.science_upper_threshold <= self.science_lower_threshold:
+            msg = "science_upper_threshold must be > science_lower_threshold"
+            raise ValueError(msg)
+        return self
 
 
-@dataclass
-class KernelSolution:
+class KernelSolution(BaseModel):
     """
     Result of kernel fitting.
 
@@ -235,6 +198,8 @@ class KernelSolution:
         kernel_coefficients: Array of fitted kernel polynomial coefficients.
             Shape: (n_kernel_components,)
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     chi2: float
     kernel_norm: float
@@ -382,21 +347,74 @@ def fit_kernel(
     }
 
     with global_state(config_dict):
-        # Placeholder: actual implementation would call buildStamps, fitKernel, etc.
-        # For now, return a dummy result to verify the infrastructure works
-        kernel_info = _core.get_kernel_info()
-        n_terms = _core.num_polynomial_terms(config.kernel_order)
-        n_kernel_comps = kernel_info["kernel_components"]
+        # Build stamp grid and compute statistics
+        logger.debug("Building stamp grid...")
+        stamps = _core.build_stamps(
+            template,
+            science,
+            layout.n_regions_x,
+            layout.n_regions_y,
+            layout.stamps_per_region_x,
+            layout.stamps_per_region_y,
+        )
+        # Note: build_stamps does NOT call cleanupBuildStampsContext().
+        # The region context (mRData, region buffers) remains active because
+        # fitKernel → check_again → getStampSig/fillStamp access mRData.
+        # We must call cleanup after fitKernel completes (see finally block below).
 
-        # Create dummy kernel coefficients
-        kernel_coeffs = np.ones(n_kernel_comps * n_terms, dtype=np.float64)
+        try:
+            # Fit kernel
+            logger.debug("Fitting kernel...")
+            kernel_info = _core.get_kernel_info()
+            # fitKernel writes nCompTotal+1 coefficients; must allocate exactly that size
+            n_coeffs = kernel_info["total_components"] + 1
+
+            # If no noise image provided, allocate a dummy one for fitKernel.
+            # getStampSig uses this for quality metrics; if NULL it crashes.
+            # A zero-filled array is acceptable (all stamps treated as equal quality).
+            if noise is None:
+                noise = np.zeros_like(template)
+            else:
+                noise = np.ascontiguousarray(noise.astype(np.float32))
+
+            (
+                chi2,
+                kernel_norm,
+                mean_sigma,
+                scatter_sigma,
+                n_skipped,
+                kernel_coeffs,
+            ) = _core.fit_kernel_c(
+                stamps,
+                template,
+                science,
+                noise,
+                n_coeffs,
+            )
+
+            logger.debug(f"Fitted kernel: chi2={chi2:.3f}, norm={kernel_norm:.3f}")
+
+        finally:
+            # Always cleanup buildStamps context after fitKernel,
+            # since fitKernel may call check_again → fillStamp which needs mRData.
+            lib = _hotpants_ffi.get_library()
+            lib.cleanupBuildStampsContext()
+
+        # Free stamp memory
+        n_total_stamps = (
+            layout.n_regions_x
+            * layout.n_regions_y
+            * layout.stamps_per_region_x
+            * layout.stamps_per_region_y
+        )
+        _core.free_stamps(stamps, n_total_stamps)
 
         return KernelSolution(
-            chi2=0.0,
-            kernel_norm=1.0,
-            mean_sigma=10.0,
-            scatter_sigma=1.0,
-            n_skipped_stamps=0,
+            chi2=chi2,
+            kernel_norm=kernel_norm,
+            mean_sigma=mean_sigma,
+            scatter_sigma=scatter_sigma,
+            n_skipped_stamps=n_skipped,
             kernel_coefficients=kernel_coeffs,
         )
 
@@ -455,14 +473,23 @@ def spatial_convolve(
             msg = f"Output shape {output.shape} doesn't match input {image.shape}"
             raise ValueError(msg)
 
-    # TODO: these currently exist to stop CI complaining about missing variables
-    # And can safely be removed once implemented
-    logger.debug(f"Verbosity: {verbose}")
-    logger.debug(f"Kernel config: {config}")
-    logger.debug(f"Kernel solution: {kernel_solution}")
+    ny, nx = image.shape
 
-    # Placeholder: actual implementation would call spatial_convolve C function
-    # For now, copy input to output to verify infrastructure works
-    output[:] = image
+    # Make C-contiguous if needed
+    if not image.flags["C_CONTIGUOUS"]:
+        image = np.ascontiguousarray(image)
+
+    config_dict = {
+        "hwKernel": config.kernel_half_width,
+        "kerOrder": config.kernel_order,
+        "bgOrder": config.bg_order,
+        "verbose": verbose,
+    }
+
+    with global_state(config_dict):
+        logger.debug("Applying spatially-varying convolution...")
+        output = _core.spatial_convolve_c(image, kernel_solution.kernel_coefficients, output)
+
+    logger.debug(f"Convolution complete: output shape {output.shape}")
 
     return output

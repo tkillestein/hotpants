@@ -45,23 +45,53 @@ These changes form the basis for extensions to the original HOTPANTS code.
 
 ## Installation
 
-### CMake (recommended)
+### From Source (Recommended for Development)
 
-```bash
-# Install dependencies (macOS)
-brew install cfitsio openblas fftw
+1. **Install system dependencies:**
 
-# Install dependencies (Ubuntu/Debian)
-sudo apt-get install libcfitsio-dev libopenblas-dev libfftw3-dev
+   **macOS:**
+   ```bash
+   brew install cfitsio openblas fftw lapack
+   ```
 
-# Build
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-sudo cmake --install build  # optional
-```
+   **Ubuntu/Debian:**
+   ```bash
+   sudo apt-get install libcfitsio-dev libopenblas-dev libfftw3-dev liblapacke-dev
+   ```
 
-The CMake build auto-detects CFITSIO, OpenBLAS, FFTW3, and OpenMP. Use `-DUSE_FFTW=OFF`
-to disable FFT acceleration if needed.
+2. **Clone and build C library:**
+   ```bash
+   git clone https://github.com/tkillestein/hotpants.git
+   cd hotpants
+   cmake -B build -DCMAKE_BUILD_TYPE=Release
+   cmake --build build -j$(nproc)
+   ```
+
+3. **Install Python package:**
+   ```bash
+   pip install -e .
+   # Or with development dependencies:
+   pip install -e ".[dev]"
+   ```
+
+4. **Set library path (if not in system path):**
+   ```bash
+   export LD_LIBRARY_PATH=$PWD/build:$LD_LIBRARY_PATH
+   ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup, testing, and profiling instructions.
+
+### Build Configuration
+
+The CMake build auto-detects CFITSIO, OpenBLAS, FFTW3, and OpenMP. Optional flags:
+- `-DUSE_FFTW=ON/OFF` — enable FFT convolution (default: auto-detect)
+- `-DUSE_OPENMP=ON/OFF` — enable multi-threading (default: auto-detect)
+
+### Troubleshooting
+
+- **"Could not find libhotpants":** Set `LD_LIBRARY_PATH=$PWD/build:$LD_LIBRARY_PATH`
+- **CMake fails:** Install missing dependencies (see above)
+- **Build fails:** Check compiler version (C17 support required, gcc/clang 5.0+)
 
 ---
 
@@ -98,6 +128,49 @@ The choice of convolution direction depends on your PSF sizes:
   ```
 
 See [CLAUDE.md](CLAUDE.md) for algorithm details and performance tuning.
+
+### Python API
+
+The Python API provides a NumPy-friendly interface to kernel fitting and difference imaging:
+
+```python
+import numpy as np
+from hotpants import fit_kernel, spatial_convolve, KernelConfig
+
+# Load images (numpy arrays, float32)
+template = np.load('template.npy').astype(np.float32)
+science = np.load('science.npy').astype(np.float32)
+
+# Configure kernel fitting
+config = KernelConfig(
+    kernel_half_width=15,      # kernel region size (pixels)
+    kernel_order=2,            # spatial polynomial order
+    fit_threshold=20.0,        # sigma threshold for stamps
+)
+
+# Fit kernel to match PSFs
+kernel_solution = fit_kernel(template, science, config=config)
+print(f"Fitted kernel chi2: {kernel_solution.chi2:.3f}")
+print(f"Kernel integral: {kernel_solution.kernel_norm:.3f}")
+
+# Create difference image
+difference = spatial_convolve(science, kernel_solution)
+
+# Save result
+np.save('difference.npy', difference)
+```
+
+**Requirements:**
+- The C library must be built first (see Installation section)
+- NumPy arrays must be float32
+- Images must have same shape
+
+**API Documentation:**
+- Configuration models: `KernelConfig`, `RegionLayout`, `NoiseThresholds`
+- Core functions: `fit_kernel()`, `spatial_convolve()`
+- Result: `KernelSolution` dataclass with coefficients and metrics
+
+See [CLAUDE.md § Python API](CLAUDE.md#python-api--header--test-structure) for implementation details.
 
 ---
 

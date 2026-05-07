@@ -109,6 +109,45 @@ def get_hotpants_library_functions() -> dict[str, object]:
     functions["freeStampMem"].argtypes = [ctypes.c_void_p, ctypes.c_int]
     functions["freeStampMem"].restype = None
 
+    # void buildStamps(int sXMin, sXMax, sYMin, sYMax, int *rPixX, *rPixY,
+    #                  int nStampX, nStampY, hwKSStamp,
+    #                  stamp_struct *stamps, *tStamps, *iStamps,
+    #                  float *iData, *tData, tUThresh, tLThresh)
+    functions["buildStamps"] = lib.buildStamps
+    functions["buildStamps"].argtypes = [
+        ctypes.c_int,  # sXMin
+        ctypes.c_int,  # sXMax
+        ctypes.c_int,  # sYMin
+        ctypes.c_int,  # sYMax
+        ctypes.c_void_p,  # int *rPixX
+        ctypes.c_void_p,  # int *rPixY
+        ctypes.c_int,  # nStampX
+        ctypes.c_int,  # nStampY
+        ctypes.c_int,  # hwKSStamp
+        ctypes.c_void_p,  # stamp_struct *stamps
+        ctypes.c_void_p,  # stamp_struct *tStamps
+        ctypes.c_void_p,  # stamp_struct *iStamps
+        ctypes.c_void_p,  # float *iData
+        ctypes.c_void_p,  # float *tData
+        ctypes.c_float,  # tUThresh
+        ctypes.c_float,  # tLThresh
+    ]
+    functions["buildStamps"].restype = None
+
+    # int getPsfCenters(stamp_struct *stamp, float *iData, int nsx, nsy,
+    #                   double smin, int nKSStamps, nKSEdge)
+    functions["getPsfCenters"] = lib.getPsfCenters
+    functions["getPsfCenters"].argtypes = [
+        ctypes.c_void_p,  # stamp_struct *stamp
+        ctypes.c_void_p,  # float *iData
+        ctypes.c_int,  # nsx
+        ctypes.c_int,  # nsy
+        ctypes.c_double,  # smin
+        ctypes.c_int,  # nKSStamps
+        ctypes.c_int,  # nKSEdge
+    ]
+    functions["getPsfCenters"].restype = ctypes.c_int
+
     # int getStampStats3(...)
     functions["getStampStats3"] = lib.getStampStats3
     functions["getStampStats3"].argtypes = [
@@ -128,6 +167,97 @@ def get_hotpants_library_functions() -> dict[str, object]:
         ctypes.c_int,  # nComp
     ]
     functions["getStampStats3"].restype = ctypes.c_int
+
+    # void fitKernel(stamp_struct *stamps, float *imRef, *imConv, *imNoise,
+    #                double *kernel_coeffs, *meansig, *scatter, int *n_skipped)
+    functions["fitKernel"] = lib.fitKernel
+    functions["fitKernel"].argtypes = [
+        ctypes.c_void_p,  # stamp_struct *stamps
+        ctypes.c_void_p,  # float *imRef
+        ctypes.c_void_p,  # float *imConv
+        ctypes.c_void_p,  # float *imNoise (nullable)
+        ctypes.c_void_p,  # double *kernel_coeffs
+        ctypes.POINTER(ctypes.c_double),  # *meansig
+        ctypes.POINTER(ctypes.c_double),  # *scatter
+        ctypes.POINTER(ctypes.c_int),  # *n_skipped
+    ]
+    functions["fitKernel"].restype = None
+
+    # void spatial_convolve(float *image, float **var_image, int ny, nx,
+    #                       double *kernel_coeffs, float *output, int *conv_method)
+    functions["spatial_convolve"] = lib.spatial_convolve
+    functions["spatial_convolve"].argtypes = [
+        ctypes.c_void_p,  # float *image
+        ctypes.c_void_p,  # float **var_image (nullable)
+        ctypes.c_int,  # ny
+        ctypes.c_int,  # nx
+        ctypes.c_void_p,  # double *kernel_coeffs
+        ctypes.c_void_p,  # float *output
+        ctypes.POINTER(ctypes.c_int),  # *conv_method
+    ]
+    functions["spatial_convolve"].restype = None
+
+    # int initKernelGlobals(int image_nx, int image_ny,
+    #                       int n_reg_x, int n_reg_y,
+    #                       int n_stamp_x, int n_stamp_y)
+    functions["initKernelGlobals"] = lib.initKernelGlobals
+    functions["initKernelGlobals"].argtypes = [
+        ctypes.c_int,  # image_nx
+        ctypes.c_int,  # image_ny
+        ctypes.c_int,  # n_reg_x
+        ctypes.c_int,  # n_reg_y
+        ctypes.c_int,  # n_stamp_x
+        ctypes.c_int,  # n_stamp_y
+    ]
+    functions["initKernelGlobals"].restype = ctypes.c_int
+
+    # Wrapper functions for buildStamps context management
+    # int initBuildStampsContext(float* template, float* science,
+    #                            int ny, int nx, int n_regions_x, int n_regions_y,
+    #                            int stamps_per_region_x, int stamps_per_region_y)
+    functions["initBuildStampsContext"] = lib.initBuildStampsContext
+    functions["initBuildStampsContext"].argtypes = [
+        ctypes.c_void_p,  # float *template
+        ctypes.c_void_p,  # float *science
+        ctypes.c_int,  # ny
+        ctypes.c_int,  # nx
+        ctypes.c_int,  # n_regions_x
+        ctypes.c_int,  # n_regions_y
+        ctypes.c_int,  # stamps_per_region_x
+        ctypes.c_int,  # stamps_per_region_y
+    ]
+    functions["initBuildStampsContext"].restype = ctypes.c_int
+
+    # int buildStampsRegion(int region_x, int region_y,
+    #                       float** out_template_region, float** out_science_region)
+    functions["buildStampsRegion"] = lib.buildStampsRegion
+    functions["buildStampsRegion"].argtypes = [
+        ctypes.c_int,  # region_x
+        ctypes.c_int,  # region_y
+        ctypes.POINTER(ctypes.c_void_p),  # *out_template_region
+        ctypes.POINTER(ctypes.c_void_p),  # *out_science_region
+    ]
+    functions["buildStampsRegion"].restype = ctypes.c_int
+
+    # void cleanupBuildStampsContext(void)
+    functions["cleanupBuildStampsContext"] = lib.cleanupBuildStampsContext
+    functions["cleanupBuildStampsContext"].argtypes = []
+    functions["cleanupBuildStampsContext"].restype = None
+
+    # int fillStampsForRegion(stamp_struct* stamps, int n_stamps)
+    functions["fillStampsForRegion"] = lib.fillStampsForRegion
+    functions["fillStampsForRegion"].argtypes = [ctypes.c_void_p, ctypes.c_int]
+    functions["fillStampsForRegion"].restype = ctypes.c_int
+
+    # int* setupSpatialConvolve(int nx, int ny)
+    functions["setupSpatialConvolve"] = lib.setupSpatialConvolve
+    functions["setupSpatialConvolve"].argtypes = [ctypes.c_int, ctypes.c_int]
+    functions["setupSpatialConvolve"].restype = ctypes.c_void_p
+
+    # void cleanupSpatialConvolve(void)
+    functions["cleanupSpatialConvolve"] = lib.cleanupSpatialConvolve
+    functions["cleanupSpatialConvolve"].argtypes = []
+    functions["cleanupSpatialConvolve"].restype = None
 
     return functions
 

@@ -241,4 +241,103 @@ extern int nCompBG;  /* number of background polynomial terms (computed) */
 extern int verbose; /* verbosity level (0=silent, 1=progress, 2=debug) */
 extern int nThread; /* number of OpenMP threads */
 
+/* =====================================================================
+ * Wrapper Functions for Python Integration
+ * =====================================================================
+ * These functions manage global state and provide a clean interface
+ * for calling core algorithms from Python without exposing C complexity.
+ */
+
+/*
+ * Initialize derived kernel globals from hwKernel/kerOrder/bgOrder.
+ *
+ * Must be called before allocateStamps() or buildStamps(). Computes:
+ *   nCompKer, nComp, nC, fwKSStamp, fwKernel, fwStamp
+ * and initialises the Gaussian basis arrays (ngauss, deg_fixe, sigma_gauss)
+ * with standard defaults matching the 3-Gaussian HOTPANTS basis.
+ *
+ * The hwKernel, kerOrder, bgOrder, nKSStamps, hwKSStamp globals must be set
+ * by the caller before invoking this function.
+ *
+ * Args:
+ *   image_nx, image_ny: full image dimensions
+ *   n_reg_x, n_reg_y: number of regions per axis
+ *   n_stamp_x, n_stamp_y: stamps per region per axis
+ *
+ * Returns:
+ *   0 on success, -1 on allocation failure
+ */
+int initKernelGlobals(int image_nx, int image_ny,
+                      int n_reg_x, int n_reg_y,
+                      int n_stamp_x, int n_stamp_y);
+
+/*
+ * Initialize buildStamps context for a complete image.
+ *
+ * Sets up global state and allocates region-level data structures needed
+ * for stamp building. Call this once before processing regions.
+ *
+ * Args:
+ *   template: template image (float*, ny×nx)
+ *   science: science image (float*, ny×nx)
+ *   ny, nx: image dimensions
+ *   n_regions_x, n_regions_y: number of regions per axis
+ *   stamps_per_region_x, stamps_per_region_y: stamps per region per axis
+ *
+ * Returns:
+ *   0 on success, -1 on allocation failure
+ */
+int initBuildStampsContext(float* template, float* science,
+                           int ny, int nx,
+                           int n_regions_x, int n_regions_y,
+                           int stamps_per_region_x, int stamps_per_region_y);
+
+/*
+ * Build stamps for a single region with proper global state management.
+ *
+ * Handles region data extraction, mask setup, and global state configuration
+ * for a single region. Returns pointers to extracted region buffers that can
+ * be passed directly to the C buildStamps function.
+ *
+ * Args:
+ *   region_x, region_y: region coordinates (0-indexed)
+ *   out_template_region: output pointer to extracted template region buffer
+ *   out_science_region: output pointer to extracted science region buffer
+ *
+ * Returns:
+ *   0 on success, -1 on error
+ *
+ * Note: After calling this function, rPixX and rPixY globals are set to the
+ * region dimensions, and mRData points to the mask array. Use these values
+ * when calling buildStamps with the returned region buffers.
+ */
+int buildStampsRegion(int region_x, int region_y,
+                      float** out_template_region, float** out_science_region);
+
+/*
+ * Clean up buildStamps context and free allocated memory.
+ *
+ * Call this after processing all regions to free temporary buffers
+ * and restore global state.
+ */
+void cleanupBuildStampsContext(void);
+
+/*
+ * Set up globals for a full-image spatial_convolve() call.
+ *
+ * Allocates a zero-filled pixel mask of size nx*ny, sets the TLS globals
+ * rPixX, rPixY, and mRData so that spatial_convolve() works correctly on
+ * the full image.
+ *
+ * Returns:
+ *   Pointer to the mask array (pass as cMask to spatial_convolve), or NULL on error.
+ */
+int* setupSpatialConvolve(int nx, int ny);
+
+/*
+ * Clean up after a spatial_convolve() call.
+ * Resets mRData to NULL.
+ */
+void cleanupSpatialConvolve(void);
+
 #endif /* HOTPANTS_API_H */
