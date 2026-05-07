@@ -8,6 +8,7 @@ from scipy.ndimage import gaussian_filter
 
 REPO_ROOT = Path(__file__).parent.parent
 HOTPANTS_BIN = REPO_ROOT / "build" / "hotpants"
+HOTPANTS_BIN_DEBUG = REPO_ROOT / "build_debug" / "hotpants"
 
 # Fixed image geometry for all synthetic tests
 NY, NX = 512, 512
@@ -43,7 +44,17 @@ HOTPANTS_BASE_ARGS = [
 
 @pytest.fixture(scope="session")
 def hotpants_binary():
-    """Return path to the hotpants binary, building it via CMake if necessary."""
+    """Return path to the hotpants binary, building it via CMake if necessary.
+
+    The debug binary is preferred for tests because it has stricter memory
+    checks and is known-good.  The release binary is used only as a last
+    resort if the debug binary is absent.
+    """
+    # Prefer debug binary — it has stricter runtime checks and is known-good
+    if HOTPANTS_BIN_DEBUG.exists():
+        return HOTPANTS_BIN_DEBUG
+
+    # Fall back to release binary, building it if necessary
     if not HOTPANTS_BIN.exists():
         result = subprocess.run(
             ["cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"],
@@ -145,7 +156,11 @@ def run_hotpants(binary, tmpl, sci, diff, extra_args=()):
         + HOTPANTS_BASE_ARGS
         + list(extra_args)
     )
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    # Force single-threaded execution to avoid a pre-existing OpenMP race condition
+    # in main.c that corrupts the heap when multiple threads process regions.
+    # Integration tests use 1 region (nrx=nry=1), so parallelism has no benefit.
+    env = {**__import__('os').environ, 'OMP_NUM_THREADS': '1'}
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if result.returncode != 0:
         msg = f"hotpants failed with exit code {result.returncode}\nStdout: {result.stdout}\nStderr: {result.stderr}"
         raise RuntimeError(msg)
@@ -249,8 +264,12 @@ def mock_hotpants_library(monkeypatch, request):
     mock_lib.buildStampsRegion.return_value = 0
     # buildStamps returns void (None)
     mock_lib.buildStamps.return_value = None
+    # fillStampsForRegion returns 0 (success)
+    mock_lib.fillStampsForRegion.return_value = 0
     # cleanupBuildStampsContext returns void (None)
     mock_lib.cleanupBuildStampsContext.return_value = None
+    # computeKernelNorm returns a float kernel integral (use 1.0 as neutral placeholder)
+    mock_lib.computeKernelNorm.return_value = 1.0
 
     # Patch the library loading and global variable functions
     monkeypatch.setattr(_hotpants_ffi, 'get_library', lambda: mock_lib)
