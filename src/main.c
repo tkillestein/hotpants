@@ -685,7 +685,8 @@ int main(int argc, char* argv[]) {
             nmodem, nsdm, nfwhmm, nlfwhmm, meansigSubstamps, scatterSubstamps, \
             meansigSubstampsF, scatterSubstampsF, meanksumSubstamps,            \
             scatterksumSubstamps, NskippedSubstamps, iSFrac, tSFrac, ePtr,      \
-            pixMin, pixMax, hKeyword, hInfo)
+            pixMin, pixMax, hKeyword, hInfo, ctStamps, ciStamps, tKerSol,      \
+            iKerSol)
 #endif
   for (i = 0; i < nR; i++) {
     status = 0;
@@ -1157,7 +1158,7 @@ int main(int argc, char* argv[]) {
       LOG_PROGRESS("Region %d:%d,%d:%d : Convolving template", rXMin, rXMax,
                    rYMin, rYMax);
 
-#pragma omp critical(allocation)
+#pragma omp critical(kernel_fitting)
       {
       freeStampMem(ciStamps, nStamps);
       /*allocateStamps(ciStamps, nStamps);*/
@@ -1203,13 +1204,14 @@ int main(int argc, char* argv[]) {
       } else {
         eRData = makeNoiseImage4(tRData, 1. / tGain, tRdnoise / tGain);
       }
-      } /* end #pragma omp critical(allocation) */
 
       /* spatial_convolve effectively spreads the input mtsRData mask into
        * global mRData output mask!  bitwise... */
       LOG_PROGRESS("Convolving");
       spatial_convolve(tRData, &eRData, rPixX, rPixY, tKerSol, oRData,
                        mtsRData);
+
+      } /* end #pragma omp critical(kernel_fitting) */
 
       /* correct for background */
       for (l = hwKernel; l < rPixY - hwKernel; l++)
@@ -1285,7 +1287,7 @@ int main(int argc, char* argv[]) {
       LOG_PROGRESS("Region %d,%d %d,%d : Convolving image", rXMin, rXMax, rYMin,
                    rYMax);
 
-#pragma omp critical(allocation)
+#pragma omp critical(kernel_fitting)
       {
       freeStampMem(ctStamps, nStamps);
       /*allocateStamps(ctStamps, nStamps);*/
@@ -1331,7 +1333,6 @@ int main(int argc, char* argv[]) {
       } else {
         eRData = makeNoiseImage4(iRData, 1. / iGain, iRdnoise / iGain);
       }
-      } /* end #pragma omp critical(allocation) */
 
       /* spatial_convolve effectively spreads the input misRData mask into
        * global mRData output mask!  bitwise... */
@@ -1353,6 +1354,8 @@ int main(int argc, char* argv[]) {
       LOG_PROGRESS("Using kernel sum = %f", sumKernel);
       /* Save kernel sum for this region for use during output writing */
       regionKernelSum[i] = sumKernel;
+
+      } /* end #pragma omp critical(kernel_fitting) */
 
       /* eRData now contains partial noise image */
       /* oRData now contains difference image */
