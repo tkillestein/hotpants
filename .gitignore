@@ -5,3 +5,6 @@ __pycache__/
 .venv/
 build/
 *.gch
+gmon.out
+*.data
+perf.data
