@@ -75,7 +75,7 @@ def star_field():
     and the star catalogue.
     """
     rng = np.random.default_rng(0xC0FFEE)
-    n_stars = 80
+    n_stars = 120  # Increased from 80 to ensure ~30 stars per region in 2x2 multi-region splits
     # Keep stars away from borders so PSF convolution has room
     margin = 40
     x_stars = rng.uniform(margin, NX - margin, n_stars)
@@ -145,10 +145,12 @@ def run_hotpants(binary, tmpl, sci, diff, extra_args=()):
         + HOTPANTS_BASE_ARGS
         + list(extra_args)
     )
-    # Force single-threaded execution to avoid a pre-existing OpenMP race condition
-    # in main.c that corrupts the heap when multiple threads process regions.
-    # Integration tests use 1 region (nrx=nry=1), so parallelism has no benefit.
-    env = {**__import__('os').environ, 'OMP_NUM_THREADS': '1'}
+    # Respect OMP_NUM_THREADS from environment; default to 1 for determinism.
+    # Note: Multi-threaded multi-region execution requires explicit OMP_NUM_THREADS override.
+    import os
+    env = {**os.environ}
+    if 'OMP_NUM_THREADS' not in env:
+        env['OMP_NUM_THREADS'] = '1'
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if result.returncode != 0:
         msg = f"hotpants failed with exit code {result.returncode}\nStdout: {result.stdout}\nStderr: {result.stderr}"

@@ -70,6 +70,7 @@ int main(int argc, char* argv[]) {
   int xMin, yMin, xMax, yMax; /* whole image */
 
   int *rXMins, *rYMins, *rXMaxs, *rYMaxs; /* each region, good data */
+  double *regionKernelSum;                /* kernel sum for each region */
   int rXMin, rYMin, rXMax, rYMax;         /* each region, good data */
   int rXBMin, rYBMin, rXBMax, rYBMax;     /* each region, including buffer */
   int xBufLo, xBufHi, yBufLo, yBufHi;     /* buffer */
@@ -522,7 +523,8 @@ int main(int argc, char* argv[]) {
     if (!(rXMins = (int*)calloc(nR, sizeof(int))) ||
         !(rXMaxs = (int*)calloc(nR, sizeof(int))) ||
         !(rYMins = (int*)calloc(nR, sizeof(int))) ||
-        !(rYMaxs = (int*)calloc(nR, sizeof(int))))
+        !(rYMaxs = (int*)calloc(nR, sizeof(int))) ||
+        !(regionKernelSum = (double*)calloc(nR, sizeof(double))))
       exit(1);
 
     nR = 0;
@@ -540,7 +542,8 @@ int main(int argc, char* argv[]) {
     if (!(rXMins = (int*)calloc(numRegKeyWord, sizeof(int))) ||
         !(rXMaxs = (int*)calloc(numRegKeyWord, sizeof(int))) ||
         !(rYMins = (int*)calloc(numRegKeyWord, sizeof(int))) ||
-        !(rYMaxs = (int*)calloc(numRegKeyWord, sizeof(int))))
+        !(rYMaxs = (int*)calloc(numRegKeyWord, sizeof(int))) ||
+        !(regionKernelSum = (double*)calloc(numRegKeyWord, sizeof(double))))
       exit(1);
 
     for (nR = 0; nR < numRegKeyWord; nR++) {
@@ -584,7 +587,8 @@ int main(int argc, char* argv[]) {
     if (!(rXMins = (int*)calloc(nRegX * nRegY, sizeof(int))) ||
         !(rXMaxs = (int*)calloc(nRegX * nRegY, sizeof(int))) ||
         !(rYMins = (int*)calloc(nRegX * nRegY, sizeof(int))) ||
-        !(rYMaxs = (int*)calloc(nRegX * nRegY, sizeof(int))))
+        !(rYMaxs = (int*)calloc(nRegX * nRegY, sizeof(int))) ||
+        !(regionKernelSum = (double*)calloc(nRegX * nRegY, sizeof(double))))
       exit(1);
 
     /* in cfitsio, data are striped along x dimen, thus all loops
@@ -681,7 +685,8 @@ int main(int argc, char* argv[]) {
             nmodem, nsdm, nfwhmm, nlfwhmm, meansigSubstamps, scatterSubstamps, \
             meansigSubstampsF, scatterSubstampsF, meanksumSubstamps,            \
             scatterksumSubstamps, NskippedSubstamps, iSFrac, tSFrac, ePtr,      \
-            pixMin, pixMax, hKeyword, hInfo)
+            pixMin, pixMax, hKeyword, hInfo) \
+      firstprivate(ctStamps, ciStamps, tKerSol, iKerSol)
 #endif
   for (i = 0; i < nR; i++) {
     status = 0;
@@ -1153,7 +1158,7 @@ int main(int argc, char* argv[]) {
       LOG_PROGRESS("Region %d:%d,%d:%d : Convolving template", rXMin, rXMax,
                    rYMin, rYMax);
 
-#pragma omp critical(allocation)
+#pragma omp critical(kernel_fitting)
       {
       freeStampMem(ciStamps, nStamps);
       /*allocateStamps(ciStamps, nStamps);*/
@@ -1199,7 +1204,6 @@ int main(int argc, char* argv[]) {
       } else {
         eRData = makeNoiseImage4(tRData, 1. / tGain, tRdnoise / tGain);
       }
-      } /* end #pragma omp critical(allocation) */
 
       /* spatial_convolve effectively spreads the input mtsRData mask into
        * global mRData output mask!  bitwise... */
@@ -1207,18 +1211,22 @@ int main(int argc, char* argv[]) {
       spatial_convolve(tRData, &eRData, rPixX, rPixY, tKerSol, oRData,
                        mtsRData);
 
+      } /* end #pragma omp critical(kernel_fitting) */
+
       /* correct for background */
       for (l = hwKernel; l < rPixY - hwKernel; l++)
         for (k = hwKernel; k < rPixX - hwKernel; k++)
           oRData[k + rPixX * l] += get_background(k, l, tKerSol);
 
-      sumKernel = make_kernel(rXMin, rYMin, tKerSol);
-      LOG_PROGRESS("Kernel sum at %d,%d: %f", rXMin, rYMin, sumKernel);
-      sumKernel = make_kernel(rXMax, rYMax, tKerSol);
-      LOG_PROGRESS("Kernel sum at %d,%d: %f", rXMax, rYMax, sumKernel);
+      sumKernel = make_kernel(0, 0, tKerSol);
+      LOG_PROGRESS("Kernel sum at region corner (0,0): %f", sumKernel);
+      sumKernel = make_kernel(rPixX, rPixY, tKerSol);
+      LOG_PROGRESS("Kernel sum at region corner (%d,%d): %f", rPixX, rPixY, sumKernel);
       /* use middle of region to normalize image */
       sumKernel = make_kernel(rPixX / 2, rPixY / 2, tKerSol);
       LOG_PROGRESS("Using kernel sum = %f", sumKernel);
+      /* Save kernel sum for this region for use during output writing */
+      regionKernelSum[i] = sumKernel;
 
       /* eRData now contains partial noise image */
       /* oRData now contains difference image */
@@ -1279,7 +1287,7 @@ int main(int argc, char* argv[]) {
       LOG_PROGRESS("Region %d,%d %d,%d : Convolving image", rXMin, rXMax, rYMin,
                    rYMax);
 
-#pragma omp critical(allocation)
+#pragma omp critical(kernel_fitting)
       {
       freeStampMem(ctStamps, nStamps);
       /*allocateStamps(ctStamps, nStamps);*/
@@ -1325,7 +1333,6 @@ int main(int argc, char* argv[]) {
       } else {
         eRData = makeNoiseImage4(iRData, 1. / iGain, iRdnoise / iGain);
       }
-      } /* end #pragma omp critical(allocation) */
 
       /* spatial_convolve effectively spreads the input misRData mask into
        * global mRData output mask!  bitwise... */
@@ -1338,13 +1345,17 @@ int main(int argc, char* argv[]) {
         for (k = hwKernel; k < rPixX - hwKernel; k++)
           oRData[k + rPixX * l] += get_background(k, l, iKerSol);
 
-      sumKernel = make_kernel(rXMin, rYMin, iKerSol);
-      LOG_PROGRESS("Kernel sum at %d,%d: %f", rXMin, rYMin, sumKernel);
-      sumKernel = make_kernel(rXMax, rYMax, iKerSol);
-      LOG_PROGRESS("Kernel sum at %d,%d: %f", rXMax, rYMax, sumKernel);
+      sumKernel = make_kernel(0, 0, iKerSol);
+      LOG_PROGRESS("Kernel sum at region corner (0,0): %f", sumKernel);
+      sumKernel = make_kernel(rPixX, rPixY, iKerSol);
+      LOG_PROGRESS("Kernel sum at region corner (%d,%d): %f", rPixX, rPixY, sumKernel);
       /* use middle of region to normalize image */
       sumKernel = make_kernel(rPixX / 2, rPixY / 2, iKerSol);
       LOG_PROGRESS("Using kernel sum = %f", sumKernel);
+      /* Save kernel sum for this region for use during output writing */
+      regionKernelSum[i] = sumKernel;
+
+      } /* end #pragma omp critical(kernel_fitting) */
 
       /* eRData now contains partial noise image */
       /* oRData now contains difference image */
@@ -1431,7 +1442,7 @@ int main(int argc, char* argv[]) {
     /*
       NOTE : we are NOT masking out the convolved image
     */
-    inv1 = 1. / sumKernel;
+    inv1 = 1. / regionKernelSum[i];
 
     if (inclConvImage || convImage) {
       /* renormalize by kernel if necessary */
@@ -1479,7 +1490,7 @@ int main(int argc, char* argv[]) {
           if ((strncmp(photNormalize, "u", 1) != 0) &&
               ((convTmpl && strncmp(photNormalize, "t", 1) == 0) ||
                (!convTmpl && strncmp(photNormalize, "i", 1) == 0)))
-            oRData[k + rPixX * l] *= sumKernel;
+            oRData[k + rPixX * l] *= regionKernelSum[i];
         }
       }
     }
