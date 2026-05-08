@@ -404,6 +404,7 @@ def fit_kernel(
             )
 
             logger.debug(f"Fitted kernel: chi2={chi2:.3f}, norm={kernel_norm:.3f}")
+            logger.debug(f"Kernel coefficients (first 10): {kernel_coeffs[:10]}")
 
         finally:
             # Always cleanup buildStamps context after fitKernel,
@@ -520,11 +521,14 @@ def spatial_convolve(
         # kernelSol[(nCompKer-1)*nComp + 2].
         n_comp_ker = _hotpants_ffi.get_global_int("nCompKer")
         n_comp = _hotpants_ffi.get_global_int("nComp")
+        logger.debug(f"spatial_convolve: nCompKer={n_comp_ker}, nComp={n_comp}")
         if n_comp_ker > 0 and n_comp > 0:
             bg_start = (n_comp_ker - 1) * n_comp + 2
             n_bg_terms = (config.bg_order + 1) * (config.bg_order + 2) // 2
+            logger.debug(f"spatial_convolve: bg_start={bg_start}, n_bg_terms={n_bg_terms}, total_coeffs={len(kernel_solution.kernel_coefficients)}")
             if bg_start + n_bg_terms <= len(kernel_solution.kernel_coefficients):
                 bg_coeffs = kernel_solution.kernel_coefficients[bg_start:bg_start + n_bg_terms]
+                logger.debug(f"spatial_convolve: bg_coeffs={bg_coeffs}")
                 # Normalise pixel coordinates to [-1, 1] — matches C get_background()
                 norm_x = (np.arange(nx, dtype=np.float64) - 0.5 * nx) / (0.5 * nx)
                 norm_y = (np.arange(ny, dtype=np.float64) - 0.5 * ny) / (0.5 * ny)
@@ -534,7 +538,13 @@ def spatial_convolve(
                     for deg_y in range(config.bg_order - deg_x + 1):
                         bg += bg_coeffs[coeff_idx] * np.outer(norm_y ** deg_y, norm_x ** deg_x)
                         coeff_idx += 1
-                output += bg.astype(np.float32)
+                # Match C code: only add background to pixels away from hwKernel border
+                # (main.c lines 1201-1203: for loop starts at hwKernel, ends at rPixY-hwKernel)
+                hw_kernel = _hotpants_ffi.get_global_int("hwKernel")
+                if hw_kernel > 0:
+                    output[hw_kernel:ny-hw_kernel, hw_kernel:nx-hw_kernel] += bg[hw_kernel:ny-hw_kernel, hw_kernel:nx-hw_kernel].astype(np.float32)
+                else:
+                    output += bg.astype(np.float32)
 
     logger.debug(f"Convolution complete: output shape {output.shape}")
 
