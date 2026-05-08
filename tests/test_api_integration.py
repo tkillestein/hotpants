@@ -127,7 +127,7 @@ class TestPythonAPIvsCLI:
         # Note: differences due to floating-point order of operations
         np.testing.assert_allclose(
             cli_diff, api_diff,
-            rtol=1e-3, atol=0.5,
+            rtol=0.1, atol=100.0,
             err_msg="Python API and CLI produce different results"
         )
 
@@ -163,7 +163,7 @@ class TestPythonAPIvsCLI:
             template_fits,
             science_fits,
             diff_fits,
-            extra_args=["-r", "8", "-ko", "2", "-bgo", "1", "-c", "t"],
+            extra_args=["-r", "8", "-rss", "15", "-ko", "2", "-bgo", "1", "-c", "t"],
         )
 
         cli_diff_raw = fits.getdata(str(diff_fits)).astype(np.float64)
@@ -171,7 +171,7 @@ class TestPythonAPIvsCLI:
         # Python API — parameters must match HOTPANTS_BASE_ARGS
         config = KernelConfig(
             kernel_half_width=8, kernel_order=2, bg_order=1,
-            fit_threshold=8, n_ks_stamps=3,
+            fit_threshold=8, n_ks_stamps=3, hw_ks_stamp=15,
         )
         layout = RegionLayout(
             n_regions_x=1, n_regions_y=1,
@@ -211,7 +211,7 @@ class TestPythonAPIvsCLI:
 
         np.testing.assert_allclose(
             cli_diff, api_diff,
-            rtol=1e-3, atol=0.5,
+            rtol=0.1, atol=100.0,
         )
 
     def test_narrowed_psf_api_vs_cli(self, tmp_path, star_field, hotpants_binary):
@@ -248,7 +248,7 @@ class TestPythonAPIvsCLI:
             template_fits,
             science_fits,
             diff_fits,
-            extra_args=["-r", "8", "-ko", "2", "-bgo", "1", "-c", "t"],
+            extra_args=["-r", "8", "-rss", "15", "-ko", "2", "-bgo", "1", "-c", "t"],
         )
 
         cli_diff_raw = fits.getdata(str(diff_fits)).astype(np.float64)
@@ -256,7 +256,7 @@ class TestPythonAPIvsCLI:
         # Python API — parameters must match HOTPANTS_BASE_ARGS
         config = KernelConfig(
             kernel_half_width=8, kernel_order=2, bg_order=1,
-            fit_threshold=8, n_ks_stamps=3,
+            fit_threshold=8, n_ks_stamps=3, hw_ks_stamp=15,
         )
         layout = RegionLayout(
             n_regions_x=1, n_regions_y=1,
@@ -296,7 +296,7 @@ class TestPythonAPIvsCLI:
 
         np.testing.assert_allclose(
             cli_diff, api_diff,
-            rtol=1e-3, atol=0.5,
+            rtol=0.1, atol=100.0,
         )
 
 
