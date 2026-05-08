@@ -1154,6 +1154,8 @@ int main(int argc, char* argv[]) {
       LOG_PROGRESS("Region %d:%d,%d:%d : Convolving template", rXMin, rXMax,
                    rYMin, rYMax);
 
+#pragma omp critical(allocation)
+      {
       freeStampMem(ciStamps, nStamps);
       /*allocateStamps(ciStamps, nStamps);*/
       nS = ntS;
@@ -1198,6 +1200,7 @@ int main(int argc, char* argv[]) {
       } else {
         eRData = makeNoiseImage4(tRData, 1. / tGain, tRdnoise / tGain);
       }
+      } /* end #pragma omp critical(allocation) */
 
       /* spatial_convolve effectively spreads the input mtsRData mask into
        * global mRData output mask!  bitwise... */
