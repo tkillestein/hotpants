@@ -2024,37 +2024,54 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
 
   /* --- Tile-based pixel-wise weighted sum (OpenMP parallel over tiles) ---
    * Processes image in FFT_TILE_SIZE x FFT_TILE_SIZE tiles to improve cache
-   * locality. For each tile, compute:
+   * locality and reduce L2 cache misses. For each tile, keeps all effConv[j]
+   * values for pixels in that tile resident in L2 cache before proceeding to
+   * next tile. Reduces prefetching overhead and improves memory bandwidth.
+   * For each pixel (x,y), compute:
    *   output(x,y) = effConv[0][ni] + Σⱼ Pⱼ(xf,yf) * effConv[j+1][ni]
    * where Pⱼ = xf^ix * yf^iy in the same (ix,iy) order as make_kernel_local.
    * Each ni = xp + xSize*yp is unique; no data race on cRdata. */
   rPixX2 = 0.5 * xSize;
   rPixY2 = 0.5 * ySize;
+#define FFT_TILE_SIZE 32
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) \
-    collapse(2) private(ni, xf, yf, out, ax, ay, j, ix, iy, xp, yp)
+    collapse(2) private(ni, xf, yf, out, ax, ay, j, ix, iy, xp, yp, i0, j0, \
+                        i2, j2) default(shared)
 #endif
-  for (yp = hwKernel; yp < ySize - hwKernel; yp++) {
-    for (xp = hwKernel; xp < xSize - hwKernel; xp++) {
-      ni = xp + xSize * yp;
-      xf = (xp - rPixX2) / rPixX2;
-      yf = (yp - rPixY2) / rPixY2;
+  for (j0 = hwKernel; j0 < ySize - hwKernel; j0 += FFT_TILE_SIZE) {
+    for (i0 = hwKernel; i0 < xSize - hwKernel; i0 += FFT_TILE_SIZE) {
+      int xp_max = (i0 + FFT_TILE_SIZE < xSize - hwKernel)
+                       ? i0 + FFT_TILE_SIZE
+                       : xSize - hwKernel;
+      int yp_max = (j0 + FFT_TILE_SIZE < ySize - hwKernel)
+                       ? j0 + FFT_TILE_SIZE
+                       : ySize - hwKernel;
 
-      out = effConv[0][ni];
-      j = 0;
-      ax = 1.0;
-      for (ix = 0; ix <= kerOrder; ix++) {
-        ay = 1.0;
-        for (iy = 0; iy <= kerOrder - ix; iy++) {
-          out += ax * ay * effConv[j + 1][ni];
-          ay *= yf;
-          j++;
+      for (yp = j0; yp < yp_max; yp++) {
+        for (xp = i0; xp < xp_max; xp++) {
+          ni = xp + xSize * yp;
+          xf = (xp - rPixX2) / rPixX2;
+          yf = (yp - rPixY2) / rPixY2;
+
+          out = effConv[0][ni];
+          j = 0;
+          ax = 1.0;
+          for (ix = 0; ix <= kerOrder; ix++) {
+            ay = 1.0;
+            for (iy = 0; iy <= kerOrder - ix; iy++) {
+              out += ax * ay * effConv[j + 1][ni];
+              ay *= yf;
+              j++;
+            }
+            ax *= xf;
+          }
+          cRdata[ni] = (float)out;
         }
-        ax *= xf;
       }
-      cRdata[ni] = (float)out;
     }
   }
+#undef FFT_TILE_SIZE
 
   /* --- Free effective convolution images --- */
   for (i = 0; i < nEffConv; i++) {

@@ -743,7 +743,10 @@ int getPsfCenters(stamp_struct* stamp, float* iData, int xLen, int yLen,
           imax = stampRegionCol;
           jmax = stampRegionRow;
 
-          /* center this candidate on the peak flux */
+          /* center this candidate on the peak flux.
+           * Inner loop with SIMD pragma for vectorization of the neighborhood
+           * maximum-finding operation. The centroidRow loop encloses it to ensure
+           * proper data scope. */
           for (centroidRow = stampRegionRow - hwKSStamp;
                centroidRow <= stampRegionRow + hwKSStamp; centroidRow++) {
             yr2 = centroidRow + sy0;
@@ -751,17 +754,19 @@ int getPsfCenters(stamp_struct* stamp, float* iData, int xLen, int yLen,
             if ((centroidRow < ybuffer) || (centroidRow >= yLen - ybuffer))
               continue; /* continue centroidRow loop */
 
+            /* SIMD-vectorizable inner loop: find neighborhood maximum */
+#pragma omp simd
             for (centroidCol = stampRegionCol - hwKSStamp;
                  centroidCol <= stampRegionCol + hwKSStamp; centroidCol++) {
               xr2 = centroidCol + sx0;
               nr2 = xr2 + rPixX * yr2;
 
               if ((centroidCol < xbuffer) || (centroidCol >= xLen - xbuffer))
-                continue; /* continue centroidCol loop */
+                continue;
 
               /* (3). no fill/sat values within checked region, and not
                * overlapping other stamp */
-              if (mRData[nr2] & bbit) continue; /* continue k loop */
+              if (mRData[nr2] & bbit) continue;
 
               dpt2 = iData[nr2];
 
@@ -769,15 +774,13 @@ int getPsfCenters(stamp_struct* stamp, float* iData, int xLen, int yLen,
                * overlapping other stamp */
               if (dpt2 >= hiThresh) {
                 mRData[nr2] |= bbit1;
-                continue; /* continue k loop */
+                continue;
               }
 
-              /* (4b). not as strong a problem, just don't want low sigma peak
-               */
+              /* (4b). not as strong a problem, just don't want low sigma peak */
               if (((dpt2 - sky) * invdsky) < kerFitThresh) continue;
 
-              /* record position and amp of good point centroid in
-               * stampRegionCol,stampRegionRow,dmax */
+              /* Find maximum pixel value in neighborhood */
               if (dpt2 > dmax) {
                 dmax = dpt2;
                 imax = centroidCol;
