@@ -1788,6 +1788,7 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
   fftw_complex *img_fft, *ker_fft;
   fftw_plan plan_fwd, plan_inv;
   float **effConv, *vData;
+  size_t image_size, effconv_element_size;
 
   effKernel = NULL;
   real_buf = NULL;
@@ -1799,6 +1800,18 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
   plan_inv = NULL;
   effConv = NULL;
   vData = NULL;
+
+  /* Sanity checks on input dimensions */
+  image_size = (size_t)xSize * ySize;
+  if (xSize <= 0 || ySize <= 0 || image_size == 0) {
+    LOG_ERROR("spatial_convolve_fft: invalid dimensions xSize=%d, ySize=%d",
+              xSize, ySize);
+    return;
+  }
+  if (!image || !cRdata || !cMask) {
+    LOG_ERROR("spatial_convolve_fft: NULL input pointer");
+    return;
+  }
 
   ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
   nEffConv = 1 + ncomp2;
@@ -1832,6 +1845,11 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
     LOG_ERROR("spatial_convolve_fft: out of memory (effConv)");
     goto cleanup_fft;
   }
+  /* Initialize all pointers to NULL for safe cleanup if allocation fails */
+  for (i = 0; i < nEffConv; i++) {
+    effConv[i] = NULL;
+  }
+  /* Now allocate the actual buffers */
   for (i = 0; i < nEffConv; i++) {
     effConv[i] = (float*)malloc((size_t)xSize * ySize * sizeof(float));
     if (!effConv[i]) {
@@ -2021,6 +2039,13 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
             for (ic = i1 - hwKernel; ic <= i1 + hwKernel; ic++) {
               ik = i1 - ic + hwKernel;
               nc = ic + xSize * jc;
+              /* Bounds check to prevent out-of-bounds access */
+              if (nc < 0 || nc >= (int)image_size) {
+                LOG_ERROR("spatial_convolve_fft: mask loop bounds error: nc=%d, "
+                          "image_size=%zu, i1=%d, j=%d, xSize=%d",
+                          nc, image_size, i1, j, xSize);
+                goto cleanup_fft;
+              }
               kk = lkernel[ik + jk * fwKernel];
 
               if (dovar) {
