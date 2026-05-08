@@ -75,7 +75,7 @@ def star_field():
     and the star catalogue.
     """
     rng = np.random.default_rng(0xC0FFEE)
-    n_stars = 200  # Increased from 80 to ensure sufficient stars per region with multi-region splits
+    n_stars = 120  # Increased from 80 to ensure ~30 stars per region in 2x2 multi-region splits
     # Keep stars away from borders so PSF convolution has room
     margin = 40
     x_stars = rng.uniform(margin, NX - margin, n_stars)

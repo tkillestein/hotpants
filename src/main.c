@@ -685,8 +685,8 @@ int main(int argc, char* argv[]) {
             nmodem, nsdm, nfwhmm, nlfwhmm, meansigSubstamps, scatterSubstamps, \
             meansigSubstampsF, scatterSubstampsF, meanksumSubstamps,            \
             scatterksumSubstamps, NskippedSubstamps, iSFrac, tSFrac, ePtr,      \
-            pixMin, pixMax, hKeyword, hInfo, ctStamps, ciStamps, tKerSol,      \
-            iKerSol)
+            pixMin, pixMax, hKeyword, hInfo) \
+      firstprivate(ctStamps, ciStamps, tKerSol, iKerSol)
 #endif
   for (i = 0; i < nR; i++) {
     status = 0;
