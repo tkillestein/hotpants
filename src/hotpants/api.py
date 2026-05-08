@@ -369,11 +369,20 @@ def fit_kernel(
             # fitKernel writes nCompTotal+1 coefficients; must allocate exactly that size
             n_coeffs = kernel_info["total_components"] + 1
 
-            # If no noise image provided, allocate a dummy one for fitKernel.
-            # getStampSig uses this for quality metrics; if NULL it crashes.
-            # A zero-filled array is acceptable (all stamps treated as equal quality).
+            # If no noise image provided, compute Poisson variance to match main.c's
+            # makeNoiseImage4 call: var = |img| / gain + (rdnoise / gain)^2.
+            # A zero-filled array causes division-by-zero in getStampSig → all stamps
+            # get rejected. Proper variance is required for stamp quality assessment.
             if noise is None:
-                noise = np.zeros_like(template)
+                t_var = (
+                    np.abs(template.astype(np.float64)) / thresholds.template_gain
+                    + (thresholds.template_readnoise / thresholds.template_gain) ** 2
+                )
+                i_var = (
+                    np.abs(science.astype(np.float64)) / thresholds.science_gain
+                    + (thresholds.science_readnoise / thresholds.science_gain) ** 2
+                )
+                noise = (t_var + i_var).astype(np.float32)
             else:
                 noise = np.ascontiguousarray(noise.astype(np.float32))
 
@@ -489,6 +498,33 @@ def spatial_convolve(
     with global_state(config_dict):
         logger.debug("Applying spatially-varying convolution...")
         output = _core.spatial_convolve_c(image, kernel_solution.kernel_coefficients, output)
+
+        # Add the fitted background polynomial, matching CLI behavior:
+        #   oRData += get_background(k, l, kernelSol)  (main.c lines 1201-1203)
+        # The kernel fit models: science ≈ template⊗K + background_poly(x,y).
+        # Callers compute D = science - output, so output must include the background
+        # term so that D matches the CLI difference image.
+        #
+        # C get_background() uses: backgroundComponentOffset = (nCompKer-1)*nComp + 1
+        # and solutionIdx starting at 1, so first background coefficient is at
+        # kernelSol[(nCompKer-1)*nComp + 2].
+        n_comp_ker = _hotpants_ffi.get_global_int("nCompKer")
+        n_comp = _hotpants_ffi.get_global_int("nComp")
+        if n_comp_ker > 0 and n_comp > 0:
+            bg_start = (n_comp_ker - 1) * n_comp + 2
+            n_bg_terms = (config.bg_order + 1) * (config.bg_order + 2) // 2
+            if bg_start + n_bg_terms <= len(kernel_solution.kernel_coefficients):
+                bg_coeffs = kernel_solution.kernel_coefficients[bg_start:bg_start + n_bg_terms]
+                # Normalise pixel coordinates to [-1, 1] — matches C get_background()
+                norm_x = (np.arange(nx, dtype=np.float64) - 0.5 * nx) / (0.5 * nx)
+                norm_y = (np.arange(ny, dtype=np.float64) - 0.5 * ny) / (0.5 * ny)
+                bg = np.zeros((ny, nx), dtype=np.float64)
+                coeff_idx = 0
+                for deg_x in range(config.bg_order + 1):
+                    for deg_y in range(config.bg_order - deg_x + 1):
+                        bg += bg_coeffs[coeff_idx] * np.outer(norm_y ** deg_y, norm_x ** deg_x)
+                        coeff_idx += 1
+                output += bg.astype(np.float32)
 
     logger.debug(f"Convolution complete: output shape {output.shape}")
 

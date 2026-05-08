@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "defaults.h"
 
 /* stamp_struct definition (copied from globals.h) */
 typedef struct {
@@ -30,7 +31,7 @@ typedef struct {
 /* Declare globals accessed by wrapper */
 extern __thread int rPixX, rPixY;
 extern __thread int* mRData;
-extern char* forceConvolve;
+extern char* forceConvolve, *photNormalize, *figMerit;
 extern int fwKernel, fwStamp;
 extern int fwKSStamp;
 extern int kcStep;
@@ -44,6 +45,11 @@ extern int nKSStamps, hwKSStamp;
 extern int nStampX, nStampY;
 extern int nRegX, nRegY;
 
+/* Algorithm tuning globals normally set by vargs() */
+extern float statSig, kerSigReject, kerFracMask;
+extern float kfSpreadMask1, kfSpreadMask2;
+extern float fillVal, fillValNoise;
+
 /* Kernel basis arrays — allocated once per parameter set, used by fillStamp
  * and spatial_convolve (mirrors main.c lines 450-461). */
 extern double **kernel_vec;
@@ -55,6 +61,7 @@ extern __thread float *temp;
 
 /* Forward declarations - defined in alard.c */
 extern void getKernelVec(void);
+extern double make_kernel(int xi, int yi, double* kernelSol);
 
 /* Forward declarations - defined in functions.c */
 extern void makeInputMask(float* iRData, float* tRData, int* mRData);
@@ -199,6 +206,23 @@ int initKernelGlobals(int image_nx, int image_ny,
    * This replicates the per-region call at main.c lines 1093-1094. */
   getKernelVec();
 
+  /* Initialize string globals normally set by vargs() — these must not be NULL
+   * because buildStamps, fitKernel, and spatial_convolve call strncmp() on them.
+   * forceConvolve = "t": Python API always fits template ⊗ K ≈ science,
+   * so buildStamps must only process template stamps (not both directions). */
+  figMerit      = "v";   /* D_FIGMERIT: variance-based figure of merit */
+  photNormalize = "t";   /* D_NORMALIZE: output on template photometric system */
+  forceConvolve = "t";   /* Python API always convolves template; mirrors CLI -c t */
+
+  /* Initialize algorithm-tuning globals normally set by vargs(); without this
+   * statSig=0 and kerSigReject=0, which causes sigma_clip to clip everything
+   * and check_again to reject all stamps on every iteration. */
+  if (statSig == 0.0f)        statSig        = D_STATSIG;
+  if (kerSigReject == 0.0f)   kerSigReject   = D_KSIGREJECT;
+  if (fillVal == 0.0f)        fillVal        = D_FILL;
+  if (kfSpreadMask1 == 0.0f)  kfSpreadMask1  = D_INMASKFSPREAD;
+  if (kfSpreadMask2 == 0.0f)  kfSpreadMask2  = D_OUMASKFSPREAD;
+
   fprintf(stderr, "DEBUG: initKernelGlobals: nCompKer=%d nC=%d "
           "fwKSStamp=%d fwStamp=%d fwKernel=%d kcStep=%d\n",
           nCompKer, nC, fwKSStamp, fwStamp, fwKernel, kcStep);
@@ -247,9 +271,10 @@ int initBuildStampsContext(float* template, float* science,
   wrapper_context.stamps_per_region_x = stamps_per_region_x;
   wrapper_context.stamps_per_region_y = stamps_per_region_y;
 
-  /* Estimate maximum region size for buffer allocation */
-  int max_region_x = (nx + n_regions_x - 1) / n_regions_x + 1;
-  int max_region_y = (ny + n_regions_y - 1) / n_regions_y + 1;
+  /* Estimate maximum region size for buffer allocation.
+   * Add hwKernel border on each side to match main.c region extraction. */
+  int max_region_x = (nx + n_regions_x - 1) / n_regions_x + 1 + 2 * hwKernel;
+  int max_region_y = (ny + n_regions_y - 1) / n_regions_y + 1 + 2 * hwKernel;
   int max_region_size = max_region_x * max_region_y;
 
   fprintf(stderr, "DEBUG: Allocating %d bytes for region buffers (max_region_size=%d)\n",
@@ -266,8 +291,10 @@ int initBuildStampsContext(float* template, float* science,
     return -1;
   }
 
-  /* Set global forceConvolve to "i" (convolve science image, matching template) */
-  forceConvolve = "i";
+  /* Set global forceConvolve to "t": fit template ⊗ K ≈ science.
+   * This is the natural direction when science has a broader PSF than template,
+   * and produces a difference image D = science - template ⊗ K. */
+  forceConvolve = "t";
 
   wrapper_context.initialized = 1;
   fprintf(stderr, "DEBUG: initBuildStampsContext succeeded\n");
@@ -287,7 +314,7 @@ int buildStampsRegion(int region_x, int region_y,
     return -1;
   }
 
-  /* Compute region boundaries */
+  /* Compute region boundaries (without border) */
   int rx_min, rx_max, ry_min, ry_max;
   int r_pix_x, r_pix_y;
   get_region_bounds(region_x, region_y,
@@ -296,32 +323,65 @@ int buildStampsRegion(int region_x, int region_y,
                     &rx_min, &rx_max, &ry_min, &ry_max,
                     &r_pix_x, &r_pix_y);
 
-  /* Set global region dimensions (required by C buildStamps) */
-  rPixX = r_pix_x;
-  rPixY = r_pix_y;
+  /* Add hwKernel border, clamped to image bounds — mirrors main.c lines 709-723.
+   * buildStamps/fillStamp require rPixX to be the bordered width and iRData to
+   * start at rXBMin = rx_min - hwKernel; without this the buffer is indexed
+   * out-of-bounds and the process segfaults. */
+  int hw = hwKernel;
+  int rx_b_min = (rx_min >= hw) ? rx_min - hw : 0;
+  int rx_b_max = (rx_max + hw < wrapper_context.full_nx)
+                   ? rx_max + hw : wrapper_context.full_nx - 1;
+  int ry_b_min = (ry_min >= hw) ? ry_min - hw : 0;
+  int ry_b_max = (ry_max + hw < wrapper_context.full_ny)
+                   ? ry_max + hw : wrapper_context.full_ny - 1;
+  int r_b_pix_x = rx_b_max - rx_b_min + 1;
+  int r_b_pix_y = ry_b_max - ry_b_min + 1;
 
-  fprintf(stderr, "DEBUG: buildStampsRegion(%d, %d): region_size=%dx%d\n",
-          region_x, region_y, r_pix_x, r_pix_y);
+  /* Set global region dimensions to the bordered size (required by buildStamps/fillStamp) */
+  rPixX = r_b_pix_x;
+  rPixY = r_b_pix_y;
 
-  /* Extract region data from full images */
-  for (int y = 0; y < r_pix_y; y++) {
-    for (int x = 0; x < r_pix_x; x++) {
-      int region_idx = y * r_pix_x + x;
-      int full_idx = (ry_min + y) * wrapper_context.full_nx + (rx_min + x);
+  fprintf(stderr, "DEBUG: buildStampsRegion(%d, %d): region_size=%dx%d bordered=%dx%d\n",
+          region_x, region_y, r_pix_x, r_pix_y, r_b_pix_x, r_b_pix_y);
+
+  /* Extract region data WITH border from full images */
+  for (int y = 0; y < r_b_pix_y; y++) {
+    for (int x = 0; x < r_b_pix_x; x++) {
+      int region_idx = y * r_b_pix_x + x;
+      int full_idx = (ry_b_min + y) * wrapper_context.full_nx + (rx_b_min + x);
       wrapper_context.region_t_buffer[region_idx] = wrapper_context.template_image[full_idx];
       wrapper_context.region_i_buffer[region_idx] = wrapper_context.science_image[full_idx];
     }
   }
 
-  /* Initialize mask array */
-  memset(wrapper_context.region_mask_buffer, 0, r_pix_x * r_pix_y * sizeof(int));
+  /* Initialize mask array for bordered region */
+  memset(wrapper_context.region_mask_buffer, 0, r_b_pix_x * r_b_pix_y * sizeof(int));
 
   /* Set the global mask array pointer */
   mRData = wrapper_context.region_mask_buffer;
 
-  /* Set up mask from image data */
-  makeInputMask(wrapper_context.region_i_buffer, wrapper_context.region_t_buffer,
+  /* Set up mask from image data (template first, then science — matches main.c) */
+  makeInputMask(wrapper_context.region_t_buffer, wrapper_context.region_i_buffer,
                 wrapper_context.region_mask_buffer);
+
+  /* Apply border masking — mirrors main.c lines 893-907.
+   * sBorder = hwKernel + kcStep pixels at each edge are flagged FLAG_T_BAD|FLAG_I_BAD.
+   * This ensures getPsfCenters never places a PSF center within sBorder of the
+   * buffer edge, guaranteeing xy_conv_stamp won't access out-of-bounds memory
+   * (which requires hwKSStamp+hwKernel pixels of margin from any PSF center). */
+  int sBorder = hwKernel + kcStep;
+  for (int by = 0; by < r_b_pix_y; by++) {
+    for (int bx = 0; bx < sBorder; bx++)
+      wrapper_context.region_mask_buffer[bx + r_b_pix_x * by] |= (FLAG_T_BAD | FLAG_I_BAD);
+    for (int bx = r_b_pix_x - sBorder; bx < r_b_pix_x; bx++)
+      wrapper_context.region_mask_buffer[bx + r_b_pix_x * by] |= (FLAG_T_BAD | FLAG_I_BAD);
+  }
+  for (int by = 0; by < sBorder; by++)
+    for (int bx = sBorder; bx < r_b_pix_x - sBorder; bx++)
+      wrapper_context.region_mask_buffer[bx + r_b_pix_x * by] |= (FLAG_T_BAD | FLAG_I_BAD);
+  for (int by = r_b_pix_y - sBorder; by < r_b_pix_y; by++)
+    for (int bx = sBorder; bx < r_b_pix_x - sBorder; bx++)
+      wrapper_context.region_mask_buffer[bx + r_b_pix_x * by] |= (FLAG_T_BAD | FLAG_I_BAD);
 
   /* Return pointers to extracted region data */
   *out_template_region = wrapper_context.region_t_buffer;
@@ -419,11 +479,19 @@ int fillStampsForRegion(stamp_struct* stamps, int n_stamps) {
     fprintf(stderr, "ERROR: fillStampsForRegion: context not initialized\n");
     return -1;
   }
+  fprintf(stderr, "DEBUG fillStampsForRegion: rPixX=%d rPixY=%d n_stamps=%d\n",
+          rPixX, rPixY, n_stamps);
   int k;
   for (k = 0; k < n_stamps; k++) {
+    if (stamps[k].nss > 0)
+      fprintf(stderr, "DEBUG   stamp[%d]: x0=%d y0=%d xss[0]=%d yss[0]=%d nss=%d\n",
+              k, stamps[k].x0, stamps[k].y0,
+              stamps[k].xss[0], stamps[k].yss[0], stamps[k].nss);
+    /* forceConvolve = "t": imConv = template, imRef = science.
+     * Fits template ⊗ K ≈ science; difference = science - template ⊗ K. */
     fillStamp(&stamps[k],
-              wrapper_context.region_i_buffer,
-              wrapper_context.region_t_buffer);
+              wrapper_context.region_t_buffer,
+              wrapper_context.region_i_buffer);
   }
   return 0;
 }
@@ -433,8 +501,6 @@ void cleanupBuildStampsContext(void) {
   if (!wrapper_context.initialized) {
     return;
   }
-
-  fprintf(stderr, "DEBUG: cleanupBuildStampsContext called\n");
 
   /* Free allocated buffers */
   if (wrapper_context.region_t_buffer) {
@@ -455,4 +521,25 @@ void cleanupBuildStampsContext(void) {
 
   /* Mark context as uninitialized */
   wrapper_context.initialized = 0;
+}
+
+/*
+ * Evaluate kernel norm (integral) from fitted coefficients at image center.
+ *
+ * Sets rPixX/rPixY to full image dimensions so the spatial polynomial
+ * evaluates correctly, then calls make_kernel at the image center.
+ * Call this after fitKernel() has populated kernel_coeffs.
+ *
+ * Args:
+ *   kernel_coeffs: fitted coefficients from fitKernel()
+ *   nx: full image width (pixels)
+ *   ny: full image height (pixels)
+ *
+ * Returns:
+ *   kernel integral (sum of all kernel pixel values at image center)
+ */
+double computeKernelNorm(double* kernel_coeffs, int nx, int ny) {
+  rPixX = nx;
+  rPixY = ny;
+  return make_kernel(nx / 2, ny / 2, kernel_coeffs);
 }

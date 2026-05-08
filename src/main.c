@@ -11,7 +11,9 @@
 #endif
 
 #include "defaults.h"
-#define HOTPANTS_DEFINE_GLOBALS
+/* globals.c defines all global variables in libhotpants.so.
+ * main.c must NOT define HOTPANTS_DEFINE_GLOBALS — it only uses
+ * the extern declarations provided by globals.h by default. */
 #include "globals.h"
 #include "functions.h"
 

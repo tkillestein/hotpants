@@ -340,4 +340,21 @@ int* setupSpatialConvolve(int nx, int ny);
  */
 void cleanupSpatialConvolve(void);
 
+/*
+ * Compute kernel norm (integral) from fitted coefficients at the image center.
+ *
+ * Sets rPixX/rPixY to nx/ny so the spatial polynomial normalises correctly,
+ * then evaluates make_kernel() at the image centre (nx/2, ny/2).
+ * Call this after fitKernel() has populated kernel_coeffs.
+ *
+ * Args:
+ *   kernel_coeffs: fitted kernel coefficients from fitKernel()
+ *   nx: full image width (pixels)
+ *   ny: full image height (pixels)
+ *
+ * Returns:
+ *   kernel integral (sum of all kernel pixel values at image centre)
+ */
+double computeKernelNorm(double* kernel_coeffs, int nx, int ny);
+
 #endif /* HOTPANTS_API_H */
