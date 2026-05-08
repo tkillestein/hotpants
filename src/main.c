@@ -749,9 +749,7 @@ int main(int argc, char* argv[]) {
      * but simultaneous calloc() calls from multiple threads can corrupt the
      * global heap allocator state. Critical section ensures only one thread
      * allocates at a time. */
-#ifdef _OPENMP
 #pragma omp critical(allocation)
-#endif
     {
       /* malloc standard input and output arrays */
       tRData = (float*)calloc(rPixX * rPixY, sizeof(float));
@@ -1967,9 +1965,7 @@ int main(int argc, char* argv[]) {
      * Each thread has its own thread-private data, but simultaneous free()
      * calls from multiple threads on the global heap can cause corruption.
      * Use same critical section name (allocation) to serialize both alloc/free. */
-#ifdef _OPENMP
 #pragma omp critical(allocation)
-#endif
     {
       free(tRData);
       tRData = NULL;
