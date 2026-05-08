@@ -70,6 +70,7 @@ int main(int argc, char* argv[]) {
   int xMin, yMin, xMax, yMax; /* whole image */
 
   int *rXMins, *rYMins, *rXMaxs, *rYMaxs; /* each region, good data */
+  double *regionKernelSum;                /* kernel sum for each region */
   int rXMin, rYMin, rXMax, rYMax;         /* each region, good data */
   int rXBMin, rYBMin, rXBMax, rYBMax;     /* each region, including buffer */
   int xBufLo, xBufHi, yBufLo, yBufHi;     /* buffer */
@@ -522,7 +523,8 @@ int main(int argc, char* argv[]) {
     if (!(rXMins = (int*)calloc(nR, sizeof(int))) ||
         !(rXMaxs = (int*)calloc(nR, sizeof(int))) ||
         !(rYMins = (int*)calloc(nR, sizeof(int))) ||
-        !(rYMaxs = (int*)calloc(nR, sizeof(int))))
+        !(rYMaxs = (int*)calloc(nR, sizeof(int))) ||
+        !(regionKernelSum = (double*)calloc(nR, sizeof(double))))
       exit(1);
 
     nR = 0;
@@ -540,7 +542,8 @@ int main(int argc, char* argv[]) {
     if (!(rXMins = (int*)calloc(numRegKeyWord, sizeof(int))) ||
         !(rXMaxs = (int*)calloc(numRegKeyWord, sizeof(int))) ||
         !(rYMins = (int*)calloc(numRegKeyWord, sizeof(int))) ||
-        !(rYMaxs = (int*)calloc(numRegKeyWord, sizeof(int))))
+        !(rYMaxs = (int*)calloc(numRegKeyWord, sizeof(int))) ||
+        !(regionKernelSum = (double*)calloc(numRegKeyWord, sizeof(double))))
       exit(1);
 
     for (nR = 0; nR < numRegKeyWord; nR++) {
@@ -584,7 +587,8 @@ int main(int argc, char* argv[]) {
     if (!(rXMins = (int*)calloc(nRegX * nRegY, sizeof(int))) ||
         !(rXMaxs = (int*)calloc(nRegX * nRegY, sizeof(int))) ||
         !(rYMins = (int*)calloc(nRegX * nRegY, sizeof(int))) ||
-        !(rYMaxs = (int*)calloc(nRegX * nRegY, sizeof(int))))
+        !(rYMaxs = (int*)calloc(nRegX * nRegY, sizeof(int))) ||
+        !(regionKernelSum = (double*)calloc(nRegX * nRegY, sizeof(double))))
       exit(1);
 
     /* in cfitsio, data are striped along x dimen, thus all loops
@@ -1219,6 +1223,8 @@ int main(int argc, char* argv[]) {
       /* use middle of region to normalize image */
       sumKernel = make_kernel(rPixX / 2, rPixY / 2, tKerSol);
       LOG_PROGRESS("Using kernel sum = %f", sumKernel);
+      /* Save kernel sum for this region for use during output writing */
+      regionKernelSum[i] = sumKernel;
 
       /* eRData now contains partial noise image */
       /* oRData now contains difference image */
@@ -1345,6 +1351,8 @@ int main(int argc, char* argv[]) {
       /* use middle of region to normalize image */
       sumKernel = make_kernel(rPixX / 2, rPixY / 2, iKerSol);
       LOG_PROGRESS("Using kernel sum = %f", sumKernel);
+      /* Save kernel sum for this region for use during output writing */
+      regionKernelSum[i] = sumKernel;
 
       /* eRData now contains partial noise image */
       /* oRData now contains difference image */
@@ -1431,7 +1439,7 @@ int main(int argc, char* argv[]) {
     /*
       NOTE : we are NOT masking out the convolved image
     */
-    inv1 = 1. / sumKernel;
+    inv1 = 1. / regionKernelSum[i];
 
     if (inclConvImage || convImage) {
       /* renormalize by kernel if necessary */
@@ -1479,7 +1487,7 @@ int main(int argc, char* argv[]) {
           if ((strncmp(photNormalize, "u", 1) != 0) &&
               ((convTmpl && strncmp(photNormalize, "t", 1) == 0) ||
                (!convTmpl && strncmp(photNormalize, "i", 1) == 0)))
-            oRData[k + rPixX * l] *= sumKernel;
+            oRData[k + rPixX * l] *= regionKernelSum[i];
         }
       }
     }
