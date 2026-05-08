@@ -74,7 +74,7 @@ class KernelConfig(BaseModel):
             (Maps to C global: nKSStamps)
 
         hw_ks_stamp: Half-width of kernel test substamps (pixels).
-            Must be <= kernel_half_width. Typical: 10.
+            Typical: 15. Matches the C CLI default (D_HWKSSTAMP = 15).
             (Maps to C global: hwKSStamp)
     """
 
@@ -84,7 +84,7 @@ class KernelConfig(BaseModel):
     fit_threshold: float = Field(default=20.0, gt=0)
     scale_fit_threshold: float = Field(default=0.5, gt=0, le=1)
     n_ks_stamps: int = Field(default=3, gt=0)
-    hw_ks_stamp: int = Field(default=10, gt=0)
+    hw_ks_stamp: int = Field(default=15, gt=0)
 
     @field_validator("hw_ks_stamp")
     @classmethod

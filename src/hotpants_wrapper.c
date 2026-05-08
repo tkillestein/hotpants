@@ -364,12 +364,12 @@ int buildStampsRegion(int region_x, int region_y,
   makeInputMask(wrapper_context.region_t_buffer, wrapper_context.region_i_buffer,
                 wrapper_context.region_mask_buffer);
 
-  /* Apply border masking — mirrors main.c lines 893-907.
-   * sBorder = hwKernel + kcStep pixels at each edge are flagged FLAG_T_BAD|FLAG_I_BAD.
+  /* Apply border masking — mirrors main.c line 447 and lines 893-907.
+   * sBorder = hwKSStamp + hwKernel pixels at each edge are flagged FLAG_T_BAD|FLAG_I_BAD.
    * This ensures getPsfCenters never places a PSF center within sBorder of the
    * buffer edge, guaranteeing xy_conv_stamp won't access out-of-bounds memory
-   * (which requires hwKSStamp+hwKernel pixels of margin from any PSF center). */
-  int sBorder = hwKernel + kcStep;
+   * (which requires hwKSStamp pixels for the substamp + hwKernel for convolution). */
+  int sBorder = hwKSStamp + hwKernel;
   for (int by = 0; by < r_b_pix_y; by++) {
     for (int bx = 0; bx < sBorder; bx++)
       wrapper_context.region_mask_buffer[bx + r_b_pix_x * by] |= (FLAG_T_BAD | FLAG_I_BAD);

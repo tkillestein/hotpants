@@ -859,50 +859,8 @@ def spatial_convolve_c(
     # uses the same convention (rPixX=nx, rPixY=ny).
     mask_ptr = lib.setupSpatialConvolve(nx, ny)
 
-    # Initialize mask to mark border pixels as invalid (can't fully convolve near edges).
-    # The hwKernel parameter defines the kernel half-width; pixels within hwKernel of
-    # any border will have NaN when convolved, so they should be masked.
-    # We mark them with FLAG_INVALID_PIXEL (0x001) so spatial_convolve spreads them.
-    if mask_ptr:
-        hw_kernel = _hotpants_ffi.get_global_int("hwKernel")
-        if hw_kernel > 0:
-            # Cast mask pointer to int* and access as numpy array
-            mask_array = ctypes.cast(
-                mask_ptr,
-                ctypes.POINTER(ctypes.c_int * (nx * ny))
-            )[0]
-            # Convert to numpy for fast masking
-            mask_np = np.array(mask_array, dtype=np.int32).reshape((ny, nx))
-            # Mark border pixels as invalid (0x001 = FLAG_INVALID_PIXEL)
-            mask_np[:hw_kernel, :] = 0x001  # top border
-            mask_np[-hw_kernel:, :] = 0x001  # bottom border
-            mask_np[:, :hw_kernel] = 0x001  # left border
-            mask_np[:, -hw_kernel:] = 0x001  # right border
-            # Write back to C array
-            for idx in range(nx * ny):
-                mask_array[idx] = mask_np.flat[idx]
-
     try:
         convolve_c(img_ptr, ctypes.byref(null_var_ptr), nx, ny, coeffs_ptr, out_ptr, mask_ptr)
-
-        # Apply mask to output: spatial_convolve sets mask bits for invalid pixels.
-        # Convert mask to numpy array and apply it to output.
-        # mask_ptr points to an array of nx*ny ints; non-zero means invalid.
-        if mask_ptr:
-            # Cast mask pointer to int* and read mask array
-            mask_array = ctypes.cast(
-                mask_ptr,
-                ctypes.POINTER(ctypes.c_int * (nx * ny))
-            )[0]
-            # Convert to numpy for fast masking
-            mask_np = np.array(mask_array, dtype=np.int32).reshape((ny, nx))
-            num_masked = np.count_nonzero(mask_np)
-            logger.debug(f"spatial_convolve_c: mask has {num_masked} pixels marked as invalid")
-            # Set masked pixels (non-zero mask) to fill value (1e-30)
-            if num_masked > 0:
-                output[mask_np != 0] = np.float32(1e-30)
-            else:
-                logger.debug("spatial_convolve_c: WARNING - no pixels marked as invalid by spatial_convolve!")
     finally:
         lib.cleanupSpatialConvolve()
 
