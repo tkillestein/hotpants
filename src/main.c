@@ -1212,10 +1212,10 @@ int main(int argc, char* argv[]) {
         for (k = hwKernel; k < rPixX - hwKernel; k++)
           oRData[k + rPixX * l] += get_background(k, l, tKerSol);
 
-      sumKernel = make_kernel(rXMin, rYMin, tKerSol);
-      LOG_PROGRESS("Kernel sum at %d,%d: %f", rXMin, rYMin, sumKernel);
-      sumKernel = make_kernel(rXMax, rYMax, tKerSol);
-      LOG_PROGRESS("Kernel sum at %d,%d: %f", rXMax, rYMax, sumKernel);
+      sumKernel = make_kernel(0, 0, tKerSol);
+      LOG_PROGRESS("Kernel sum at region corner (0,0): %f", sumKernel);
+      sumKernel = make_kernel(rPixX, rPixY, tKerSol);
+      LOG_PROGRESS("Kernel sum at region corner (%d,%d): %f", rPixX, rPixY, sumKernel);
       /* use middle of region to normalize image */
       sumKernel = make_kernel(rPixX / 2, rPixY / 2, tKerSol);
       LOG_PROGRESS("Using kernel sum = %f", sumKernel);
@@ -1338,10 +1338,10 @@ int main(int argc, char* argv[]) {
         for (k = hwKernel; k < rPixX - hwKernel; k++)
           oRData[k + rPixX * l] += get_background(k, l, iKerSol);
 
-      sumKernel = make_kernel(rXMin, rYMin, iKerSol);
-      LOG_PROGRESS("Kernel sum at %d,%d: %f", rXMin, rYMin, sumKernel);
-      sumKernel = make_kernel(rXMax, rYMax, iKerSol);
-      LOG_PROGRESS("Kernel sum at %d,%d: %f", rXMax, rYMax, sumKernel);
+      sumKernel = make_kernel(0, 0, iKerSol);
+      LOG_PROGRESS("Kernel sum at region corner (0,0): %f", sumKernel);
+      sumKernel = make_kernel(rPixX, rPixY, iKerSol);
+      LOG_PROGRESS("Kernel sum at region corner (%d,%d): %f", rPixX, rPixY, sumKernel);
       /* use middle of region to normalize image */
       sumKernel = make_kernel(rPixX / 2, rPixY / 2, iKerSol);
       LOG_PROGRESS("Using kernel sum = %f", sumKernel);
