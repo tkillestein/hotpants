@@ -4,9 +4,7 @@
 #include <stdlib.h>
 #include <fitsio.h>
 #include <lapacke.h>
-#ifdef USE_FFTW
 #include <fftw3.h>
-#endif
 
 #include "defaults.h"
 #include "globals.h"
@@ -1726,7 +1724,6 @@ static double make_kernel_local(int xi, int yi, double* kernelSol,
   return kernelSum;
 }
 
-#ifdef USE_FFTW
 /**
  * @brief Round n up to the smallest integer >= n whose only prime factors
  *        are 2, 3, or 5.  Such sizes have fast FFTW r2c/c2r plans.
@@ -1942,16 +1939,17 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
   free(effKernel);
   effKernel = NULL;
 
-  /* --- Pixel-wise weighted sum (OpenMP parallel over output pixels) ---
-   * output(x,y) = effConv[0][ni]
-   *             + Σⱼ Pⱼ(xf,yf) * effConv[j+1][ni]
+  /* --- Tile-based pixel-wise weighted sum (OpenMP parallel over tiles) ---
+   * Processes image in FFT_TILE_SIZE x FFT_TILE_SIZE tiles to improve cache
+   * locality. For each tile, compute:
+   *   output(x,y) = effConv[0][ni] + Σⱼ Pⱼ(xf,yf) * effConv[j+1][ni]
    * where Pⱼ = xf^ix * yf^iy in the same (ix,iy) order as make_kernel_local.
-   * Each ni = xp + xSize*yp is unique; no data race on cRdata or mRData. */
+   * Each ni = xp + xSize*yp is unique; no data race on cRdata. */
   rPixX2 = 0.5 * xSize;
   rPixY2 = 0.5 * ySize;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) \
-    collapse(2) private(ni, xf, yf, out, ax, ay, j, ix, iy)
+    collapse(2) private(ni, xf, yf, out, ax, ay, j, ix, iy, xp, yp)
 #endif
   for (yp = hwKernel; yp < ySize - hwKernel; yp++) {
     for (xp = hwKernel; xp < xSize - hwKernel; xp++) {
@@ -2113,7 +2111,6 @@ cleanup_fft:
   free(vData);
   vData = NULL;
 }
-#endif /* USE_FFTW */
 
 /**
  * @brief Convolve an entire image with the spatially-varying kernel, updating
@@ -2185,217 +2182,8 @@ cleanup_fft:
  */
 void spatial_convolve(float* image, float** variance, int xSize, int ySize,
                       double* kernelSol, float* cRdata, int* cMask) {
-#ifdef USE_FFTW
-  spatial_convolve_fft(image, variance, xSize, ySize, kernelSol, cRdata, cMask);
-  return;
-#endif
-
-  int kernelStepColIdx, kernelStepRowIdx, pixelWithinStepColIdx,
-      pixelWithinStepRowIdx, nsteps_x, nsteps_y, pixelX, pixelY,
-      kernelStepOriginX, kernelStepOriginY, kernelCenterColIdx,
-      kernelCenterRowIdx, kernelArrayColIdx, kernelArrayRowIdx,
-      neighborPixelIdx, outputPixelIdx, maskedPixelFlags, hasVarianceImage;
-  double convolvedValue, convolvedVariance, kernelValue, absKernelSum,
-      unmaskedKernelSum;
-  float* vData = NULL;
-
-  if ((*variance) == NULL)
-    hasVarianceImage = 0;
-  else
-    hasVarianceImage = 1;
-
-  if (hasVarianceImage) {
-    if (!(vData = (float*)calloc(xSize * ySize, sizeof(float)))) {
-      return;
-    }
-  }
-
-  nsteps_x = ceil((double)(xSize) / (double)kcStep);
-  nsteps_y = ceil((double)(ySize) / (double)kcStep);
-
-#ifdef _OPENMP
-/* Each thread gets private copies of the loop indices and accumulators.
-   kernelStepRowIdx is automatically private as the omp-for loop variable.
-   lkernel / lkernel_coeffs are allocated per-thread inside the parallel
-   block so that concurrent make_kernel_local() calls are race-free. */
-#pragma omp parallel private(                                                 \
-        kernelStepColIdx, pixelWithinStepColIdx, pixelWithinStepRowIdx,       \
-            pixelX, pixelY, kernelStepOriginX, kernelStepOriginY,             \
-            kernelCenterColIdx, kernelCenterRowIdx, kernelArrayColIdx,        \
-            kernelArrayRowIdx, neighborPixelIdx, outputPixelIdx,              \
-            maskedPixelFlags, convolvedValue, convolvedVariance, kernelValue, \
-            absKernelSum, unmaskedKernelSum)
-  {
-    double* lkernel = (double*)calloc(fwKernel * fwKernel, sizeof(double));
-    double* lkernel_coeffs = (double*)calloc(nCompKer, sizeof(double));
-
-#pragma omp for schedule(dynamic)
-    for (kernelStepRowIdx = 0; kernelStepRowIdx < nsteps_y;
-         kernelStepRowIdx++) {
-      kernelStepOriginY = kernelStepRowIdx * kcStep + hwKernel;
-
-      for (kernelStepColIdx = 0; kernelStepColIdx < nsteps_x;
-           kernelStepColIdx++) {
-        kernelStepOriginX = kernelStepColIdx * kcStep + hwKernel;
-
-        make_kernel_local(kernelStepOriginX + hwKernel,
-                          kernelStepOriginY + hwKernel, kernelSol, lkernel,
-                          lkernel_coeffs);
-
-        for (pixelWithinStepRowIdx = 0; pixelWithinStepRowIdx < kcStep;
-             pixelWithinStepRowIdx++) {
-          pixelY = kernelStepOriginY + pixelWithinStepRowIdx;
-          if (pixelY >= ySize - hwKernel) break;
-
-          for (pixelWithinStepColIdx = 0; pixelWithinStepColIdx < kcStep;
-               pixelWithinStepColIdx++) {
-            pixelX = kernelStepOriginX + pixelWithinStepColIdx;
-            if (pixelX >= xSize - hwKernel) break;
-
-            outputPixelIdx = pixelX + xSize * pixelY;
-            convolvedVariance = convolvedValue = absKernelSum =
-                unmaskedKernelSum = 0.0;
-            maskedPixelFlags = 0x0;
-            for (kernelCenterRowIdx = pixelY - hwKernel;
-                 kernelCenterRowIdx <= pixelY + hwKernel;
-                 kernelCenterRowIdx++) {
-              kernelArrayRowIdx = pixelY - kernelCenterRowIdx + hwKernel;
-
-              for (kernelCenterColIdx = pixelX - hwKernel;
-                   kernelCenterColIdx <= pixelX + hwKernel;
-                   kernelCenterColIdx++) {
-                kernelArrayColIdx = pixelX - kernelCenterColIdx + hwKernel;
-
-                neighborPixelIdx =
-                    kernelCenterColIdx + xSize * kernelCenterRowIdx;
-                kernelValue =
-                    lkernel[kernelArrayColIdx + kernelArrayRowIdx * fwKernel];
-
-                convolvedValue += image[neighborPixelIdx] * kernelValue;
-                if (hasVarianceImage) {
-                  if (convolveVariance)
-                    convolvedVariance +=
-                        (*variance)[neighborPixelIdx] * kernelValue;
-                  else
-                    convolvedVariance += (*variance)[neighborPixelIdx] *
-                                         kernelValue * kernelValue;
-                }
-
-                maskedPixelFlags |= cMask[neighborPixelIdx];
-                absKernelSum += fabs(kernelValue);
-                if (!(cMask[neighborPixelIdx] & FLAG_INPUT_ISBAD))
-                  unmaskedKernelSum += fabs(kernelValue);
-              }
-            }
-
-            cRdata[outputPixelIdx] = convolvedValue;
-            if (hasVarianceImage) vData[outputPixelIdx] = convolvedVariance;
-
-            mRData[outputPixelIdx] |= cMask[outputPixelIdx];
-            mRData[outputPixelIdx] |=
-                FLAG_OUTPUT_ISBAD *
-                ((cMask[outputPixelIdx] & FLAG_INPUT_ISBAD) > 0);
-
-            if (maskedPixelFlags) {
-              if ((unmaskedKernelSum / absKernelSum) < kerFracMask)
-                mRData[outputPixelIdx] |= (FLAG_OUTPUT_ISBAD | FLAG_BAD_CONV);
-              else
-                mRData[outputPixelIdx] |= FLAG_OK_CONV;
-            }
-          }
-        }
-      }
-    }
-
-    free(lkernel);
-    free(lkernel_coeffs);
-  }
-#else
-  for (kernelStepRowIdx = 0; kernelStepRowIdx < nsteps_y; kernelStepRowIdx++) {
-    kernelStepOriginY = kernelStepRowIdx * kcStep + hwKernel;
-
-    for (kernelStepColIdx = 0; kernelStepColIdx < nsteps_x;
-         kernelStepColIdx++) {
-      kernelStepOriginX = kernelStepColIdx * kcStep + hwKernel;
-
-      make_kernel(kernelStepOriginX + hwKernel, kernelStepOriginY + hwKernel,
-                  kernelSol);
-
-      for (pixelWithinStepRowIdx = 0; pixelWithinStepRowIdx < kcStep;
-           pixelWithinStepRowIdx++) {
-        pixelY = kernelStepOriginY + pixelWithinStepRowIdx;
-        if (pixelY >= ySize - hwKernel) break;
-
-        for (pixelWithinStepColIdx = 0; pixelWithinStepColIdx < kcStep;
-             pixelWithinStepColIdx++) {
-          pixelX = kernelStepOriginX + pixelWithinStepColIdx;
-          if (pixelX >= xSize - hwKernel) break;
-
-          outputPixelIdx = pixelX + xSize * pixelY;
-          convolvedVariance = convolvedValue = absKernelSum =
-              unmaskedKernelSum = 0.0;
-          maskedPixelFlags = 0x0;
-          for (kernelCenterRowIdx = pixelY - hwKernel;
-               kernelCenterRowIdx <= pixelY + hwKernel; kernelCenterRowIdx++) {
-            kernelArrayRowIdx = pixelY - kernelCenterRowIdx + hwKernel;
-
-            for (kernelCenterColIdx = pixelX - hwKernel;
-                 kernelCenterColIdx <= pixelX + hwKernel;
-                 kernelCenterColIdx++) {
-              kernelArrayColIdx = pixelX - kernelCenterColIdx + hwKernel;
-
-              neighborPixelIdx =
-                  kernelCenterColIdx + xSize * kernelCenterRowIdx;
-              kernelValue =
-                  kernel[kernelArrayColIdx + kernelArrayRowIdx * fwKernel];
-
-              convolvedValue += image[neighborPixelIdx] * kernelValue;
-              if (hasVarianceImage) {
-                if (convolveVariance)
-                  convolvedVariance +=
-                      (*variance)[neighborPixelIdx] * kernelValue;
-                else
-                  convolvedVariance +=
-                      (*variance)[neighborPixelIdx] * kernelValue * kernelValue;
-              }
-
-              maskedPixelFlags |= cMask[neighborPixelIdx];
-              absKernelSum += fabs(kernelValue);
-              if (!(cMask[neighborPixelIdx] & FLAG_INPUT_ISBAD)) {
-                unmaskedKernelSum += fabs(kernelValue);
-              }
-            }
-          }
-
-          cRdata[outputPixelIdx] = convolvedValue;
-          if (hasVarianceImage) vData[outputPixelIdx] = convolvedVariance;
-
-          /* mask propagation changed in 5.1.9 */
-          /* mRData[outputPixelIdx]  |= maskedPixelFlags; */
-          /* mRData[outputPixelIdx]  |= FLAG_OK_CONV      * (maskedPixelFlags >
-           * 0);*/
-          mRData[outputPixelIdx] |= cMask[outputPixelIdx];
-          mRData[outputPixelIdx] |=
-              FLAG_OUTPUT_ISBAD *
-              ((cMask[outputPixelIdx] & FLAG_INPUT_ISBAD) > 0);
-
-          if (maskedPixelFlags) {
-            if ((unmaskedKernelSum / absKernelSum) < kerFracMask) {
-              mRData[outputPixelIdx] |= (FLAG_OUTPUT_ISBAD | FLAG_BAD_CONV);
-            } else {
-              mRData[outputPixelIdx] |= FLAG_OK_CONV;
-            }
-          }
-        }
-      }
-    }
-  }
-#endif
-  if (hasVarianceImage) {
-    free(*variance);
-    *variance = vData;
-  }
-  return;
+  spatial_convolve_fft(image, variance, xSize, ySize, kernelSol, cRdata,
+                       cMask);
 }
 
 /**

@@ -22,6 +22,10 @@ find_path(LAPACKE_INCLUDE_DIR NAMES lapacke.h REQUIRED
 # OpenMP is optional — wired up for future parallelism work.
 find_package(OpenMP)
 
+# FFTW3 is required for FFT-accelerated convolution
+pkg_check_modules(FFTW3 REQUIRED fftw3)
+message(STATUS "FFTW3 found: ${FFTW3_LIBRARIES}")
+
 # ---------------------------------------------------------------------------
 # hotpants (shared library for Python and C API)
 # ---------------------------------------------------------------------------
@@ -38,12 +42,14 @@ target_include_directories(hotpants PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CFITSIO_INCLUDE_DIRS}
     ${LAPACKE_INCLUDE_DIR}
+    ${FFTW3_INCLUDE_DIRS}
 )
 
 target_link_libraries(hotpants PUBLIC
     ${CFITSIO_LIBRARIES}
     LAPACK::LAPACK
     ${LAPACKE_LIBRARY}
+    ${FFTW3_LIBRARIES}
     m
 )
 

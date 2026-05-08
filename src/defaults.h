@@ -33,7 +33,7 @@
 #define D_GAIN 1.        /* assumed gain, e-/ADU */
 #define D_RDNOISE 0.     /* assumed readnoise, e- */
 #define D_PEDESTAL 0.    /* assumed pedestal in ADU */
-#define D_HWKERNEL 10    /* pixel half width of kernel */
+#define D_HWKERNEL 10 /* pixel half width of kernel */
 
 #define D_KFITTHRESH 20. /* # sigma above noise to use in kernel fit */
 #define D_NFITTHRESH \
