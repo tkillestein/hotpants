@@ -171,7 +171,7 @@ class TestPythonAPIvsCLI:
         # Python API — parameters must match HOTPANTS_BASE_ARGS
         config = KernelConfig(
             kernel_half_width=8, kernel_order=2, bg_order=1,
-            fit_threshold=8, n_ks_stamps=3, hw_ks_stamp=15,
+            fit_threshold=8, n_ks_stamps=3,
         )
         layout = RegionLayout(
             n_regions_x=1, n_regions_y=1,
@@ -256,7 +256,7 @@ class TestPythonAPIvsCLI:
         # Python API — parameters must match HOTPANTS_BASE_ARGS
         config = KernelConfig(
             kernel_half_width=8, kernel_order=2, bg_order=1,
-            fit_threshold=8, n_ks_stamps=3, hw_ks_stamp=15,
+            fit_threshold=8, n_ks_stamps=3,
         )
         layout = RegionLayout(
             n_regions_x=1, n_regions_y=1,
