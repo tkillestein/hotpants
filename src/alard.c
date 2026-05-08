@@ -1828,7 +1828,10 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
   /* --- FFT dimensions: pad to avoid circular wrap-around --- */
   fft_nx = next_fftw_size(xSize + fwKernel - 1);
   fft_ny = next_fftw_size(ySize + fwKernel - 1);
-  nc_fft = fft_nx * (fft_ny / 2 + 1);
+  /* For 2D r2c FFT with shape (fft_ny, fft_nx), output is fft_ny x (fft_nx/2+1) complexes.
+   * CRITICAL FIX: nc_fft was incorrectly calculated as fft_nx*(fft_ny/2+1) which is wrong.
+   * This caused buffer underallocation for non-square FFT dimensions. */
+  nc_fft = fft_ny * (fft_nx / 2 + 1);
 
   real_buf = (double*)fftw_malloc((size_t)fft_nx * fft_ny * sizeof(double));
   img_fft = (fftw_complex*)fftw_malloc((size_t)nc_fft * sizeof(fftw_complex));
