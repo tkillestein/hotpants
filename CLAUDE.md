@@ -141,6 +141,32 @@ polynomials in image position. This parameterization follows **Alard & Lupton
 
 ## Building
 
+### System Dependencies
+
+Before building, install required system libraries:
+
+**Debian/Ubuntu:**
+```sh
+sudo apt-get install libcfitsio-dev libfftw3-dev liblapack-dev libblas-dev libopenblas-dev liblapacke-dev
+```
+
+**macOS (using Homebrew):**
+```sh
+brew install cfitsio fftw openblas lapack
+```
+
+**RHEL/CentOS/Fedora:**
+```sh
+sudo dnf install cfitsio-devel fftw-devel lapack-devel openblas-devel
+```
+
+**Required Libraries:**
+- **CFITSIO** (`libcfitsio-dev`): FITS file I/O
+- **FFTW3** (`libfftw3-dev`): Fast Fourier Transform (mandatory for FFT convolution)
+- **BLAS** (`libblas-dev` or `libopenblas-dev`): Basic Linear Algebra
+- **LAPACK** (`liblapack-dev`): Dense linear algebra solver
+- **LAPACKE** (`liblapacke-dev`): C interface for LAPACK
+
 ### CMake (Recommended)
 
 ```sh
@@ -152,17 +178,17 @@ cmake --build build -j$(nproc)
 **CMake configuration:**
 
 - Auto-detects CFITSIO, OpenBLAS, FFTW3, and OpenMP
+- FFTW3 is now required (FFT convolution is always enabled)
 - Optional flags:
-    - `-DUSE_FFTW=ON/OFF` — enable FFTW3 convolution (default: ON if found)
     - `-DUSE_OPENMP=ON/OFF` — enable multi-threading (default: ON if found)
     - `-DCMAKE_BUILD_TYPE=Release/Debug` — optimization level
 
-**External dependencies:**
+**External dependencies (linked automatically):**
 
-- **CFITSIO** (`-lcfitsio`) — FITS I/O library
-- **BLAS/LAPACK** (`-lopenblas` or `-llapack -lblas`) — linear algebra solver
-- **FFTW3** (`-lfftw3f`, optional) — FFT-accelerated convolution
-- **OpenMP** (`-fopenmp`, optional) — multi-threading support
+- **CFITSIO** — FITS I/O library
+- **BLAS/LAPACK** — Linear algebra solvers
+- **FFTW3** — FFT-accelerated convolution (now mandatory)
+- **OpenMP** — Multi-threading (optional)
 
 **Compiler flags:** `-O3 -march=native -funroll-loops -std=c17 -Wall`
 
