@@ -1758,22 +1758,35 @@ static int next_fftw_size(int n) {
  *
  * This requires only 1+ncomp2 FFT convolutions (7 for default kerOrder=2)
  * instead of nCompKer ≈ 50.  Memory cost: (1+ncomp2)·xSize·ySize·sizeof(float).
+ * Time complexity: O(N log N) vs O(N·k²) for direct convolution (3-8× faster).
+ *
+ * Buffer Management (Critical for multi-region processing):
+ *   - real_buf: Allocated as fftw_malloc(fft_nx * fft_ny * sizeof(double))
+ *     Input/output buffer for FFTW r2c/c2r transforms. Padded to fft_nx×fft_ny
+ *     to avoid circular wrap-around artifacts in periodic convolution.
+ *
+ *   - img_fft, ker_fft: Each allocated as fftw_malloc(nc_fft * sizeof(fftw_complex))
+ *     where nc_fft = fft_ny * (fft_nx / 2 + 1) per FFTW 2D r2c output shape.
+ *     CRITICAL: This formula MUST match plan shape (fft_ny, fft_nx).
+ *     Bug history: Previous code used nc_fft = fft_nx * (fft_ny / 2 + 1),
+ *     causing 20-element underallocation for non-square FFTs and heap corruption.
+ *
+ *   - effConv: Array of (1+ncomp2) float pointers, each pointing to xSize×ySize
+ *     region (not padded). Stores the effective convolution results before
+ *     polynomial weighting and assembly into cRdata.
  *
  * FFTW plan creation is serialised via #pragma omp critical(fftw_plan);
  * plan execution and the pixel-sum loop are parallelised with OpenMP.
+ * Mask propagation uses direct loop (not FFT) to preserve binary mask semantics.
  * CFITSIO is not called here; all FITS I/O occurs in main.c.
  *
- * Pixel values are produced by the FFT path.  Mask propagation and variance
- * are computed by the same block-centre direct loop used in spatial_convolve(),
- * with the pixel accumulation (q +=) removed since cRdata is already filled.
- *
- * @param image      Full-frame input image (region pixel buffer).
+ * @param image      Full-frame input image (region pixel buffer, xSize×ySize).
  * @param variance   Pointer to variance image; updated in-place if non-NULL.
- * @param xSize      Region width in pixels.
- * @param ySize      Region height in pixels.
+ * @param xSize      Region width in pixels (actual region, not padded).
+ * @param ySize      Region height in pixels (actual region, not padded).
  * @param kernelSol  Kernel solution vector from fitKernel().
- * @param cRdata     Output convolved image (pre-allocated by caller).
- * @param cMask      Input pixel mask for mask propagation.
+ * @param cRdata     Output convolved image (pre-allocated by caller, xSize×ySize).
+ * @param cMask      Input pixel mask for mask propagation (xSize×ySize).
  */
 static void spatial_convolve_fft(float* image, float** variance, int xSize,
                                  int ySize, double* kernelSol, float* cRdata,
@@ -1828,9 +1841,32 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
   /* --- FFT dimensions: pad to avoid circular wrap-around --- */
   fft_nx = next_fftw_size(xSize + fwKernel - 1);
   fft_ny = next_fftw_size(ySize + fwKernel - 1);
-  /* For 2D r2c FFT with shape (fft_ny, fft_nx), output is fft_ny x (fft_nx/2+1) complexes.
-   * CRITICAL FIX: nc_fft was incorrectly calculated as fft_nx*(fft_ny/2+1) which is wrong.
-   * This caused buffer underallocation for non-square FFT dimensions. */
+
+  /* FFTW 2D Transform Documentation:
+   *
+   * FFTW 2D transforms are specified as fftw_plan_dft_r2c_2d(n0, n1, ...)
+   * where (n0, n1) = (rows, cols) in C row-major order.
+   *
+   * In this code:
+   *   - Shape parameter: (fft_ny, fft_nx) = (rows, cols)
+   *   - Real input buffer: fft_ny rows × fft_nx cols (total: fft_ny*fft_nx doubles)
+   *   - Complex output (r2c): fft_ny rows × (fft_nx/2+1) cols (total: fft_ny*(fft_nx/2+1) complexes)
+   *   - Real output (c2r): fft_ny rows × fft_nx cols (total: fft_ny*fft_nx doubles, pre-allocated)
+   *
+   * Key Points:
+   *   1. Memory layout is C row-major: element [i,j] is at index i*cols + j
+   *   2. For r2c, output columns = (input_cols / 2) + 1 (Hermitian symmetry)
+   *   3. For c2r, output size is same as input (padded) size
+   *
+   * Buffer Allocation:
+   *   - real_buf:  fftw_malloc(fft_nx * fft_ny * sizeof(double))
+   *   - img_fft:   fftw_malloc(nc_fft * sizeof(fftw_complex)) where
+   *   - ker_fft:   nc_fft = fft_ny * (fft_nx / 2 + 1)
+   *
+   * CRITICAL: This formula MUST match the FFTW plan shape (fft_ny, fft_nx).
+   * Previous bug: nc_fft = fft_nx * (fft_ny / 2 + 1) caused 20-element underallocation
+   * for 280x300 FFT, leading to heap corruption in multi-region processing.
+   */
   nc_fft = fft_ny * (fft_nx / 2 + 1);
 
   real_buf = (double*)fftw_malloc((size_t)fft_nx * fft_ny * sizeof(double));
@@ -1866,7 +1902,20 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
 #pragma omp critical(fftw_plan)
 #endif
   {
-    /* FFTW_ESTIMATE avoids timing runs, keeping plan creation fast. */
+    /* FFTW_ESTIMATE avoids timing runs, keeping plan creation fast.
+     *
+     * Plan Shape (fft_ny, fft_nx) means:
+     *   - Input/output are 2D arrays with fft_ny rows and fft_nx columns
+     *   - Memory layout: C row-major, stride = fft_nx
+     *
+     * Forward plan (r2c):
+     *   - Input:  real_buf[fft_ny][fft_nx] = fft_ny*fft_nx doubles
+     *   - Output: ker_fft[fft_ny][fft_nx/2+1] = fft_ny*(fft_nx/2+1) complexes
+     *
+     * Inverse plan (c2r):
+     *   - Input:  ker_fft[fft_ny][fft_nx/2+1] = fft_ny*(fft_nx/2+1) complexes
+     *   - Output: real_buf[fft_ny][fft_nx] = fft_ny*fft_nx doubles (unnormalized)
+     */
     plan_fwd =
         fftw_plan_dft_r2c_2d(fft_ny, fft_nx, real_buf, ker_fft, FFTW_ESTIMATE);
     plan_inv =
@@ -1877,7 +1926,13 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
     goto cleanup_fft;
   }
 
-  /* --- FFT the image once; save spectrum in img_fft --- */
+  /* --- FFT the image once; save spectrum in img_fft ---
+   * Copy image data into padded real_buf, leaving the padding region as zeros.
+   * Buffer indexing: real_buf and image are stored in C row-major order:
+   *   element [y][x] is at index x + stride*y
+   * Stride: real_buf has stride fft_nx (padded), image has stride xSize (unpadded).
+   * We copy only the valid region [0:ySize)[0:xSize), padding with zeros.
+   */
   memset(real_buf, 0, (size_t)fft_nx * fft_ny * sizeof(double));
   for (yp = 0; yp < ySize; yp++)
     for (xp = 0; xp < xSize; xp++)
@@ -1933,7 +1988,14 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
     }
     fftw_execute_dft_c2r(plan_inv, ker_fft, real_buf);
 
-    /* Normalise (FFTW does not normalise) and store valid region */
+    /* Normalise (FFTW does not normalise) and store valid region.
+     * Extract only the valid region [0:ySize)[0:xSize) from padded real_buf
+     * and store in unpadded effConv buffer. This is safe because:
+     *   - real_buf is indexed with stride fft_nx (padded)
+     *   - effConv[cidx] is indexed with stride xSize (unpadded)
+     *   - We only access indices [0:xSize*ySize), which are allocated in both.
+     * The padding region of real_buf is discarded (not needed for output).
+     */
     norm = 1.0 / ((double)fft_nx * fft_ny);
     for (yp = 0; yp < ySize; yp++)
       for (xp = 0; xp < xSize; xp++)
