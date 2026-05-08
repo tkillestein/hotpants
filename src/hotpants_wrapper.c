@@ -223,10 +223,6 @@ int initKernelGlobals(int image_nx, int image_ny,
   if (kfSpreadMask1 == 0.0f)  kfSpreadMask1  = D_INMASKFSPREAD;
   if (kfSpreadMask2 == 0.0f)  kfSpreadMask2  = D_OUMASKFSPREAD;
 
-  fprintf(stderr, "DEBUG: initKernelGlobals: nCompKer=%d nC=%d "
-          "fwKSStamp=%d fwStamp=%d fwKernel=%d kcStep=%d\n",
-          nCompKer, nC, fwKSStamp, fwStamp, fwKernel, kcStep);
-
   return 0;
 }
 
@@ -277,9 +273,6 @@ int initBuildStampsContext(float* template, float* science,
   int max_region_y = (ny + n_regions_y - 1) / n_regions_y + 1 + 2 * hwKernel;
   int max_region_size = max_region_x * max_region_y;
 
-  fprintf(stderr, "DEBUG: Allocating %d bytes for region buffers (max_region_size=%d)\n",
-          max_region_size * (int)sizeof(float), max_region_size);
-
   /* Allocate region buffers */
   wrapper_context.region_t_buffer = (float*)calloc(max_region_size, sizeof(float));
   wrapper_context.region_i_buffer = (float*)calloc(max_region_size, sizeof(float));
@@ -297,7 +290,6 @@ int initBuildStampsContext(float* template, float* science,
   forceConvolve = "t";
 
   wrapper_context.initialized = 1;
-  fprintf(stderr, "DEBUG: initBuildStampsContext succeeded\n");
   return 0;
 }
 
@@ -340,9 +332,6 @@ int buildStampsRegion(int region_x, int region_y,
   /* Set global region dimensions to the bordered size (required by buildStamps/fillStamp) */
   rPixX = r_b_pix_x;
   rPixY = r_b_pix_y;
-
-  fprintf(stderr, "DEBUG: buildStampsRegion(%d, %d): region_size=%dx%d bordered=%dx%d\n",
-          region_x, region_y, r_pix_x, r_pix_y, r_b_pix_x, r_b_pix_y);
 
   /* Extract region data WITH border from full images */
   for (int y = 0; y < r_b_pix_y; y++) {
@@ -476,17 +465,11 @@ void cleanupSpatialConvolve(void) {
  */
 int fillStampsForRegion(stamp_struct* stamps, int n_stamps) {
   if (!wrapper_context.initialized) {
-    fprintf(stderr, "ERROR: fillStampsForRegion: context not initialized\n");
+    LOG_ERROR("fillStampsForRegion: context not initialized");
     return -1;
   }
-  fprintf(stderr, "DEBUG fillStampsForRegion: rPixX=%d rPixY=%d n_stamps=%d\n",
-          rPixX, rPixY, n_stamps);
   int k;
   for (k = 0; k < n_stamps; k++) {
-    if (stamps[k].nss > 0)
-      fprintf(stderr, "DEBUG   stamp[%d]: x0=%d y0=%d xss[0]=%d yss[0]=%d nss=%d\n",
-              k, stamps[k].x0, stamps[k].y0,
-              stamps[k].xss[0], stamps[k].yss[0], stamps[k].nss);
     /* forceConvolve = "t": imConv = template, imRef = science.
      * Fits template ⊗ K ≈ science; difference = science - template ⊗ K. */
     fillStamp(&stamps[k],

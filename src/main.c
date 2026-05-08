@@ -744,59 +744,69 @@ int main(int argc, char* argv[]) {
     LOG_PROGRESS("Vector Indices (good data): %d:%d,%d:%d", rXMin, rXMax, rYMin,
                  rYMax);
 
-    /* malloc standard input and output arrays */
-    tRData = (float*)calloc(rPixX * rPixY, sizeof(float));
-    iRData = (float*)calloc(rPixX * rPixY, sizeof(float));
-    oRData = (float*)calloc(rPixX * rPixY, sizeof(float));
-    eRData = (float*)calloc(rPixX * rPixY, sizeof(float));
-    if (tRData == NULL || iRData == NULL || oRData == NULL || eRData == NULL) {
-      LOG_ERROR("Failed to allocate standard data arrays");
-      exit(1);
-    }
-    /* set them to fillVal */
-    fset(tRData, fillVal, rPixX, rPixY);
-    fset(iRData, fillVal, rPixX, rPixY);
-    /* set eRData and oRData to fillValNoise */
-    fset(oRData, fillValNoise, rPixX, rPixY);
-    fset(eRData, fillValNoise, rPixX, rPixY);
-
-    /* malloc mask arrays */
-    mRData = (int*)calloc(rPixX * rPixY, sizeof(int));
-    misRData = (int*)calloc(rPixX * rPixY, sizeof(int));
-    mtsRData = (int*)calloc(rPixX * rPixY, sizeof(int));
-    if (mRData == NULL || misRData == NULL || mtsRData == NULL) {
-      LOG_ERROR("Failed to allocate mask arrays");
-      exit(1);
-    }
-
-    /* dont bother if info already from kernel image */
-    if (!(kernelImIn)) {
-      /* ciStamps contains stamp information about convolving image */
-      /* ctStamps contains stamp information about convolving template */
-      if (!(strncmp(forceConvolve, "i", 1) == 0)) {
-        LOG_DEBUG("Allocating stamps...");
-        if (!(ctStamps =
-                  (stamp_struct*)calloc(nStamps, sizeof(stamp_struct)))) {
-          printf("Failed to allocate stamp list");
-          exit(1);
-        }
-        if (allocateStamps(ctStamps, nStamps)) {
-          LOG_ERROR("Failed to allocate stamp vector");
-          exit(1);
-        }
-        tKerSol = (double*)calloc((nCompTotal + 1), sizeof(double));
+    /* Serialize memory allocations to prevent heap corruption.
+     * Each thread has its own tRData/iRData/etc. pointers (declared private),
+     * but simultaneous calloc() calls from multiple threads can corrupt the
+     * global heap allocator state. Critical section ensures only one thread
+     * allocates at a time. */
+#ifdef _OPENMP
+#pragma omp critical(allocation)
+#endif
+    {
+      /* malloc standard input and output arrays */
+      tRData = (float*)calloc(rPixX * rPixY, sizeof(float));
+      iRData = (float*)calloc(rPixX * rPixY, sizeof(float));
+      oRData = (float*)calloc(rPixX * rPixY, sizeof(float));
+      eRData = (float*)calloc(rPixX * rPixY, sizeof(float));
+      if (tRData == NULL || iRData == NULL || oRData == NULL || eRData == NULL) {
+        LOG_ERROR("Failed to allocate standard data arrays");
+        exit(1);
       }
-      if (!(strncmp(forceConvolve, "t", 1) == 0)) {
-        if (!(ciStamps =
-                  (stamp_struct*)calloc(nStamps, sizeof(stamp_struct)))) {
-          LOG_ERROR("Failed to allocate stamp list");
-          exit(1);
+      /* set them to fillVal */
+      fset(tRData, fillVal, rPixX, rPixY);
+      fset(iRData, fillVal, rPixX, rPixY);
+      /* set eRData and oRData to fillValNoise */
+      fset(oRData, fillValNoise, rPixX, rPixY);
+      fset(eRData, fillValNoise, rPixX, rPixY);
+
+      /* malloc mask arrays */
+      mRData = (int*)calloc(rPixX * rPixY, sizeof(int));
+      misRData = (int*)calloc(rPixX * rPixY, sizeof(int));
+      mtsRData = (int*)calloc(rPixX * rPixY, sizeof(int));
+      if (mRData == NULL || misRData == NULL || mtsRData == NULL) {
+        LOG_ERROR("Failed to allocate mask arrays");
+        exit(1);
+      }
+
+      /* dont bother if info already from kernel image */
+      if (!(kernelImIn)) {
+        /* ciStamps contains stamp information about convolving image */
+        /* ctStamps contains stamp information about convolving template */
+        if (!(strncmp(forceConvolve, "i", 1) == 0)) {
+          LOG_DEBUG("Allocating stamps...");
+          if (!(ctStamps =
+                    (stamp_struct*)calloc(nStamps, sizeof(stamp_struct)))) {
+            printf("Failed to allocate stamp list");
+            exit(1);
+          }
+          if (allocateStamps(ctStamps, nStamps)) {
+            LOG_ERROR("Failed to allocate stamp vector");
+            exit(1);
+          }
+          tKerSol = (double*)calloc((nCompTotal + 1), sizeof(double));
         }
-        if (allocateStamps(ciStamps, nStamps)) {
-          LOG_ERROR("Failed to allocate stamp vector");
-          exit(1);
+        if (!(strncmp(forceConvolve, "t", 1) == 0)) {
+          if (!(ciStamps =
+                    (stamp_struct*)calloc(nStamps, sizeof(stamp_struct)))) {
+            LOG_ERROR("Failed to allocate stamp list");
+            exit(1);
+          }
+          if (allocateStamps(ciStamps, nStamps)) {
+            LOG_ERROR("Failed to allocate stamp vector");
+            exit(1);
+          }
+          iKerSol = (double*)calloc((nCompTotal + 1), sizeof(double));
         }
-        iKerSol = (double*)calloc((nCompTotal + 1), sizeof(double));
       }
     }
 
@@ -1953,36 +1963,45 @@ int main(int argc, char* argv[]) {
 
     LOG_PROGRESS("Region %i finished", i);
 
-    free(tRData);
-    tRData = NULL;
-    free(iRData);
-    iRData = NULL;
-    free(oRData);
-    oRData = NULL;
-    free(eRData);
-    eRData = NULL;
-    free(mRData);
-    mRData = NULL;
-    free(misRData);
-    misRData = NULL;
-    free(mtsRData);
-    mtsRData = NULL;
+    /* Serialize memory deallocations to prevent heap corruption.
+     * Each thread has its own thread-private data, but simultaneous free()
+     * calls from multiple threads on the global heap can cause corruption.
+     * Use same critical section name (allocation) to serialize both alloc/free. */
+#ifdef _OPENMP
+#pragma omp critical(allocation)
+#endif
+    {
+      free(tRData);
+      tRData = NULL;
+      free(iRData);
+      iRData = NULL;
+      free(oRData);
+      oRData = NULL;
+      free(eRData);
+      eRData = NULL;
+      free(mRData);
+      mRData = NULL;
+      free(misRData);
+      misRData = NULL;
+      free(mtsRData);
+      mtsRData = NULL;
 
-    if (ctStamps) {
-      free(ctStamps);
-      ctStamps = NULL;
-    }
-    if (ciStamps) {
-      free(ciStamps);
-      ciStamps = NULL;
-    }
-    if (iKerSol) {
-      free(tKerSol);
-      tKerSol = NULL;
-    }
-    if (tKerSol) {
-      free(iKerSol);
-      iKerSol = NULL;
+      if (ctStamps) {
+        free(ctStamps);
+        ctStamps = NULL;
+      }
+      if (ciStamps) {
+        free(ciStamps);
+        ciStamps = NULL;
+      }
+      if (iKerSol) {
+        free(tKerSol);
+        tKerSol = NULL;
+      }
+      if (tKerSol) {
+        free(iKerSol);
+        iKerSol = NULL;
+      }
     }
   } /* end region loop */
 
