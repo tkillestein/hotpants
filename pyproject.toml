@@ -20,7 +20,7 @@ build-backend = "hatchling.build"
 name = "hotpants"
 version = "0.0.1"
 description = "High Order Transform of PSF ANd Template Subtraction"
-requires-python = ">=3.11"
+requires-python = ">=3.11, <3.14"
 dependencies = [
     "loguru>=0.7.3",
     "numpy>=1.26",

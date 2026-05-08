@@ -674,15 +674,14 @@ int main(int argc, char* argv[]) {
             rYBMax, xBufLo, xBufHi, yBufLo, yBufHi, sXMin, sYMin, sXMax,       \
             sYMax, niS, ntS, convTmpl, flag, status, anynul, nx2norm,          \
             fpixelOutX, fpixelOutY, lpixelOutX, lpixelOutY, tRData, iRData,    \
-            oRData, eRData, misRData, mtsRData, tKerSol, iKerSol, ctStamps,    \
-            ciStamps, tMerit, iMerit, diffrat, x2norm, sumKernel, inv1, sum,   \
-            mean, median, mode, sd, fwhm, lfwhm, summ, meanm, medianm, modem,  \
-            sdm, fwhmm, lfwhmm, nsum, nmean, nmedian, nmode, nsd, nfwhm,       \
-            nlfwhm, nsumm, nmeanm, nmedianm, nmodem, nsdm, nfwhmm, nlfwhmm,    \
-            meansigSubstamps, scatterSubstamps, meansigSubstampsF,             \
-            scatterSubstampsF, meanksumSubstamps, scatterksumSubstamps,        \
-            NskippedSubstamps, iSFrac, tSFrac, ePtr, pixMin, pixMax, hKeyword, \
-            hInfo)
+            oRData, eRData, misRData, mtsRData, tMerit, iMerit, diffrat,       \
+            x2norm, sumKernel, inv1, sum, mean, median, mode, sd, fwhm, lfwhm, \
+            summ, meanm, medianm, modem, sdm, fwhmm, lfwhmm, nsum, nmean,      \
+            nmedian, nmode, nsd, nfwhm, nlfwhm, nsumm, nmeanm, nmedianm,       \
+            nmodem, nsdm, nfwhmm, nlfwhmm, meansigSubstamps, scatterSubstamps, \
+            meansigSubstampsF, scatterSubstampsF, meanksumSubstamps,            \
+            scatterksumSubstamps, NskippedSubstamps, iSFrac, tSFrac, ePtr,      \
+            pixMin, pixMax, hKeyword, hInfo)
 #endif
   for (i = 0; i < nR; i++) {
     status = 0;

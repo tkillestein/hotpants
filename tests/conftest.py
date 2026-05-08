@@ -8,7 +8,6 @@ from scipy.ndimage import gaussian_filter
 
 REPO_ROOT = Path(__file__).parent.parent
 HOTPANTS_BIN = REPO_ROOT / "build" / "hotpants"
-HOTPANTS_BIN_DEBUG = REPO_ROOT / "build_debug" / "hotpants"
 
 # Fixed image geometry for all synthetic tests
 NY, NX = 512, 512
@@ -44,17 +43,7 @@ HOTPANTS_BASE_ARGS = [
 
 @pytest.fixture(scope="session")
 def hotpants_binary():
-    """Return path to the hotpants binary, building it via CMake if necessary.
-
-    The debug binary is preferred for tests because it has stricter memory
-    checks and is known-good.  The release binary is used only as a last
-    resort if the debug binary is absent.
-    """
-    # Prefer debug binary — it has stricter runtime checks and is known-good
-    if HOTPANTS_BIN_DEBUG.exists():
-        return HOTPANTS_BIN_DEBUG
-
-    # Fall back to release binary, building it if necessary
+    """Return path to the hotpants binary, building it via CMake if necessary."""
     if not HOTPANTS_BIN.exists():
         result = subprocess.run(
             ["cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"],
