@@ -1,0 +1,41 @@
+name: Reusable Build Workflow
+
+on:
+  workflow_call:
+    inputs:
+      build_type:
+        required: false
+        default: "Release"
+        type: string
+      upload_artifact:
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcfitsio-dev libfftw3-dev liblapacke-dev
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python dependencies
+        run: uv sync --group test
+
+      - name: Build hotpants
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=${{ inputs.build_type }}
+          cmake --build build --parallel
+
+      - name: Upload build artifact
+        if: inputs.upload_artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hotpants-build-${{ inputs.build_type }}
+          path: build/hotpants
+          retention-days: 1

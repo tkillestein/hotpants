@@ -26,11 +26,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install dependencies
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz libcfitsio-dev libfftw3-dev liblapacke-dev
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python dependencies
+        run: uv sync --group docs
+
+      - name: Build hotpants
         run: |
-          sudo apt-get update
-          sudo apt-get install -y doxygen graphviz
-          pip install sphinx sphinx-rtd-theme breathe
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
 
       - name: Build documentation
         run: |
