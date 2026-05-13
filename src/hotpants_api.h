@@ -12,9 +12,11 @@
  * - alard.c: kernel fitting algorithm (Alard & Lupton 1998)
  * - functions.c: stamp utilities, statistics, convolution
  * - globals.h: global variable declarations
+ * - hotpants_context.h: context structures (new, eliminates global state)
  */
 
 #include <stddef.h>
+#include "hotpants_context.h"
 
 /* =====================================================================
  * Core Data Structure: Stamp
