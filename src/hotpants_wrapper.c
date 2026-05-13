@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "defaults.h"
+#include "hotpants_context.h"
 
 /* stamp_struct definition (copied from globals.h) */
 typedef struct {
