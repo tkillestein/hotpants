@@ -38,7 +38,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          python benchmark_suite.py \
+          uv run python benchmark_suite.py \
             --hotpants ./build/hotpants \
             --trials 2 \
             --results-dir ./benchmark_results
@@ -48,7 +48,7 @@ jobs:
       - name: Generate benchmark report
         if: always()
         run: |
-          python benchmark_suite.py \
+          uv run python benchmark_suite.py \
             --hotpants ./build/hotpants \
             --report-only \
             --results-dir ./benchmark_results > benchmark_report.txt
@@ -81,7 +81,7 @@ jobs:
 
       - name: Check for regressions
         run: |
-          python benchmark_suite.py \
+          uv run python benchmark_suite.py \
             --hotpants ./build/hotpants \
             --report-only \
             --results-dir ./benchmark_results \
