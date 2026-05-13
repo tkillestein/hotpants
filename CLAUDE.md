@@ -734,6 +734,7 @@ uv run python benchmark_suite.py --results-dir /path/to/results
 - `benchmark_results.jsonl`: Timestamped results with git SHA/branch
 - `latest_report.md`: Markdown performance report with regression detection
 - Exit code 0 if no regressions, 1 if regressions detected
+- Artifacts uploaded to GitHub Actions (accessible in workflow run summary)
 
 ### Single-Region Analysis (`analyze_single_region.py`)
 

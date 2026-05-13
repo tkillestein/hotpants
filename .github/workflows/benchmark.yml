@@ -64,21 +64,6 @@ jobs:
             benchmark_report.txt
           retention-days: 90
 
-      - name: Comment PR with results
-        if: github.event_name == 'pull_request' && always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const report = fs.readFileSync('benchmark_report.txt', 'utf8');
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '## Performance Benchmark Results\n\n```\n' + report + '\n```'
-            });
-
       - name: Check for regressions
         run: |
           uv run python benchmark_suite.py \
