@@ -707,17 +707,20 @@ The benchmark suite:
 Runs repeatable benchmarks across multiple workloads and detects performance regressions:
 
 ```sh
+# Build the project first
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
+
 # Run full benchmark suite (uses standard workloads)
-python benchmark_suite.py
+uv run python benchmark_suite.py
 
 # Run with multiple trials for stability
-python benchmark_suite.py --trials 3
+uv run python benchmark_suite.py --trials 3
 
 # Generate report from previous results
-python benchmark_suite.py --report-only
+uv run python benchmark_suite.py --report-only
 
 # Specify alternate results directory
-python benchmark_suite.py --results-dir /path/to/results
+uv run python benchmark_suite.py --results-dir /path/to/results
 ```
 
 **Standard workloads:**
@@ -737,7 +740,11 @@ python benchmark_suite.py --results-dir /path/to/results
 Analyzes overhead from multi-region processing and estimates optimization opportunities:
 
 ```sh
-python analyze_single_region.py
+# Build the project first
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
+
+# Run analysis
+uv run python analyze_single_region.py
 ```
 
 Produces:
