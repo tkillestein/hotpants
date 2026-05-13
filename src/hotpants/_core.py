@@ -248,6 +248,109 @@ StampStruct._fields_ = [
 
 
 # =====================================================================
+# Context Structure Definitions (ctypes)
+# =====================================================================
+
+
+class ConfigStruct(ctypes.Structure):
+    """ctypes definition of config_struct from hotpants_context.h."""
+
+    _fields_ = [
+        ("kernel_half_width", ctypes.c_int),
+        ("kernel_order", ctypes.c_int),
+        ("bg_order", ctypes.c_int),
+        ("n_ks_stamps", ctypes.c_int),
+        ("hw_ks_stamp", ctypes.c_int),
+        ("template_upper_threshold", ctypes.c_float),
+        ("template_lower_threshold", ctypes.c_float),
+        ("science_upper_threshold", ctypes.c_float),
+        ("science_lower_threshold", ctypes.c_float),
+        ("template_gain", ctypes.c_float),
+        ("science_gain", ctypes.c_float),
+        ("template_readnoise", ctypes.c_float),
+        ("science_readnoise", ctypes.c_float),
+        ("template_pedestal", ctypes.c_float),
+        ("science_pedestal", ctypes.c_float),
+        ("fit_threshold", ctypes.c_float),
+        ("scale_fit_threshold", ctypes.c_float),
+        ("min_frac_good_stamps", ctypes.c_float),
+        ("stat_sig", ctypes.c_float),
+        ("ker_sig_reject", ctypes.c_float),
+        ("ker_frac_mask", ctypes.c_float),
+        ("fill_val", ctypes.c_float),
+        ("fill_val_noise", ctypes.c_float),
+        ("kf_spread_mask1", ctypes.c_float),
+        ("kf_spread_mask2", ctypes.c_float),
+        ("n_regions_x", ctypes.c_int),
+        ("n_regions_y", ctypes.c_int),
+        ("stamps_per_region_x", ctypes.c_int),
+        ("stamps_per_region_y", ctypes.c_int),
+        ("use_full_ss", ctypes.c_int),
+        ("verbose", ctypes.c_int),
+        ("n_thread", ctypes.c_int),
+        ("force_convolve", ctypes.c_char),
+    ]
+
+
+class GaussianBasisStruct(ctypes.Structure):
+    """ctypes definition of gaussian_basis_struct from hotpants_context.h."""
+
+    pass
+
+
+GaussianBasisStruct._fields_ = [
+    ("ngauss", ctypes.c_int),
+    ("deg_fixe", ctypes.POINTER(ctypes.c_int)),
+    ("sigma_gauss", ctypes.POINTER(ctypes.c_float)),
+    ("n_comp_ker", ctypes.c_int),
+    ("n_comp", ctypes.c_int),
+    ("n_c", ctypes.c_int),
+    ("n_comp_bg", ctypes.c_int),
+    ("n_bg_vectors", ctypes.c_int),
+    ("n_comp_total", ctypes.c_int),
+    ("kernel_vec", ctypes.POINTER(ctypes.POINTER(ctypes.c_double))),
+    ("filter_x", ctypes.POINTER(ctypes.c_double)),
+    ("filter_y", ctypes.POINTER(ctypes.c_double)),
+]
+
+
+class KernelContextStruct(ctypes.Structure):
+    """ctypes definition of kernel_context_struct from hotpants_context.h."""
+
+    _fields_ = [
+        ("fw_kernel", ctypes.c_int),
+        ("fw_stamp", ctypes.c_int),
+        ("fw_ks_stamp", ctypes.c_int),
+        ("kc_step", ctypes.c_int),
+        ("basis", GaussianBasisStruct),
+        ("is_initialized", ctypes.c_int),
+    ]
+
+
+class RegionContextStruct(ctypes.Structure):
+    """ctypes definition of region_context_struct from hotpants_context.h."""
+
+    pass
+
+
+RegionContextStruct._fields_ = [
+    ("pix_x", ctypes.c_int),
+    ("pix_y", ctypes.c_int),
+    ("mask", ctypes.POINTER(ctypes.c_int)),
+    ("temp", ctypes.POINTER(ctypes.c_float)),
+    ("temp2", ctypes.POINTER(ctypes.c_float)),
+    ("wxy", ctypes.POINTER(ctypes.POINTER(ctypes.c_double))),
+    ("kernel", ctypes.POINTER(ctypes.c_double)),
+    ("kernel_coeffs", ctypes.POINTER(ctypes.c_double)),
+    ("check_stack", ctypes.POINTER(ctypes.c_double)),
+    ("check_mat", ctypes.POINTER(ctypes.POINTER(ctypes.c_double))),
+    ("check_vec", ctypes.POINTER(ctypes.c_double)),
+    ("n_stamps_allocated", ctypes.c_int),
+    ("is_initialized", ctypes.c_int),
+]
+
+
+# =====================================================================
 # Stamp Management Wrappers
 # =====================================================================
 
@@ -296,6 +399,334 @@ def free_stamps(stamps: ctypes.POINTER(StampStruct), n_stamps: int) -> None:
     free_c.restype = None
 
     free_c(stamps, n_stamps)
+
+
+# =====================================================================
+# Context Management Wrappers (NEW API)
+# =====================================================================
+
+
+def create_config_struct() -> ConfigStruct:
+    """
+    Create a configuration struct with default values.
+
+    Returns:
+        ConfigStruct instance initialized with defaults
+    """
+    lib = _hotpants_ffi.get_library()
+    default_config_c = lib.hotpants_default_config
+    default_config_c.argtypes = [ctypes.POINTER(ConfigStruct)]
+    default_config_c.restype = ctypes.c_int
+
+    config = ConfigStruct()
+    result = default_config_c(ctypes.byref(config))
+    if result != 0:
+        msg = "Failed to initialize default config"
+        raise RuntimeError(msg)
+
+    return config
+
+
+def create_kernel_context(
+    config: ConfigStruct, image_nx: int, image_ny: int,
+    n_regions_x: int, n_regions_y: int,
+    stamps_per_region_x: int, stamps_per_region_y: int,
+) -> ctypes.POINTER(KernelContextStruct):
+    """
+    Create and initialize a kernel context from configuration.
+
+    Args:
+        config: configuration struct
+        image_nx, image_ny: full image dimensions
+        n_regions_x, n_regions_y: region grid
+        stamps_per_region_x, stamps_per_region_y: stamp grid
+
+    Returns:
+        pointer to allocated kernel context
+
+    Raises:
+        RuntimeError: if context creation fails
+    """
+    lib = _hotpants_ffi.get_library()
+    create_ctx_c = lib.hotpants_create_kernel_context
+    create_ctx_c.argtypes = [
+        ctypes.POINTER(ConfigStruct),
+        ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int,
+        ctypes.POINTER(ctypes.POINTER(KernelContextStruct)),
+    ]
+    create_ctx_c.restype = ctypes.c_int
+
+    ctx_ptr = ctypes.POINTER(KernelContextStruct)()
+    result = create_ctx_c(
+        ctypes.byref(config),
+        image_nx, image_ny,
+        n_regions_x, n_regions_y,
+        stamps_per_region_x, stamps_per_region_y,
+        ctypes.byref(ctx_ptr),
+    )
+    if result != 0:
+        msg = "Failed to create kernel context"
+        raise RuntimeError(msg)
+
+    return ctx_ptr
+
+
+def cleanup_kernel_context(ctx: ctypes.POINTER(KernelContextStruct)) -> None:
+    """
+    Free kernel context memory.
+
+    Args:
+        ctx: pointer to kernel context (may be None)
+    """
+    if not ctx:
+        return
+
+    lib = _hotpants_ffi.get_library()
+    cleanup_ctx_c = lib.hotpants_cleanup_kernel_context
+    cleanup_ctx_c.argtypes = [ctypes.POINTER(KernelContextStruct)]
+    cleanup_ctx_c.restype = None
+
+    cleanup_ctx_c(ctx)
+
+
+def create_region_context(
+    kctx: ctypes.POINTER(KernelContextStruct),
+    config: ConfigStruct,
+    n_stamps: int,
+) -> ctypes.POINTER(RegionContextStruct):
+    """
+    Create and initialize a region context.
+
+    Args:
+        kctx: kernel context (must be valid)
+        config: configuration struct
+        n_stamps: number of stamps for this region
+
+    Returns:
+        pointer to allocated region context
+
+    Raises:
+        RuntimeError: if context creation fails
+    """
+    lib = _hotpants_ffi.get_library()
+    create_rctx_c = lib.hotpants_create_region_context
+    create_rctx_c.argtypes = [
+        ctypes.POINTER(KernelContextStruct),
+        ctypes.POINTER(ConfigStruct),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.POINTER(RegionContextStruct)),
+    ]
+    create_rctx_c.restype = ctypes.c_int
+
+    rctx_ptr = ctypes.POINTER(RegionContextStruct)()
+    result = create_rctx_c(
+        kctx,
+        ctypes.byref(config),
+        n_stamps,
+        ctypes.byref(rctx_ptr),
+    )
+    if result != 0:
+        msg = "Failed to create region context"
+        raise RuntimeError(msg)
+
+    return rctx_ptr
+
+
+def cleanup_region_context(ctx: ctypes.POINTER(RegionContextStruct)) -> None:
+    """
+    Free region context memory.
+
+    Args:
+        ctx: pointer to region context (may be None)
+    """
+    if not ctx:
+        return
+
+    lib = _hotpants_ffi.get_library()
+    cleanup_rctx_c = lib.hotpants_cleanup_region_context
+    cleanup_rctx_c.argtypes = [ctypes.POINTER(RegionContextStruct)]
+    cleanup_rctx_c.restype = None
+
+    cleanup_rctx_c(ctx)
+
+
+# =====================================================================
+# Context-Aware Algorithm Wrappers (v2)
+# =====================================================================
+
+
+def fitkernel_v2(
+    stamps: ctypes.POINTER(StampStruct),
+    n_stamps: int,
+    im_ref: np.ndarray,
+    im_conv: np.ndarray,
+    im_noise: np.ndarray | None,
+    config: ConfigStruct,
+    kctx: ctypes.POINTER(KernelContextStruct),
+    rctx: ctypes.POINTER(RegionContextStruct),
+) -> tuple[np.ndarray, float, float, int]:
+    """
+    Fit kernel using context-aware API (v2).
+
+    Args:
+        stamps: pointer to stamp array
+        n_stamps: number of stamps
+        im_ref: reference image (float32, 2D)
+        im_conv: image to convolve (float32, 2D)
+        im_noise: noise image or None (float32, 2D)
+        config: configuration struct
+        kctx: kernel context
+        rctx: region context
+
+    Returns:
+        tuple of (kernel_coeffs, meansig, scatter, n_skipped)
+
+    Raises:
+        RuntimeError: if kernel fitting fails
+    """
+    lib = _hotpants_ffi.get_library()
+    fitkernel_v2_c = lib.fitKernel_v2
+    fitkernel_v2_c.argtypes = [
+        ctypes.POINTER(StampStruct),
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(ConfigStruct),
+        ctypes.POINTER(KernelContextStruct),
+        ctypes.POINTER(RegionContextStruct),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    fitkernel_v2_c.restype = ctypes.c_int
+
+    # Convert arrays to C pointers
+    validate_image_array(im_ref, "im_ref")
+    validate_image_array(im_conv, "im_conv")
+    ref_ptr = array_to_cptr(im_ref)
+    conv_ptr = array_to_cptr(im_conv)
+    noise_ptr = ctypes.c_void_p() if im_noise is None else array_to_cptr(im_noise)
+
+    # Allocate output arrays
+    n_comp_total = kctx.contents.basis.n_comp_total
+    kernel_coeffs = (ctypes.c_double * (n_comp_total + 1))()
+    meansig = ctypes.c_double()
+    scatter = ctypes.c_double()
+    n_skipped = ctypes.c_int()
+
+    # Call C function
+    result = fitkernel_v2_c(
+        stamps,
+        n_stamps,
+        ref_ptr,
+        conv_ptr,
+        noise_ptr,
+        ctypes.byref(config),
+        kctx,
+        rctx,
+        kernel_coeffs,
+        ctypes.byref(meansig),
+        ctypes.byref(scatter),
+        ctypes.byref(n_skipped),
+    )
+
+    if result != 0:
+        msg = f"fitKernel_v2 failed with return code {result}"
+        raise RuntimeError(msg)
+
+    # Convert output to numpy
+    coeffs_np = np.array([kernel_coeffs[i] for i in range(n_comp_total + 1)])
+
+    return coeffs_np, meansig.value, scatter.value, n_skipped.value
+
+
+def spatial_convolve_v2(
+    image: np.ndarray,
+    kernel_coeffs: np.ndarray,
+    config: ConfigStruct,
+    kctx: ctypes.POINTER(KernelContextStruct),
+    rctx: ctypes.POINTER(RegionContextStruct),
+    var_image: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Apply kernel via convolution using context-aware API (v2).
+
+    Args:
+        image: input image (float32, 2D)
+        kernel_coeffs: fitted kernel coefficients (float64)
+        config: configuration struct
+        kctx: kernel context
+        rctx: region context
+        var_image: variance image or None (float32, 2D)
+
+    Returns:
+        tuple of (output_image, conv_mask)
+
+    Raises:
+        RuntimeError: if convolution fails
+    """
+    lib = _hotpants_ffi.get_library()
+    convolve_v2_c = lib.spatial_convolve_v2
+    convolve_v2_c.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ConfigStruct),
+        ctypes.POINTER(KernelContextStruct),
+        ctypes.POINTER(RegionContextStruct),
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    convolve_v2_c.restype = ctypes.c_int
+
+    # Validate inputs
+    validate_image_array(image, "image")
+    ny, nx = image.shape
+
+    if var_image is not None:
+        validate_image_array(var_image, "var_image")
+
+    # Convert arrays
+    image_ptr = array_to_cptr(image)
+    var_ptr = ctypes.POINTER(ctypes.POINTER(ctypes.c_float))() if var_image is None else None
+    coeffs_arr = np.asarray(kernel_coeffs, dtype=np.float64)
+    coeffs_ptr = array_to_double_cptr(coeffs_arr)
+
+    # Allocate output
+    output = allocate_array((ny, nx), dtype=np.float32)
+    output_ptr = array_to_cptr(output)
+
+    conv_mask = (ctypes.c_int * (ny * nx))()
+
+    # Call C function
+    result = convolve_v2_c(
+        image_ptr,
+        var_ptr,
+        ny,
+        nx,
+        ctypes.cast(coeffs_ptr, ctypes.POINTER(ctypes.c_double)),
+        ctypes.byref(config),
+        kctx,
+        rctx,
+        output_ptr,
+        conv_mask,
+    )
+
+    if result != 0:
+        msg = f"spatial_convolve_v2 failed with return code {result}"
+        raise RuntimeError(msg)
+
+    # Convert mask to numpy
+    mask_np = np.array([conv_mask[i] for i in range(ny * nx)], dtype=np.int32)
+    mask_np = mask_np.reshape((ny, nx))
+
+    return output, mask_np
 
 
 # =====================================================================
