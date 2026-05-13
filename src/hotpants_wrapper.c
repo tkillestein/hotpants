@@ -526,3 +526,176 @@ double computeKernelNorm(double* kernel_coeffs, int nx, int ny) {
   rPixY = ny;
   return make_kernel(nx / 2, ny / 2, kernel_coeffs);
 }
+
+/* =====================================================================
+ * Context-Aware Wrapper Functions (NEW API)
+ * =====================================================================
+ * These functions work with the new context structures (config_struct,
+ * kernel_context_struct, region_context_struct) to eliminate global state.
+ */
+
+/*
+ * Set threadprivate TLS globals from kernel context.
+ *
+ * Call this before invoking core algorithms that read threadprivate globals.
+ * Used internally by wrapper functions.
+ */
+static void set_kernel_context_globals(const kernel_context_struct* kctx,
+                                       const config_struct* config) {
+  if (!kctx || !config) return;
+
+  /* Set component counts (read by allocateStamps, fillStamp) */
+  nCompKer = kctx->basis.n_comp_ker;
+  nComp = kctx->basis.n_comp;
+  nC = kctx->basis.n_c;
+  nCompBG = kctx->basis.n_comp_bg;
+  nBGVectors = kctx->basis.n_bg_vectors;
+  nCompTotal = kctx->basis.n_comp_total;
+
+  /* Set frame widths (read by fillStamp, spatial_convolve) */
+  fwKernel = kctx->fw_kernel;
+  fwStamp = kctx->fw_stamp;
+  fwKSStamp = kctx->fw_ks_stamp;
+  kcStep = kctx->kc_step;
+
+  /* Set Gaussian basis (read by fillStamp) */
+  ngauss = kctx->basis.ngauss;
+  deg_fixe = kctx->basis.deg_fixe;
+  sigma_gauss = kctx->basis.sigma_gauss;
+
+  /* Set kernel basis vectors (read by fillStamp, spatial_convolve) */
+  kernel_vec = kctx->basis.kernel_vec;
+  filter_x = kctx->basis.filter_x;
+  filter_y = kctx->basis.filter_y;
+
+  /* Set algorithm tuning globals (read by fitKernel) */
+  statSig = config->stat_sig;
+  kerSigReject = config->ker_sig_reject;
+  kerFracMask = config->ker_frac_mask;
+  fillVal = config->fill_val;
+  fillValNoise = config->fill_val_noise;
+  kfSpreadMask1 = config->kf_spread_mask1;
+  kfSpreadMask2 = config->kf_spread_mask2;
+
+  /* Set configuration kernel parameters (read by buildStamps) */
+  hwKernel = config->kernel_half_width;
+  kerOrder = config->kernel_order;
+  bgOrder = config->bg_order;
+  nKSStamps = config->n_ks_stamps;
+  hwKSStamp = config->hw_ks_stamp;
+
+  /* Set string options (read by buildStamps, fitKernel) */
+  static char force_buf[2] = {0, 0};
+  force_buf[0] = config->force_convolve;
+  forceConvolve = force_buf;
+  figMerit = "v";
+  photNormalize = "t";
+}
+
+/*
+ * Set threadprivate region context globals.
+ *
+ * Call this before invoking core algorithms on a region.
+ * Used internally by wrapper functions.
+ */
+static void set_region_context_globals(const region_context_struct* rctx) {
+  if (!rctx) return;
+
+  rPixX = rctx->pix_x;
+  rPixY = rctx->pix_y;
+  mRData = rctx->mask;
+  kernel = rctx->kernel;
+  kernel_coeffs = rctx->kernel_coeffs;
+  temp = rctx->temp;
+}
+
+/*
+ * Broadcast threadprivate context globals to all OpenMP threads.
+ *
+ * Use inside OpenMP parallel regions to ensure all threads have
+ * correct copies of TLS variables.
+ */
+static void broadcast_region_context_globals(const region_context_struct* rctx) {
+  if (!rctx) return;
+
+#ifdef _OPENMP
+#pragma omp parallel
+  {
+    set_region_context_globals(rctx);
+  }
+#else
+  set_region_context_globals(rctx);
+#endif
+}
+
+/*
+ * Initialize context-aware buildStamps operation.
+ *
+ * Sets up kernel and region globals from contexts, preparing for
+ * a buildStamps call with the given configuration.
+ *
+ * Args:
+ *   config: configuration struct
+ *   kctx: kernel context (must be initialized)
+ *   rctx: region context (must be initialized)
+ *
+ * Returns: 0 on success, -1 on error
+ */
+int hotpants_setup_buildstamps(const config_struct* config,
+                               const kernel_context_struct* kctx,
+                               region_context_struct* rctx) {
+  if (!config || !kctx || !rctx) return -1;
+
+  set_kernel_context_globals(kctx, config);
+  set_region_context_globals(rctx);
+
+  return 0;
+}
+
+/*
+ * Initialize context-aware fitKernel operation.
+ *
+ * Sets up kernel and region globals from contexts, preparing for
+ * a fitKernel call.
+ *
+ * Args:
+ *   config: configuration struct
+ *   kctx: kernel context (must be initialized)
+ *   rctx: region context (must be initialized)
+ *
+ * Returns: 0 on success, -1 on error
+ */
+int hotpants_setup_fitkernel(const config_struct* config,
+                             const kernel_context_struct* kctx,
+                             region_context_struct* rctx) {
+  if (!config || !kctx || !rctx) return -1;
+
+  set_kernel_context_globals(kctx, config);
+  broadcast_region_context_globals(rctx);
+
+  return 0;
+}
+
+/*
+ * Initialize context-aware spatial_convolve operation.
+ *
+ * Sets up kernel and region globals from contexts, preparing for
+ * a spatial_convolve call.
+ *
+ * Args:
+ *   config: configuration struct
+ *   kctx: kernel context (must be initialized)
+ *   rctx: region context (must be initialized)
+ *
+ * Returns: 0 on success, -1 on error
+ */
+int hotpants_setup_spatial_convolve(const config_struct* config,
+                                    const kernel_context_struct* kctx,
+                                    region_context_struct* rctx) {
+  if (!config || !kctx || !rctx) return -1;
+
+  set_kernel_context_globals(kctx, config);
+  broadcast_region_context_globals(rctx);
+
+  return 0;
+}

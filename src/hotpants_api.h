@@ -359,4 +359,63 @@ void cleanupSpatialConvolve(void);
  */
 double computeKernelNorm(double* kernel_coeffs, int nx, int ny);
 
+/* =====================================================================
+ * Context-Aware Wrapper Functions (NEW API)
+ * =====================================================================
+ * These functions set up global state from context structures,
+ * eliminating the need for direct global manipulation.
+ */
+
+/*
+ * Initialize global state for buildStamps operation using context.
+ *
+ * Sets threadprivate globals (rPixX, rPixY, kernel, kernel_coeffs, temp, etc.)
+ * and component counts from the provided contexts before buildStamps is called.
+ *
+ * Args:
+ *   config: configuration struct (read-only)
+ *   kctx: kernel context (read-only)
+ *   rctx: region context (read-only)
+ *
+ * Returns:
+ *   0 on success, -1 on error
+ */
+int hotpants_setup_buildstamps(const config_struct* config,
+                               const kernel_context_struct* kctx,
+                               region_context_struct* rctx);
+
+/*
+ * Initialize global state for fitKernel operation using context.
+ *
+ * Sets threadprivate globals from contexts; broadcasts to OpenMP threads.
+ *
+ * Args:
+ *   config: configuration struct (read-only)
+ *   kctx: kernel context (read-only)
+ *   rctx: region context (read-only)
+ *
+ * Returns:
+ *   0 on success, -1 on error
+ */
+int hotpants_setup_fitkernel(const config_struct* config,
+                             const kernel_context_struct* kctx,
+                             region_context_struct* rctx);
+
+/*
+ * Initialize global state for spatial_convolve operation using context.
+ *
+ * Sets threadprivate globals from contexts; broadcasts to OpenMP threads.
+ *
+ * Args:
+ *   config: configuration struct (read-only)
+ *   kctx: kernel context (read-only)
+ *   rctx: region context (read-only)
+ *
+ * Returns:
+ *   0 on success, -1 on error
+ */
+int hotpants_setup_spatial_convolve(const config_struct* config,
+                                    const kernel_context_struct* kctx,
+                                    region_context_struct* rctx);
+
 #endif /* HOTPANTS_API_H */
