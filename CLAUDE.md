@@ -630,6 +630,146 @@ When working on HOTPANTS:
 
 ---
 
+## Single-Region Processing Optimizations
+
+When processing with `-nrx=1 -nry=1`, several significant optimizations become feasible:
+
+### Immediate Opportunities (10–15% speedup achievable)
+
+**1. Eliminate region boundary overhead (5–10%)**
+- No buffer zones; full image is contiguous in memory
+- Single allocation for kernel coefficients (vs. per-region)
+- No inter-region OpenMP synchronization
+- Improved L2/L3 cache efficiency
+
+**2. Reduce polynomial basis degree (2–5%)**
+- Global fit to entire image PSF instead of per-region fits
+- Lower polynomial degree sufficient (degree 2–3 vs. 6)
+- Fewer coefficients to solve for
+- More stable solution (less local overfitting)
+
+**3. Adaptive stamp grid layout (5–15% potential)**
+- Design stamp grid to match source distribution
+- Hierarchical or quadtree-based layout (dense near stars, sparse in empty regions)
+- Eliminates redundant PSF center searches
+- Reduces `getPsfCenters()` bottleneck (currently ~35% CPU)
+
+**4. Simplified noise model (1–3%)**
+- Single global model instead of per-region estimation
+- Reduced parameter overhead
+
+### Advanced Opportunities (exploratory)
+
+**5. Thin-plate splines for spatial variation (10–20% accuracy gain)**
+- Replace polynomial with smoothing splines
+- Eliminates discontinuities at region boundaries
+- Continuous smooth kernel across entire image
+- Particularly beneficial for wide-field instruments
+- See wishlist section below for details
+
+**6. GPU acceleration (3–10× speedup potential)**
+- Entire image fits in GPU memory (512² = 2 MB, 1024² = 8 MB)
+- CUDA FFT (cuFFT) for convolution
+- cuBLAS/Thrust for PSF center finding
+- cuSOLVER for Cholesky solve
+- Feasible with CUDA/HIP backends; deferred unless performance critical
+
+### Benchmarking Single-Region Performance
+
+Use the automated benchmark suite to compare single-region vs. multi-region execution:
+
+```sh
+# Benchmark standard workloads (includes single-region tests)
+python benchmark_suite.py
+
+# Analyze region overhead specifically
+python analyze_single_region.py
+
+# Generate performance report from existing results
+python benchmark_suite.py --report-only
+```
+
+The benchmark suite:
+- Tracks performance across multiple workload sizes
+- Detects regressions relative to baseline
+- Generates markdown reports for trend analysis
+- Stores results in JSON for downstream analysis
+- Can be integrated into CI/CD pipelines
+
+**Key workload:** `medium_single` (512×512, single region) is the standard baseline.
+
+---
+
+## Automated Performance Testing
+
+### Benchmark Suite (`benchmark_suite.py`)
+
+Runs repeatable benchmarks across multiple workloads and detects performance regressions:
+
+```sh
+# Run full benchmark suite (uses standard workloads)
+python benchmark_suite.py
+
+# Run with multiple trials for stability
+python benchmark_suite.py --trials 3
+
+# Generate report from previous results
+python benchmark_suite.py --report-only
+
+# Specify alternate results directory
+python benchmark_suite.py --results-dir /path/to/results
+```
+
+**Standard workloads:**
+- `small_single`: 256²×50 stars, 1 region (quick)
+- `medium_single`: 512²×120 stars, 1 region (baseline)
+- `large_single`: 1024²×250 stars, 1 region (full-scale)
+- `medium_tiled`: 512²×120 stars, 2×2 regions
+- `large_tiled`: 1024²×250 stars, 4×4 regions
+
+**Output:**
+- `benchmark_results.jsonl`: Timestamped results with git SHA/branch
+- `latest_report.md`: Markdown performance report with regression detection
+- Exit code 0 if no regressions, 1 if regressions detected
+
+### Single-Region Analysis (`analyze_single_region.py`)
+
+Analyzes overhead from multi-region processing and estimates optimization opportunities:
+
+```sh
+python analyze_single_region.py
+```
+
+Produces:
+- Per-region timing breakdown
+- Estimated overhead percentages
+- Recommended optimization priorities
+- Implementation roadmap
+
+### Integration into CI/CD
+
+Add to GitHub Actions or local pre-commit hooks:
+
+```yaml
+# Example: .github/workflows/benchmark.yml
+name: Performance Benchmarks
+on: [push]
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
+      - run: pip install astropy scipy numpy
+      - run: python benchmark_suite.py --trials 2
+      - uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-results
+          path: /tmp/hotpants_benchmarks/
+```
+
+---
+
 ## References
 
 - **Alard & Lupton (1998):** "A Method for Optimal Image Subtraction," ApJ 503:
