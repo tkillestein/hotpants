@@ -15,20 +15,26 @@ License: MIT (Andy Becker, 2013). See `LICENSE`.
 
 **Core implementation (C):**
 - ✓ CMake build system with CFITSIO, OpenBLAS, FFTW3, OpenMP detection
-- ✓ LAPACK Cholesky solver, OpenMP parallelism, FFT-accelerated convolution
+- ✓ LAPACK Cholesky solver, OpenMP parallelism, FFT-accelerated convolution (mandatory)
+- ✓ Tier-2 performance optimizations: cache-aware tiling, SIMD vectorization
 - ✓ Doxygen-documented core functions, global naming legend, named constants
 - ✓ Logging macros, memory allocation wrappers, contiguous allocation
+- ✓ OpenMP parallelization of region and block loops with proper thread-local state
 
 **Python API (ctypes bindings):**
 - ✓ C API header (`hotpants_api.h`) with function signatures and data structures
-- ✓ Python module with `KernelConfig`, `RegionLayout`, `NoiseThresholds`, `KernelSolution` dataclasses
-- ✓ Full ctypes binding wrapper (`_hotpants.py`) with numpy marshalling
+- ✓ High-level Python API: `fit_kernel()`, `spatial_convolve()` with full numpy support
+- ✓ Configuration dataclasses: `KernelConfig`, `RegionLayout`, `NoiseThresholds`, `KernelSolution`
+- ✓ Pydantic validation with informative error messages
 - ✓ All unit tests passing (33/33), segfaults fixed, parameter validation working
+- ✓ Logging via loguru with integration to C library output
 
 **Documentation & build:**
-- ✓ `pyproject.toml` configured for Python ≥ 3.11
+- ✓ `pyproject.toml` configured for Python ≥ 3.11 (excludes 3.14 due to segfault)
 - ✓ Sphinx + Breathe setup, Doxygen integration
-- ✓ Test suite (`test_api.py`, `test_api_integration.py`, `test_regression.py`)
+- ✓ Test suite: unit tests, integration tests, regression tests
+- ✓ Performance profiling tools: `profile_hotpants.py`, `analyze_bottlenecks.py`
+- ✓ `BOTTLENECK_ANALYSIS.md`: comprehensive profiling report with optimization roadmap
 
 ---
 
@@ -39,18 +45,27 @@ hotpants/
 ├── src/
 │   ├── main.c              # Pipeline orchestration: FITS I/O, region loop, output assembly
 │   ├── alard.c             # Core algorithm: kernel fitting, spatial convolution, LAPACK solve
-│   ├── functions.c         # Stamps, PSF-centre finding, statistics, masking
-│   ├── vargs.c             # CLI argument parsing (~50 options)
+│   │                       # (2470 lines: contains multiple code paths for optimization)
+│   ├── functions.c         # Stamps, PSF-centre finding, statistics, masking (2343 lines)
+│   ├── hotpants_wrapper.c  # C wrapper for Python API; global state setup (528 lines)
+│   ├── vargs.c             # CLI argument parsing (~50 options, 754 lines)
 │   ├── maskim.c            # Standalone utility: apply mask to image
-│   ├── globals.c           # Global variable definitions
+│   ├── globals.c           # Global variable definitions (11 lines)
+│   ├── allocate.c          # Memory allocation wrappers (147 lines)
 │   ├── defaults.h          # Compile-time parameter defaults (with named constants)
 │   ├── globals.h           # Global variable declarations + prefix legend
+│   ├── allocate.h          # Allocation wrapper prototypes
 │   ├── functions.h         # Function prototypes and CFITSIO includes
 │   └── hotpants_api.h      # Public C API for Python bindings (Doxygen-documented)
+├── src/hotpants/           # Python package
+│   ├── __init__.py         # Public API exports
+│   ├── api.py              # High-level API (fit_kernel, spatial_convolve, config dataclasses)
+│   ├── _core.py            # Low-level ctypes wrappers, array conversion, global state
+│   └── _hotpants_ffi.py    # FFI bindings to compiled C library
 ├── tests/
-│   ├── conftest.py         # pytest configuration
-│   ├── test_api.py         # Unit tests for Python API (KernelConfig, validation)
-│   ├── test_api_integration.py  # End-to-end integration tests
+│   ├── conftest.py         # pytest configuration and test fixtures
+│   ├── test_api.py         # Unit tests for Python API (config validation, error handling)
+│   ├── test_api_integration.py  # End-to-end integration tests with synthetic data
 │   ├── test_regression.py  # Regression tests against known outputs
 │   └── __init__.py
 ├── docs/
@@ -60,13 +75,17 @@ hotpants/
 │   ├── guides/             # User guides and tutorials
 │   ├── _static/            # Static assets (CSS, images)
 │   └── _templates/         # Sphinx templates
-├── CMakeLists.txt          # CMake build configuration
+├── CMakeLists.txt          # CMake build configuration (FFTW3 mandatory)
 ├── Doxyfile                # Doxygen configuration for C API documentation
 ├── pyproject.toml          # Python project metadata (uv-managed)
 ├── README.md               # User-facing option reference and quick start
 ├── CLAUDE.md               # This file: development guide for AI assistants
-├── CONTRIBUTING.md         # (planned) Contributor guidelines
-└── NOTES                   # Version history and changelog
+├── BOTTLENECK_ANALYSIS.md  # Profiling report and acceleration roadmap
+├── CONTRIBUTING.md         # Contributor guidelines
+├── NOTES.md                # Version history and changelog
+├── profile_hotpants.py     # Profiling utility for performance analysis
+├── analyze_bottlenecks.py  # Bottleneck identification and reporting
+└── profile_gprof.py        # gprof output parsing and analysis
 ```
 
 ### Key Functions
@@ -205,62 +224,188 @@ uv run pytest       # Run tests
 
 ---
 
-## Future Development
+## Recent Performance Work
 
-### Python API & Documentation
+### Completed Optimizations (Tier 1 & 2)
+
+As of May 2026, the following improvements have been implemented and tested:
+
+**Tier 1: Mandatory FFT path (∼3–8× speedup)**
+- FFT-accelerated convolution is now the primary algorithm (direct convolution removed)
+- FFTW3 is mandatory at build time; no `#ifdef USE_FFTW` fallback
+- FFT plan creation and caching optimized to minimize overhead
+- Comprehensive documentation in `BOTTLENECK_ANALYSIS.md` for troubleshooting
+
+**Tier 2: SIMD vectorization & tiling (∼1.5–2× speedup)**
+- Inner kernel-summation loops now use `-march=native` for autovectorization
+- Cache-aware tiling in `spatial_convolve_fft()` to reduce L1/L2 misses
+- OpenMP parallelization of region and block loops with thread-local state
+- All tier-2 changes integrated and validated; marked complete in BOTTLENECK_ANALYSIS.md
+
+**Combined speedup:** ∼5–15× on typical multi-core systems (FFT 3–8×, parallelism 4–8×, tiling 1.5–2×)
+
+### Remaining Performance Opportunities (Tier 3)
+
+See `BOTTLENECK_ANALYSIS.md` for detailed analysis of remaining bottlenecks.
+
+**PSF-centre finding (`getPsfCenters()` → ~35% CPU baseline, reduced by tiling)**
+
+Remaining acceleration paths:
+
+1. **GPU offload** — CUDA/OpenCL for all-pairs PSF center comparison, but data transfer
+   overhead likely exceeds benefit for typical image sizes
+2. **Approximate nearest-neighbour** — spatial hashing or k-d trees for large stamp counts
+   (>1000), but adds algorithmic complexity with marginal gains on typical workloads
+3. **Specialized hardware** — FPGA matrix multiplication, unlikely cost-effective
+
+**Algorithm research opportunities (exploratory)**
+
+- **Data-driven Gaussian basis** — PCA on residual PSFs to auto-select optimal basis
+- **Bramich (2008) delta-function basis** — direct kernel solving with Laplacian smoothness
+- **LSST decorrelation** — post-convolve whitening kernel to remove correlated noise
+- **Thin-plate splines** — replace polynomial spatial variation, enable single full-frame region
+
+### Documentation & Testing
 
 **Completed:**
-- ✓ ctypes bindings with full numpy support
-- ✓ Configuration dataclasses (KernelConfig, RegionLayout, NoiseThresholds, KernelSolution)
-- ✓ Parameter validation and type hints
-- ✓ All unit tests passing
+- ✓ Comprehensive Python API with numpy marshalling and error handling
+- ✓ Configuration dataclasses with Pydantic validation
+- ✓ Unit, integration, and regression test suites
+- ✓ BOTTLENECK_ANALYSIS.md with profiling methodology and roadmap
+- ✓ Performance profiling scripts: `profile_hotpants.py`, `analyze_bottlenecks.py`
 
-**Optional future enhancements:**
-1. Write user guides (Installation, Command-line Reference, Python API Tutorial)
-2. Expand `CONTRIBUTING.md` with build, style, testing, and profiling guidance
-3. Full end-to-end integration tests with real astronomical images
+**Optional enhancements:**
+- User guides (Installation, Python API Tutorial, Command-line Reference)
+- Expand CONTRIBUTING.md with profiling and optimization workflow
+- Integration tests with real astronomical images
 
-### Performance Optimisations — Candidate Areas
 
-**PSF-centre finding acceleration (`getPsfCenters()` → ~35% CPU)**
+---
 
-Options:
+## Technical Debt & Refactoring Opportunities
 
-1. **SIMD vectorisation** — inner stamp-search loops are data-parallel; use
-   `-march=native` for autovectorisation or explicit AVX2/AVX-512 intrinsics
-2. **Approximate nearest-neighbour** — replace brute-force all-pairs comparison with
-   spatial hashing or k-d trees if stamp count is large
-3. **GPU offload** — CUDA/OpenCL could handle stamp comparison kernel, but data transfer
-   overhead may dominate for modest image sizes
+### C Code: Redundant and Parallel Implementations
 
-**Convolution kernel basis optimisation**
+**Priority 1: Multiple matrix-building functions (reduce from 3 to 1)**
 
-Current Gaussian basis fixed (σ = 0.7, 1.5, 3.0 px; polynomial degrees 6, 4, 2). For
-specific PSF shapes:
+| Function | File | Lines | Status | Issue |
+|----------|------|-------|--------|-------|
+| `build_matrix()` | alard.c | 1165–1730 | Active | Primary implementation; correct |
+| `build_matrix0()` | alard.c | 638–703 | Legacy | Superseded; kept for reference per comment |
+| `build_matrix_new()` | alard.c | 1027–1164 | Unused | Experimental version; not called in main flow |
 
-- Data-driven basis (PCA of residual PSFs) might reduce `nCompKer` and FFT count
-- Explore adaptive basis selection
+**Action:** Remove `build_matrix0()` and `build_matrix_new()`. They add ~200 lines of untested code
+and complicate maintenance. If kept for research, move to a separate research/ branch.
 
-**Memory and cache**
+---
 
-- `spatial_convolve_fft()` allocates large temporary buffers; consider prefetching or
-  tiling strategies
-- Monitor cache misses with `perf stat` or `likwid` on representative workloads
+**Priority 1: PCA alternative code paths (extract to separate modules or conditionals)**
 
-**Polynomial coefficient evaluation**
+| Component | Implementations | Impact |
+|-----------|-----------------|--------|
+| Kernel basis | `kernel_vector()`, `kernel_vector_PCA()` | ~80 lines duplication; both used if `usePCA` flag set |
+| Stamp convolution | `xy_conv_stamp()`, `xy_conv_stamp_PCA()` | ~50 lines duplication |
+| Fill stamp logic | `fillStamp()` dispatches based on global flag | Hidden complexity in dispatcher |
 
-`make_kernel()` evaluates low-order polynomial at every pixel. Current inline; consider:
+**Current status:** PCA code path is present but not documented in Python API or user guides.
+It appears to be an experimental feature that was integrated into the main codebase.
 
-1. Horner's method (already used) vs. precomputed lookup tables + trilinear
-   interpolation
-2. Vectorisation of polynomial loop if compiler cannot autovectorise
+**Action:** 
+- Either mark PCA as production-ready and document in Python API, or
+- Extract to optional compile-time feature (`-DUSE_PCA=ON/OFF`)
+- If keeping, refactor with function pointers to eliminate code duplication:
+  ```c
+  typedef double* (*kernel_vector_fn)(int, int, int, int, int*);
+  kernel_vector_fn kv = usePCA ? kernel_vector_PCA : kernel_vector;
+  ```
 
-**Mask propagation in FFT path**
+---
 
-Mask propagation (`makeNoiseImage4()`) currently uses direct convolution even when pixel
-values use FFT. Could harmonize to FFT path, but requires careful handling of
-integer/binary mask semantics.
+**Priority 2: Float-specific utility duplication (extract to templated macros)**
 
+| Function | File | Purpose | Lines |
+|----------|------|---------|-------|
+| `fset()` | functions.c:2113–2127 | Zero float array | 15 |
+| `dfset()` | functions.c:2128–2143 | Zero double array | 16 |
+
+**Action:** Replace with macro or single function using size-based dispatch:
+```c
+#define array_fill(arr, val, n, dtype) do { \
+  for (int _i = 0; _i < (n); _i++) \
+    ((dtype*)(arr))[_i] = (val); \
+} while(0)
+```
+
+---
+
+**Priority 2: Quick sort implementation (use qsort or inline)**
+
+| Function | File | Lines | Issue |
+|----------|------|-------|-------|
+| `quick_sort()` | functions.c:2238–2262 | 25 | Wrapper; delegates to quick_sort_1 |
+| `quick_sort_1()` | functions.c:2263–2321 | 59 | Recursive implementation of quicksort |
+
+**Current status:** Custom quicksort used for sorting PSF center candidates in `getPsfCenters()`.
+
+**Action:** Consider replacing with POSIX `qsort()` (available via libc) or inline the
+recursive function into the caller. If custom sort needed for performance (SIMD, cache-aware),
+document the rationale with benchmarks.
+
+---
+
+### Python Code: Potential Simplifications
+
+**Priority 2: Parameter duplication in `api.py` (config → global state)**
+
+The high-level API (`fit_kernel()`, `spatial_convolve()`) accepts configuration objects
+and translates them to C globals via `global_state()` context manager in `_core.py`.
+This works but creates:
+
+1. Dual representation (Python config + C globals)
+2. Hidden state management (globals are modified, then restored)
+3. Potential race conditions if Python code is multithreaded and calls HOTPANTS multiple times
+
+**Current mitigations:**
+- `global_state()` is a context manager ensuring cleanup
+- Tests cover single-threaded usage; no multi-threaded tests exist
+
+**Action (exploratory):**
+- Consider passing config struct through to C API instead of modifying globals
+- Would require changes to C API but would eliminate global state
+- Deferred unless thread-safety issues emerge
+
+---
+
+### Repository Structure: Organizational Opportunities
+
+**Priority 3: Separate profiling and analysis tools**
+
+Files `profile_hotpants.py`, `analyze_bottlenecks.py`, `profile_gprof.py` are useful for development
+but clutter the root directory. Consider moving to `dev/profiling/` subdirectory.
+
+**Priority 3: BOTTLENECK_ANALYSIS.md maintenance**
+
+This file was generated May 8, 2026. As code changes, it will become stale. Consider:
+- Adding a note at the top with last-update date and regeneration instructions
+- Automating regeneration as part of CI/CD (gprof on release builds)
+- Linking from CONTRIBUTING.md for visibility
+
+---
+
+### Known Limitations & Workarounds
+
+**Python 3.14 segfault**
+
+- Excludes Python 3.14+ from `pyproject.toml` due to segfault in ctypes interaction
+- Root cause unknown; likely interaction with numpy/ctypes on new Python release
+- Workaround: use Python 3.11–3.13
+
+**Global state thread safety**
+
+- The C library uses global variables for configuration (e.g., `hwKernel`, `kerOrder`)
+- OpenMP parallelism is internal to individual function calls, not across calls
+- Python API is safe for multithreaded use if each thread serializes HOTPANTS calls (use a mutex)
+- If future work adds thread pool support, refactor to pass config struct through C API
 
 ---
 
@@ -443,25 +588,45 @@ or expand them to their own sections as in-progress tasks are completed.
 When working on HOTPANTS:
 
 1. **Understand the algorithm first.** Read Alard & Lupton (1998), Section 2 before
-   modifying kernel fitting code.
-2. **Prioritize readability.** Clear variable names and algorithm documentation are more
-   valuable than micro-optimizations.
-3. **Test before optimizing.** Establish baseline performance with gprof/perf before
-   attempting speedups.
-4. **Respect the modernisation plan.** Python API, Sphinx docs, and Phase 2 readability
-   improvements are in progress; coordinate efforts.
-5. **Maintain backward compatibility.** CLI and FITS I/O must continue to work; new
-   Python API should wrap, not replace, existing C code.
-6. **Check the status section.** This file documents what's been completed; avoid
-   duplicating work.
-7. **Document with Doxygen.** New functions should have `@brief` + `@details` blocks;
-   reference papers and equations.
-8. **Use named constants.** No magic numbers in code; define #define in defaults.h if
-   you need a constant.
-9. **Profile on real data.** Optimizations should be measured against representative
-   astronomical images.
-10. **Communicate with contributors.** If extending the Python API or changing the build
-    system, open a discussion in CONTRIBUTING.md or a PR comment.
+   modifying kernel fitting code. Check BOTTLENECK_ANALYSIS.md for profiling context.
+
+2. **Prioritize readability over micro-optimizations.** The codebase has already been
+   profiled and tier-1/2 optimizations completed. Further speedups must be weighed
+   against maintainability.
+
+3. **Check Technical Debt section.** Several code paths (PCA variants, legacy matrix builders)
+   are candidates for refactoring. Avoid adding new features that compound duplication.
+
+4. **Test performance impact.** Use `profile_hotpants.py` and `analyze_bottlenecks.py` to
+   establish baseline before and after changes. Results should be documented.
+
+5. **Respect backward compatibility.** CLI and FITS I/O must continue to work. New Python
+   API features should extend, not replace, existing C signatures.
+
+6. **FFT is mandatory.** Do not introduce code paths that fall back to direct convolution
+   or bypass FFTW3. The `.gitignore` excludes FFTW3 library code; ensure system dependencies
+   are installed (see "Building" section).
+
+7. **Global state is constrained.** C library uses global variables for config; Python API
+   manages them via `global_state()` context manager. If adding new globals, update both
+   `_core.py` and `hotpants_wrapper.c`.
+
+8. **Document with Doxygen.** New functions >50 lines need `@brief` + `@details` blocks
+   with parameter and return documentation. Reference papers with equation numbers.
+
+9. **Use named constants.** No magic numbers in code; define `#define` in `defaults.h` with
+   explanatory comments. Update the global naming legend in `globals.h` if adding new globals.
+
+10. **Profiling workflow:**
+    - Baseline: `cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build build`
+    - Profile: `OMP_NUM_THREADS=1 python profile_hotpants.py <test_image>`
+    - Analyze: `python analyze_bottlenecks.py <gprof_output>`
+    - Compare: Document baseline vs. optimized runtime and CPU %; update BOTTLENECK_ANALYSIS.md
+
+11. **Before refactoring legacy code** (e.g., PCA path, matrix builders):
+    - Check git log for context on why alternatives were kept
+    - Run full test suite (`pytest tests/ -v`) to ensure no regressions
+    - Update CLAUDE.md Technical Debt section if status changes
 
 ---
 
