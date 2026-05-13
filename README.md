@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Build Status](https://img.shields.io/github/actions/workflow/status/tkillestein/hotpants/ci.yml?branch=master)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey)
-![C99](https://img.shields.io/badge/C-23-blue.svg)
+![C17](https://img.shields.io/badge/C-17-blue.svg)
 
 **High Order Transform of PSF ANd Template Subtraction**
 
@@ -30,16 +30,11 @@ producing optimal difference images for transient detection.
 
 ## Features
 
-This fork adds:
-
-- **Fast convolution** — FFT-accelerated via FFTW3 for large images
-- **Parallelized** — multi-threaded with OpenMP for modern CPUs
-- **Modern build system** - CMake orchestrated with `scikit-build-core`
-- **Documentation** - inline documentation, and Doxygen-generated rich docs
-- **Python API** - via `ctypes`, for full compatibility with `numpy` and the modern
-  Python science stack
-
-These changes form the basis for extensions to the original HOTPANTS code.
+- **Fast convolution** — FFT-accelerated via FFTW3 (3–8× speedup on typical images)
+- **Parallelized** — multi-threaded with OpenMP for modern CPUs (4–8× total speedup)
+- **Modern build system** — CMake with automatic dependency detection
+- **Comprehensive documentation** — Doxygen-generated API docs and user guides
+- **Python API** — full numpy integration via ctypes for the scientific Python stack
 
 ---
 
@@ -83,15 +78,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup, testing, and 
 
 ### Build Configuration
 
-The CMake build auto-detects CFITSIO, OpenBLAS, FFTW3, and OpenMP. Optional flags:
-- `-DUSE_FFTW=ON/OFF` — enable FFT convolution (default: auto-detect)
-- `-DUSE_OPENMP=ON/OFF` — enable multi-threading (default: auto-detect)
+The CMake build auto-detects CFITSIO, OpenBLAS, FFTW3, and OpenMP:
+- FFTW3 is **required** (no fallback to direct convolution)
+- OpenMP is optional; builds without it if unavailable
+
+Optional CMake flags:
+- `-DUSE_OPENMP=ON/OFF` — enable/disable multi-threading (default: auto-detect)
+- `-DCMAKE_C_FLAGS="-O3 -march=native"` — optimize for local machine
 
 ### Troubleshooting
 
 - **"Could not find libhotpants":** Set `LD_LIBRARY_PATH=$PWD/build:$LD_LIBRARY_PATH`
-- **CMake fails:** Install missing dependencies (see above)
-- **Build fails:** Check compiler version (C17 support required, gcc/clang 5.0+)
+- **CMake fails:** Ensure all dependencies are installed (CFITSIO, OpenBLAS, FFTW3, LAPACK)
+- **Python import errors:** C library must be built first (see Installation)
 
 ---
 
@@ -131,46 +130,30 @@ See [CLAUDE.md](CLAUDE.md) for algorithm details and performance tuning.
 
 ### Python API
 
-The Python API provides a NumPy-friendly interface to kernel fitting and difference imaging:
-
 ```python
 import numpy as np
 from hotpants import fit_kernel, spatial_convolve, KernelConfig
 
-# Load images (numpy arrays, float32)
+# Load images (float32)
 template = np.load('template.npy').astype(np.float32)
 science = np.load('science.npy').astype(np.float32)
 
-# Configure kernel fitting
-config = KernelConfig(
-    kernel_half_width=15,      # kernel region size (pixels)
-    kernel_order=2,            # spatial polynomial order
-    fit_threshold=20.0,        # sigma threshold for stamps
-)
-
-# Fit kernel to match PSFs
+# Configure and fit kernel
+config = KernelConfig(kernel_half_width=15, kernel_order=2)
 kernel_solution = fit_kernel(template, science, config=config)
-print(f"Fitted kernel chi2: {kernel_solution.chi2:.3f}")
-print(f"Kernel integral: {kernel_solution.kernel_norm:.3f}")
 
 # Create difference image
 difference = spatial_convolve(science, kernel_solution)
-
-# Save result
 np.save('difference.npy', difference)
 ```
 
-**Requirements:**
-- The C library must be built first (see Installation section)
-- NumPy arrays must be float32
-- Images must have same shape
+**Key classes:**
+- `KernelConfig` — kernel fitting parameters
+- `RegionLayout` — image tiling configuration
+- `NoiseThresholds` — data quality thresholds
+- `KernelSolution` — fitted kernel coefficients and metrics
 
-**API Documentation:**
-- Configuration models: `KernelConfig`, `RegionLayout`, `NoiseThresholds`
-- Core functions: `fit_kernel()`, `spatial_convolve()`
-- Result: `KernelSolution` dataclass with coefficients and metrics
-
-See [CLAUDE.md § Python API](CLAUDE.md#python-api--header--test-structure) for implementation details.
+**Requirements:** C library must be built first; numpy arrays must be float32 and same shape.
 
 ---
 
@@ -223,19 +206,18 @@ Use `OMP_NUM_THREADS=N` to control threading. Typical scaling: 2–4× for 4 thr
 
 ### Requirements
 
-- CFITSIO ≥ 3.45 (FITS I/O)
-- OpenBLAS or LAPACK (linear algebra)
-- FFTW3 ≥ 3.3 (optional, for FFT acceleration)
+- **CFITSIO** ≥ 3.45 (FITS I/O)
+- **BLAS/LAPACK** (linear algebra)
+- **FFTW3** ≥ 3.3 (mandatory for FFT convolution)
 - OpenMP (optional, for multi-threading)
-- CMake ≥ 3.10 or GNU Make
+- CMake ≥ 3.10
 
 ### Compiler Optimization
 
-For maximum performance on your machine:
+For maximum performance:
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_FLAGS="-O3 -march=native -funroll-loops"
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="-O3 -march=native -funroll-loops"
 ```
 
 Use `-march=native` for local builds; omit for portable binaries.
@@ -246,12 +228,12 @@ Use `-march=native` for local builds; omit for portable binaries.
 
 See [CLAUDE.md](CLAUDE.md) for:
 
-- Algorithm overview and modernization roadmap
-- Build system details (CMake)
-- Performance profiling
-- Planned optimizations (SIMD, adaptive basis, GPU offload)
+- Algorithm details and code structure
+- Completed optimizations (FFT, SIMD vectorization, cache-aware tiling, parallelism)
+- Performance profiling workflow
+- Technical debt and refactoring opportunities
 
-Contributions welcome! See future `CONTRIBUTING.md` for guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build, testing, and profiling guidelines.
 
 ---
 
