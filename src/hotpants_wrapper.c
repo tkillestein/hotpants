@@ -63,6 +63,11 @@ extern __thread float *temp;
 /* Forward declarations - defined in alard.c */
 extern void getKernelVec(void);
 extern double make_kernel(int xi, int yi, double* kernelSol);
+extern void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
+                      float* imNoise, double* kernel_coeffs, double* meansig,
+                      double* scatter, int* n_skipped);
+extern void spatial_convolve(float* image, float** var_image, int ny, int nx,
+                             double* kernel_coeffs, float* output, int* conv_method);
 
 /* Forward declarations - defined in functions.c */
 extern void makeInputMask(float* iRData, float* tRData, int* mRData);
@@ -697,6 +702,73 @@ int hotpants_setup_spatial_convolve(const config_struct* config,
 
   set_kernel_context_globals(kctx, config);
   broadcast_region_context_globals(rctx);
+
+  return 0;
+}
+
+/* =====================================================================
+ * Context-Aware Core Algorithm Implementations (v2)
+ * =====================================================================
+ */
+
+int fitKernel_v2(stamp_struct* stamps, int n_stamps,
+                 float* imRef, float* imConv, float* imNoise,
+                 const config_struct* config,
+                 const kernel_context_struct* kctx,
+                 region_context_struct* rctx,
+                 double* kernel_coeffs,
+                 double* meansig, double* scatter, int* n_skipped) {
+  if (!stamps || !imRef || !imConv || !config || !kctx || !rctx ||
+      !kernel_coeffs || !meansig || !scatter || !n_skipped) {
+    return -1;
+  }
+
+  /* Set up global state from contexts */
+  if (hotpants_setup_fitkernel(config, kctx, rctx) < 0) {
+    return -1;
+  }
+
+  /* Call the existing fitKernel implementation */
+  fitKernel(stamps, imRef, imConv, imNoise, kernel_coeffs, meansig, scatter,
+            n_skipped);
+
+  return 0;
+}
+
+int spatial_convolve_v2(float* image, float** var_image,
+                        int ny, int nx,
+                        double* kernel_coeffs,
+                        const config_struct* config,
+                        const kernel_context_struct* kctx,
+                        region_context_struct* rctx,
+                        float* output, int* conv_mask) {
+  int conv_method = 1;  /* Use FFT by default (FFT is mandatory) */
+
+  if (!image || !kernel_coeffs || !config || !kctx || !rctx || !output ||
+      ny <= 0 || nx <= 0) {
+    return -1;
+  }
+
+  /* Set up global state from contexts */
+  if (hotpants_setup_spatial_convolve(config, kctx, rctx) < 0) {
+    return -1;
+  }
+
+  /* Copy kernel coefficients into threadprivate global buffer */
+  memcpy(rctx->kernel_coeffs, kernel_coeffs,
+         (kctx->basis.n_comp_total + 1) * sizeof(double));
+
+  /* Call the existing spatial_convolve implementation */
+  spatial_convolve(image, var_image, ny, nx, rctx->kernel_coeffs, output,
+                   &conv_method);
+
+  /* If conv_mask was requested, populate it from mRData */
+  if (conv_mask) {
+    int pix_count = ny * nx;
+    for (int i = 0; i < pix_count; i++) {
+      conv_mask[i] = mRData ? mRData[i] : 0;
+    }
+  }
 
   return 0;
 }

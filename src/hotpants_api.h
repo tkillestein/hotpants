@@ -418,4 +418,72 @@ int hotpants_setup_spatial_convolve(const config_struct* config,
                                     const kernel_context_struct* kctx,
                                     region_context_struct* rctx);
 
+/* =====================================================================
+ * Context-Aware Core Algorithm Functions (NEW API v2)
+ * =====================================================================
+ * These are wrapper versions of fitKernel, spatial_convolve, and buildStamps
+ * that accept context structures instead of relying on globals.
+ */
+
+/*
+ * Fit kernel using context (context-aware version).
+ *
+ * This is a wrapper around the existing fitKernel() that sets up global state
+ * from contexts before calling the core algorithm.
+ *
+ * Args:
+ *   stamps: array of stamp structures (input/output)
+ *   n_stamps: number of stamps
+ *   imRef: reference image (float*, ny×nx)
+ *   imConv: image to convolve (float*, ny×nx)
+ *   imNoise: noise image or NULL (float*, ny×nx)
+ *   config: configuration struct (read-only)
+ *   kctx: kernel context (read-only)
+ *   rctx: region context (will be modified with working buffers)
+ *   kernel_coeffs: output fitted kernel coefficients [n_comp_total+1]
+ *   meansig: output mean significance of fit
+ *   scatter: output scatter in fit significance
+ *   n_skipped: output number of stamps excluded
+ *
+ * Returns: 0 on success, -1 on error
+ *
+ * Reference: Alard & Lupton (1998), Section 2.2
+ */
+int fitKernel_v2(stamp_struct* stamps, int n_stamps,
+                 float* imRef, float* imConv, float* imNoise,
+                 const config_struct* config,
+                 const kernel_context_struct* kctx,
+                 region_context_struct* rctx,
+                 double* kernel_coeffs,
+                 double* meansig, double* scatter, int* n_skipped);
+
+/*
+ * Apply kernel via convolution using context (context-aware version).
+ *
+ * This is a wrapper around the existing spatial_convolve() that sets up
+ * global state from contexts before calling the core algorithm.
+ *
+ * Args:
+ *   image: input image array (float*, ny×nx)
+ *   var_image: variance image array or NULL (float**, ny×nx per element)
+ *   ny, nx: image dimensions
+ *   kernel_coeffs: fitted kernel coefficients from fitKernel_v2
+ *   output: output array to fill (float*, ny×nx)
+ *   config: configuration struct (read-only)
+ *   kctx: kernel context (read-only)
+ *   rctx: region context (will be modified with working buffers)
+ *   conv_mask: output mask array [ny*nx] (may be NULL)
+ *
+ * Returns: 0 on success, -1 on error
+ *
+ * Reference: Alard & Lupton (1998), Section 3
+ */
+int spatial_convolve_v2(float* image, float** var_image,
+                        int ny, int nx,
+                        double* kernel_coeffs,
+                        const config_struct* config,
+                        const kernel_context_struct* kctx,
+                        region_context_struct* rctx,
+                        float* output, int* conv_mask);
+
 #endif /* HOTPANTS_API_H */
