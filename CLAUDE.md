@@ -21,6 +21,25 @@ License: MIT (Andy Becker, 2013). See `LICENSE`.
 - ✓ Logging macros, memory allocation wrappers, contiguous allocation
 - ✓ OpenMP parallelization of region and block loops with proper thread-local state
 
+**Global State Elimination (COMPLETED - May 2026):**
+- ✓ Phase 1: Context struct definitions (`hotpants_context.h`, `.c`)
+  - config_struct, kernel_context_struct, region_context_struct
+  - Context allocation/cleanup functions
+  - Default config initialization
+- ✓ Phase 2: Context-aware core algorithm wrappers (`hotpants_api.h`)
+  - fitKernel_v2(), spatial_convolve_v2() with context parameters
+  - Setup helpers: hotpants_setup_buildstamps(), hotpants_setup_fitkernel(), etc.
+  - Minimal changes to existing C code (no breaking changes)
+- ✓ Phase 3: Python ctypes bindings & high-level API (`_core.py`, `api.py`)
+  - ctypes definitions for all context structures
+  - Wrapper functions: create_kernel_context(), create_region_context(), etc.
+  - High-level fit_kernel_with_context() demonstrating new API
+  - Thread-safe design eliminating global state
+- ✓ Phase 4: Migration documentation
+  - MIGRATION.md: detailed guide for old → new API
+  - Deprecation notices on global_state()
+  - Examples for manual context management
+
 **Python API (ctypes bindings):**
 - ✓ C API header (`hotpants_api.h`) with function signatures and data structures
 - ✓ High-level Python API: `fit_kernel()`, `spatial_convolve()` with full numpy support
@@ -28,6 +47,7 @@ License: MIT (Andy Becker, 2013). See `LICENSE`.
 - ✓ Pydantic validation with informative error messages
 - ✓ All unit tests passing (33/33), segfaults fixed, parameter validation working
 - ✓ Logging via loguru with integration to C library output
+- ✓ NEW: Context-based API for thread-safe multi-threading scenarios
 
 **Documentation & build:**
 - ✓ `pyproject.toml` configured for Python ≥ 3.11 (excludes 3.14 due to segfault)
@@ -35,6 +55,7 @@ License: MIT (Andy Becker, 2013). See `LICENSE`.
 - ✓ Test suite: unit tests, integration tests, regression tests
 - ✓ Performance profiling tools: `profile_hotpants.py`, `analyze_bottlenecks.py`
 - ✓ `BOTTLENECK_ANALYSIS.md`: comprehensive profiling report with optimization roadmap
+- ✓ NEW: `MIGRATION.md`: comprehensive migration guide for global state → context API
 
 ---
 
@@ -47,7 +68,8 @@ hotpants/
 │   ├── alard.c             # Core algorithm: kernel fitting, spatial convolution, LAPACK solve
 │   │                       # (2470 lines: contains multiple code paths for optimization)
 │   ├── functions.c         # Stamps, PSF-centre finding, statistics, masking (2343 lines)
-│   ├── hotpants_wrapper.c  # C wrapper for Python API; global state setup (528 lines)
+│   ├── hotpants_wrapper.c  # C wrapper for Python API; context setup & v2 algorithms (700+ lines)
+│   ├── hotpants_context.c  # Context allocation/cleanup for config/kernel/region (529 lines)
 │   ├── vargs.c             # CLI argument parsing (~50 options, 754 lines)
 │   ├── maskim.c            # Standalone utility: apply mask to image
 │   ├── globals.c           # Global variable definitions (11 lines)
@@ -56,6 +78,7 @@ hotpants/
 │   ├── globals.h           # Global variable declarations + prefix legend
 │   ├── allocate.h          # Allocation wrapper prototypes
 │   ├── functions.h         # Function prototypes and CFITSIO includes
+│   ├── hotpants_context.h  # Context struct definitions for global state elimination
 │   └── hotpants_api.h      # Public C API for Python bindings (Doxygen-documented)
 ├── src/hotpants/           # Python package
 │   ├── __init__.py         # Public API exports
