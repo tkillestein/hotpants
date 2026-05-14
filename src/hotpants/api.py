@@ -75,9 +75,29 @@ class KernelConfig(BaseModel):
             Must be <= kernel_half_width. Typical: 10.
             (Maps to C global: hwKSStamp)
 
+        basis_type: Kernel basis function type. Options: "gaussian" (multi-Gaussian, default)
+            or "delta" (delta function RBF basis, Bramich 2008). The delta basis enables
+            more flexible kernel representation with direct RBF interpolation instead of
+            polynomial-weighted Gaussian sums. Typical: "gaussian".
+            (Maps to C global: iBasisType; 0 = gaussian, 1 = delta)
+
+        delta_ker_grid_size: Grid spacing for delta basis functions (pixels).
+            Controls density of RBF basis points within kernel footprint.
+            Smaller values (1.0-2.0) give more basis functions but higher condition number.
+            Only used if basis_type="delta". Typical: 2.0.
+            (Maps to C global: rDeltaKerGridSize)
+
+        delta_regularization: Laplacian smoothness penalty weight for delta basis.
+            Penalizes kernel curvature to reduce noise amplification.
+            0 = no regularization (noisy kernel), >0.01 = strong smoothing.
+            Trade-off: higher values → smoother kernel, potentially worse fit.
+            Only used if basis_type="delta". Typical: 1e-3.
+            (Maps to C global: rDeltaRegularization)
+
         use_tps: Enable thin plate spline (TPS) spatial variation instead of polynomial.
             TPS provides smoother kernel variation across the image, ideal for single-region
             full-frame processing (n_regions_x=1, n_regions_y=1). Typical: False.
+            Compatible with both Gaussian and delta basis types.
             (Maps to C global: useTPS)
 
         tps_smoothing: TPS regularization parameter (0 = exact fit, >0 = smooth).
@@ -87,6 +107,9 @@ class KernelConfig(BaseModel):
             (Maps to C global: tpsSmoothing)
     """
 
+    basis_type: str = Field(default="gaussian")
+    delta_ker_grid_size: float = Field(default=2.0, gt=0)
+    delta_regularization: float = Field(default=1e-3, ge=0)
     kernel_half_width: int = Field(default=15, gt=0)
     kernel_order: int = Field(default=2, ge=0)
     bg_order: int = Field(default=1, ge=0)
@@ -102,6 +125,14 @@ class KernelConfig(BaseModel):
     def validate_ks_stamp_size(cls, v: int, info) -> int:
         """hw_ks_stamp is independent of kernel_half_width; just ensure positive."""
         return v
+
+    @field_validator("basis_type")
+    @classmethod
+    def validate_basis_type(cls, v: str) -> str:
+        """basis_type must be 'gaussian' or 'delta'."""
+        if v.lower() not in ("gaussian", "delta"):
+            raise ValueError(f"basis_type must be 'gaussian' or 'delta', got '{v}'")
+        return v.lower()
 
 
 class RegionLayout(BaseModel):
@@ -341,6 +372,10 @@ def fit_kernel(
         noise = np.ascontiguousarray(noise)
 
     # Set global configuration
+    # Convert basis type string to numeric constant (0=gaussian, 1=delta)
+    basis_type_map = {"gaussian": 0, "delta": 1}
+    basis_type_code = basis_type_map[config.basis_type]
+
     config_dict = {
         "hwKernel": config.kernel_half_width,
         "kerOrder": config.kernel_order,
@@ -366,6 +401,9 @@ def fit_kernel(
         "iPedestal": thresholds.science_pedestal,
         "verbose": verbose,
         "nThread": n_thread,
+        "iBasisType": basis_type_code,
+        "rDeltaKerGridSize": config.delta_ker_grid_size,
+        "rDeltaRegularization": config.delta_regularization,
         "useTPS": 1 if config.use_tps else 0,
         "tpsSmoothing": config.tps_smoothing,
     }
@@ -517,10 +555,17 @@ def spatial_convolve(
     if not image.flags["C_CONTIGUOUS"]:
         image = np.ascontiguousarray(image)
 
+    # Convert basis type string to numeric constant
+    basis_type_map = {"gaussian": 0, "delta": 1}
+    basis_type_code = basis_type_map[config.basis_type]
+
     config_dict = {
         "hwKernel": config.kernel_half_width,
         "kerOrder": config.kernel_order,
         "bgOrder": config.bg_order,
+        "iBasisType": basis_type_code,
+        "rDeltaKerGridSize": config.delta_ker_grid_size,
+        "rDeltaRegularization": config.delta_regularization,
         "useTPS": 1 if config.use_tps else 0,
         "tpsSmoothing": config.tps_smoothing,
         "verbose": verbose,
