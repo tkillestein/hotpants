@@ -81,8 +81,11 @@ EXTERN int nKSStamps, hwKSStamp;
 EXTERN char* sstampFile;
 EXTERN int findSSC;
 EXTERN int kerOrder, bgOrder;
-EXTERN int useTPS;           /* 1 = use TPS, 0 = polynomial */
-EXTERN double tpsSmoothing;  /* TPS regularization parameter */
+EXTERN int iBasisType;              /* Kernel basis type (BASIS_TYPE_*) */
+EXTERN double rDeltaKerGridSize;    /* Delta basis grid spacing (pixels) */
+EXTERN double rDeltaRegularization; /* Delta basis Laplacian penalty weight */
+EXTERN int useTPS;                  /* 1 = use TPS, 0 = polynomial */
+EXTERN double tpsSmoothing;         /* TPS regularization parameter */
 EXTERN float statSig, kerSigReject, kerFracMask;
 EXTERN char *forceConvolve, *photNormalize, *figMerit;
 EXTERN int sameConv, rescaleOK;

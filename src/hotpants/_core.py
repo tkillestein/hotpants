@@ -155,7 +155,8 @@ def global_state(config_dict: dict[str, int | float]) -> Generator:
         "nCompBG",
         "nCompTotal",
         "nS",
-        "useTPS",  # TPS spatial variation flag (0 = polynomial, 1 = TPS)
+        "useTPS",              # TPS spatial variation flag (0 = polynomial, 1 = TPS)
+        "iBasisType",          # Kernel basis type (0 = gaussian, 1 = delta)
     }
     float_vars = {
         "kerFitThresh",
@@ -170,7 +171,9 @@ def global_state(config_dict: dict[str, int | float]) -> Generator:
         "iRdnoise",
         "tPedestal",
         "iPedestal",
-        "tpsSmoothing",  # TPS regularization parameter
+        "tpsSmoothing",        # TPS regularization parameter
+        "rDeltaKerGridSize",   # Delta basis grid spacing (pixels)
+        "rDeltaRegularization", # Delta basis Laplacian penalty weight
     }
 
     # Save original values

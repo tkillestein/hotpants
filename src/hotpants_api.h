@@ -413,4 +413,73 @@ int get_fftw3_threading_available(void);
  */
 int adjust_blas_threads_for_region_layout(int nRegX, int nRegY);
 
+/* =====================================================================
+ * Kernel Basis Type Configuration
+ * =====================================================================
+ * These functions manage the kernel basis type selection (Gaussian vs. Delta).
+ * Call before fitKernel() or spatial_convolve() to switch basis implementations.
+ */
+
+/*
+ * Set the kernel basis type.
+ *
+ * Args:
+ *   basis_type: BASIS_TYPE_GAUSSIAN (0) or BASIS_TYPE_DELTA (1)
+ *
+ * Returns:
+ *   0 on success, -1 if basis_type is invalid
+ */
+int set_basis_type(int basis_type);
+
+/*
+ * Get the current kernel basis type.
+ *
+ * Returns:
+ *   Current basis type (BASIS_TYPE_GAUSSIAN or BASIS_TYPE_DELTA)
+ */
+int get_basis_type(void);
+
+/*
+ * Set delta basis grid spacing (pixels).
+ *
+ * Only used when basis_type == BASIS_TYPE_DELTA.
+ *
+ * Args:
+ *   grid_size: Spacing between delta basis function centers (> 0)
+ *
+ * Returns:
+ *   0 on success, -1 if grid_size <= 0
+ */
+int set_delta_ker_grid_size(double grid_size);
+
+/*
+ * Get delta basis grid spacing.
+ *
+ * Returns:
+ *   Grid spacing in pixels
+ */
+double get_delta_ker_grid_size(void);
+
+/*
+ * Set delta basis Laplacian regularization weight.
+ *
+ * Only used when basis_type == BASIS_TYPE_DELTA.
+ * Higher values enforce smoother kernels; 0 = no regularization.
+ *
+ * Args:
+ *   regularization_weight: Regularization strength (>= 0)
+ *
+ * Returns:
+ *   0 on success, -1 if regularization_weight < 0
+ */
+int set_delta_regularization(double regularization_weight);
+
+/*
+ * Get delta basis Laplacian regularization weight.
+ *
+ * Returns:
+ *   Current regularization weight
+ */
+double get_delta_regularization(void);
+
 #endif /* HOTPANTS_API_H */

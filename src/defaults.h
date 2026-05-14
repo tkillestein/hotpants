@@ -58,6 +58,18 @@
 #define D_KSIGREJECT 2. /* reject stamp at this sigma from kernel fit */
 
 /* =====================================================================
+   KERNEL BASIS TYPES (dispatched at runtime)
+   ===================================================================== */
+#define BASIS_TYPE_GAUSSIAN 0 /* Multi-Gaussian basis (default) */
+#define BASIS_TYPE_DELTA 1    /* Delta function basis (Bramich 2008) */
+#define D_BASIS_TYPE BASIS_TYPE_GAUSSIAN
+
+#define D_DELTA_KER_GRID_SIZE \
+  2.0 /* Grid spacing in pixels for delta basis functions */
+#define D_DELTA_REGULARIZATION \
+  1e-3 /* Laplacian smoothness penalty for delta basis */
+
+/* =====================================================================
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION
    ===================================================================== */
 #define D_USE_TPS 0       /* 0 = polynomial, 1 = thin plate spline */

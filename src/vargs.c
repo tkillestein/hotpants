@@ -106,6 +106,10 @@ void vargs(int argc, char* argv[]) {
 
   nThread = D_NTHREAD;
 
+  iBasisType = D_BASIS_TYPE;
+  rDeltaKerGridSize = D_DELTA_KER_GRID_SIZE;
+  rDeltaRegularization = D_DELTA_REGULARIZATION;
+
   useTPS = D_USE_TPS;
   tpsSmoothing = D_TPS_SMOOTHING;
 
@@ -246,6 +250,16 @@ void vargs(int argc, char* argv[]) {
       "   [-bgo bgorder]    : spatial order of background variation within "
       "region (%d)\n",
       bgOrder);
+  HELP_APPEND(
+      "   [-basisType type] : kernel basis (gaussian=%d, delta=%d) (default=%d)\n",
+      BASIS_TYPE_GAUSSIAN, BASIS_TYPE_DELTA, D_BASIS_TYPE);
+  HELP_APPEND(
+      "   [-deltaKerGridSize sz]: grid spacing in pixels for delta basis (%.1f)\n",
+      D_DELTA_KER_GRID_SIZE);
+  HELP_APPEND(
+      "   [-deltaRegularization val]: Laplacian smoothness penalty for delta basis "
+      "(%.1e)\n",
+      D_DELTA_REGULARIZATION);
   HELP_APPEND(
       "   [-useTPS flag]    : use thin plate splines for kernel variation (%d)\n",
       useTPS);
@@ -537,6 +551,34 @@ void vargs(int argc, char* argv[]) {
         }
       } else if (strcasecmp(argv[iarg] + 1, "nt") == 0) {
         sscanf(argv[++iarg], "%d", &nThread);
+      } else if (strcasecmp(argv[iarg] + 1, "basisType") == 0) {
+        int basisTypeVal;
+        sscanf(argv[++iarg], "%d", &basisTypeVal);
+        if (basisTypeVal == BASIS_TYPE_GAUSSIAN ||
+            basisTypeVal == BASIS_TYPE_DELTA) {
+          iBasisType = basisTypeVal;
+        } else {
+          fprintf(stderr,
+                  "ERROR: basisType must be %d (gaussian) or %d (delta), got "
+                  "%d\n",
+                  BASIS_TYPE_GAUSSIAN, BASIS_TYPE_DELTA, basisTypeVal);
+          exit(1);
+        }
+      } else if (strcasecmp(argv[iarg] + 1, "deltaKerGridSize") == 0) {
+        sscanf(argv[++iarg], "%lf", &rDeltaKerGridSize);
+        if (rDeltaKerGridSize <= 0.0) {
+          fprintf(stderr, "ERROR: deltaKerGridSize must be positive, got %f\n",
+                  rDeltaKerGridSize);
+          exit(1);
+        }
+      } else if (strcasecmp(argv[iarg] + 1, "deltaRegularization") == 0) {
+        sscanf(argv[++iarg], "%lf", &rDeltaRegularization);
+        if (rDeltaRegularization < 0.0) {
+          fprintf(stderr,
+                  "ERROR: deltaRegularization must be non-negative, got %f\n",
+                  rDeltaRegularization);
+          exit(1);
+        }
       } else if (strcasecmp(argv[iarg] + 1, "useTPS") == 0) {
         sscanf(argv[++iarg], "%d", &useTPS);
       } else if (strcasecmp(argv[iarg] + 1, "tpsSmoothing") == 0) {
