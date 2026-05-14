@@ -51,6 +51,9 @@ message(STATUS "FFTW3 found: ${FFTW3_LIBRARIES}")
 add_library(hotpants SHARED
     src/globals.c
     src/allocate.c
+    src/basis.c
+    src/basis_gaussian.c
+    src/basis_delta.c
     src/alard.c
     src/functions.c
     src/hotpants_wrapper.c

@@ -1,3 +1,6 @@
+#ifndef HOTPANTS_GLOBALS_H
+#define HOTPANTS_GLOBALS_H
+
 typedef struct {
   int x0, y0;       /* origin of stamp in region coords*/
   int x, y;         /* center of stamp in region coords*/
@@ -82,7 +85,6 @@ EXTERN char* sstampFile;
 EXTERN int findSSC;
 EXTERN int kerOrder, bgOrder;
 EXTERN int iBasisType;              /* Kernel basis type (BASIS_TYPE_*) */
-EXTERN double rDeltaKerGridSize;    /* Delta basis grid spacing (pixels) */
 EXTERN double rDeltaRegularization; /* Delta basis Laplacian penalty weight */
 EXTERN int useTPS;                  /* 1 = use TPS, 0 = polynomial */
 EXTERN double tpsSmoothing;         /* TPS regularization parameter */
@@ -135,3 +137,5 @@ EXTERN char xyfilename[1000];
 EXTERN int savexyflag;
 EXTERN float *xcmp, *ycmp;
 EXTERN int Ncmp;
+
+#endif  /* HOTPANTS_GLOBALS_H */

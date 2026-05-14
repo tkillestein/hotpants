@@ -64,10 +64,8 @@
 #define BASIS_TYPE_DELTA 1    /* Delta function basis (Bramich 2008) */
 #define D_BASIS_TYPE BASIS_TYPE_GAUSSIAN
 
-#define D_DELTA_KER_GRID_SIZE \
-  2.0 /* Grid spacing in pixels for delta basis functions */
 #define D_DELTA_REGULARIZATION \
-  1e-3 /* Laplacian smoothness penalty for delta basis */
+  0.0 /* Laplacian smoothness penalty for delta basis (default: no smoothing) */
 
 /* =====================================================================
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION

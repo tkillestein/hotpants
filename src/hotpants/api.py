@@ -76,22 +76,16 @@ class KernelConfig(BaseModel):
             (Maps to C global: hwKSStamp)
 
         basis_type: Kernel basis function type. Options: "gaussian" (multi-Gaussian, default)
-            or "delta" (delta function RBF basis, Bramich 2008). The delta basis enables
-            more flexible kernel representation with direct RBF interpolation instead of
-            polynomial-weighted Gaussian sums. Typical: "gaussian".
+            or "delta" (pixel-level delta function basis, Bramich 2008). The delta basis
+            provides one basis function per kernel pixel, enabling direct kernel fitting
+            without spatial interpolation. Typical: "gaussian".
             (Maps to C global: iBasisType; 0 = gaussian, 1 = delta)
 
-        delta_ker_grid_size: Grid spacing for delta basis functions (pixels).
-            Controls density of RBF basis points within kernel footprint.
-            Smaller values (1.0-2.0) give more basis functions but higher condition number.
-            Only used if basis_type="delta". Typical: 2.0.
-            (Maps to C global: rDeltaKerGridSize)
-
-        delta_regularization: Laplacian smoothness penalty weight for delta basis.
+        delta_regularization: Laplacian smoothness penalty weight for delta basis (optional).
             Penalizes kernel curvature to reduce noise amplification.
-            0 = no regularization (noisy kernel), >0.01 = strong smoothing.
+            0 = no regularization (default, independent pixels), >0 = smooth kernel.
             Trade-off: higher values → smoother kernel, potentially worse fit.
-            Only used if basis_type="delta". Typical: 1e-3.
+            Only used if basis_type="delta". Typical: 0.0 (no smoothing).
             (Maps to C global: rDeltaRegularization)
 
         use_tps: Enable thin plate spline (TPS) spatial variation instead of polynomial.
@@ -108,8 +102,7 @@ class KernelConfig(BaseModel):
     """
 
     basis_type: str = Field(default="gaussian")
-    delta_ker_grid_size: float = Field(default=2.0, gt=0)
-    delta_regularization: float = Field(default=1e-3, ge=0)
+    delta_regularization: float = Field(default=0.0, ge=0)
     kernel_half_width: int = Field(default=15, gt=0)
     kernel_order: int = Field(default=2, ge=0)
     bg_order: int = Field(default=1, ge=0)
@@ -402,7 +395,6 @@ def fit_kernel(
         "verbose": verbose,
         "nThread": n_thread,
         "iBasisType": basis_type_code,
-        "rDeltaKerGridSize": config.delta_ker_grid_size,
         "rDeltaRegularization": config.delta_regularization,
         "useTPS": 1 if config.use_tps else 0,
         "tpsSmoothing": config.tps_smoothing,
@@ -564,7 +556,6 @@ def spatial_convolve(
         "kerOrder": config.kernel_order,
         "bgOrder": config.bg_order,
         "iBasisType": basis_type_code,
-        "rDeltaKerGridSize": config.delta_ker_grid_size,
         "rDeltaRegularization": config.delta_regularization,
         "useTPS": 1 if config.use_tps else 0,
         "tpsSmoothing": config.tps_smoothing,

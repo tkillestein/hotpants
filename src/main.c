@@ -1129,8 +1129,11 @@ int main(int argc, char* argv[]) {
       and if -inm, add to mRData
       */
 
-      /* initialize kernel weight mask: kernel_vec */
-      getKernelVec();
+      /* initialize kernel basis based on iBasisType */
+      if (initKernelBasis() < 0) {
+        LOG_ERROR("Failed to initialize kernel basis");
+        exit(1);
+      }
 
       LOG_PROGRESS("Filling template sub-stamps");
       /* fit the kernel going each way unless told otherwise */
@@ -1163,9 +1166,11 @@ int main(int argc, char* argv[]) {
 
     } /* end of if not kernelImIn */
     else {
-      /* initialize kernel weight mask: kernel_vec */
-      status = 0;
-      getKernelVec();
+      /* initialize kernel basis based on iBasisType */
+      if (initKernelBasis() < 0) {
+        LOG_ERROR("Failed to initialize kernel basis");
+        exit(1);
+      }
     }
 
     /* decide which way to go */
