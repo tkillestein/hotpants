@@ -1053,18 +1053,24 @@ int fillStamp(stamp_struct* stamp, float* imConv, float* imRef) {
       }
     }
   } else if (iBasisType == BASIS_TYPE_DELTA) {
-    /* Delta basis: pixel-level basis functions (one per kernel pixel)
-       Use the same approach as Gaussian: iterate over basis functions and
-       accumulate convolved stamp data into stamp->vectors[] */
-    for (int basisIdx = 0; basisIdx < nCompKer; basisIdx++) {
-      /* xy_conv_stamp_delta performs delta convolution on the current substamp
-         and stores result in stamp->vectors[basisIdx] */
-      if (xy_conv_stamp_delta(stamp, imConv, basisIdx) < 0) {
-        LOG_ERROR("Failed to convolve stamp with delta basis function %d", basisIdx);
-        return 1;
-      }
-      ++vectorComponentIdx;
-    }
+    /* Delta basis: NOT YET IMPLEMENTED for full kernel fitting.
+
+       The delta basis requires a fundamentally different matrix building approach
+       because there are fwKernel² basis functions (one per kernel pixel), which
+       is far more than the stamp->vectors array can hold.
+
+       Current limitation: Delta basis can be used with pre-fitted kernels or
+       for evaluation, but kernel fitting is not yet supported.
+
+       Future work: Implement direct normal equation accumulation for delta basis
+       without relying on pre-computed vector storage.
+
+       For now, return an error to indicate this is not yet supported.
+    */
+    LOG_ERROR("Delta basis kernel fitting not yet implemented; "
+              "stamp->vectors allocation insufficient for %d basis functions. "
+              "Use Gaussian basis or provide pre-fitted delta kernel.", nCompKer);
+    return 1;
   } else {
     LOG_ERROR("Unknown basis type: %d", iBasisType);
     return 1;
