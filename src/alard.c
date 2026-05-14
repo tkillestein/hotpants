@@ -44,7 +44,8 @@ void cleanup_delta_basis_grid(void);
 double eval_delta_basis(int basis_idx, double dx, double dy);
 double make_kernel_delta(int xi, int yi, double* kernelSol);
 int xy_conv_stamp_delta(stamp_struct* stamp, float* image, int basisIdx);
-int build_matrix_delta(int substampIdx, double* kernelSol, int* iMatrixSize);
+void build_matrix_delta(stamp_struct* stamps, int nS, double** matrix);
+void build_scprod_delta(stamp_struct* stamps, int nS, float* image, double* kernelSol);
 
 /* =====================================================================
    DELTA FUNCTION KERNEL BASIS (Bramich 2008)
