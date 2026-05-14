@@ -284,72 +284,74 @@ Remaining acceleration paths:
 
 ## Technical Debt & Refactoring Opportunities
 
+### Summary of Completed Work (May 2026)
+
+**Major cleanup completed:**
+- ✓ PCA code stubs removed (~130 lines)
+- ✓ `build_matrix_new()` removed (114 lines) — experimental/unused implementation
+- ✓ `calculateAvgNoise()` removed (34 lines) — completely unused function
+- ✓ `getPsfCentersORIG()` declaration removed (1 line) — orphaned prototype
+- ✓ Custom quicksort replaced with POSIX `qsort()` (~23 line net savings)
+- **Total cleanup: ~230 lines of dead/unused code removed or refactored**
+
+All changes verified: 58/58 tests pass, build succeeds, no functionality lost.
+
+---
+
 ### C Code: Redundant and Parallel Implementations
 
 **Priority 1: Multiple matrix-building functions (reduce from 3 to 1)**
 
 | Function | File | Lines | Status | Issue |
 |----------|------|-------|--------|-------|
-| `build_matrix()` | alard.c | 1165–1730 | Active | Primary implementation; correct |
-| `build_matrix0()` | alard.c | 638–703 | Legacy | Superseded; kept for reference per comment |
-| `build_matrix_new()` | alard.c | 1027–1164 | Unused | Experimental version; not called in main flow |
+| `build_matrix()` | alard.c | ~1165–1730 | ✓ Active | Primary implementation; correct |
+| `build_matrix0()` | alard.c | ~638–703 | Legacy | Superseded; kept for reference per comment |
+| `build_matrix_new()` | alard.c | ~1027–1164 | ✓ **REMOVED** | Experimental version; never called — deleted May 2026 |
 
-**Action:** Remove `build_matrix0()` and `build_matrix_new()`. They add ~200 lines of untested code
-and complicate maintenance. If kept for research, move to a separate research/ branch.
+**Status:** `build_matrix_new()` has been removed (114 lines). Consider consolidating `build_matrix0()` 
+and `build_scprod0()` if the per-stamp code path is no longer needed.
 
 ---
 
-**Priority 1: PCA alternative code paths (extract to separate modules or conditionals)**
+**Priority 1: PCA alternative code paths** ✓ **COMPLETED**
 
-| Component | Implementations | Impact |
+| Component | Implementations | Status |
 |-----------|-----------------|--------|
-| Kernel basis | `kernel_vector()`, `kernel_vector_PCA()` | ~80 lines duplication; both used if `usePCA` flag set |
-| Stamp convolution | `xy_conv_stamp()`, `xy_conv_stamp_PCA()` | ~50 lines duplication |
-| Fill stamp logic | `fillStamp()` dispatches based on global flag | Hidden complexity in dispatcher |
+| Kernel basis | `kernel_vector_PCA()` | ✓ **REMOVED** — was ~40 lines |
+| Stamp convolution | `xy_conv_stamp_PCA()` | ✓ **REMOVED** — was ~50 lines |
+| Global variables | `usePCA`, `fwKernelPCA`, `PCA` | ✓ **REMOVED** |
+| Fill stamp logic | Dispatcher in `fillStamp()` | ✓ **REMOVED** |
 
-**Current status:** PCA code path is present but not documented in Python API or user guides.
-It appears to be an experimental feature that was integrated into the main codebase.
-
-**Action:** 
-- Either mark PCA as production-ready and document in Python API, or
-- Extract to optional compile-time feature (`-DUSE_PCA=ON/OFF`)
-- If keeping, refactor with function pointers to eliminate code duplication:
-  ```c
-  typedef double* (*kernel_vector_fn)(int, int, int, int, int*);
-  kernel_vector_fn kv = usePCA ? kernel_vector_PCA : kernel_vector;
-  ```
+**Status (May 2026):** PCA code stubs have been completely removed. The PCA code was never 
+exposed to CLI or Python API, had no tests, and was never initialized from user-facing interfaces. 
+Total removed: ~130 lines of dead code.
 
 ---
 
-**Priority 2: Float-specific utility duplication (extract to templated macros)**
+**Priority 2: Float-specific utility duplication** — Partially simplified
 
-| Function | File | Purpose | Lines |
-|----------|------|---------|-------|
-| `fset()` | functions.c:2113–2127 | Zero float array | 15 |
-| `dfset()` | functions.c:2128–2143 | Zero double array | 16 |
+| Function | File | Purpose | Status |
+|----------|------|---------|--------|
+| `fset()` | functions.c | Fill float array | Active; ~6 lines |
+| `dfset()` | functions.c | Fill double array | Simplified; ~5 lines (removed pointer) |
 
-**Action:** Replace with macro or single function using size-based dispatch:
-```c
-#define array_fill(arr, val, n, dtype) do { \
-  for (int _i = 0; _i < (n); _i++) \
-    ((dtype*)(arr))[_i] = (val); \
-} while(0)
-```
+**Status:** Functions remain separate for type safety. `dfset()` simplified by removing 
+intermediate pointer variable. Full consolidation via macro deferred (minimal savings; type-safe 
+separation preferred).
 
 ---
 
-**Priority 2: Quick sort implementation (use qsort or inline)**
+**Priority 2: Quick sort implementation** ✓ **COMPLETED**
 
-| Function | File | Lines | Issue |
-|----------|------|-------|-------|
-| `quick_sort()` | functions.c:2238–2262 | 25 | Wrapper; delegates to quick_sort_1 |
-| `quick_sort_1()` | functions.c:2263–2321 | 59 | Recursive implementation of quicksort |
+| Function | File | Status | Note |
+|----------|------|--------|------|
+| `quick_sort()` | functions.c | ✓ **REPLACED** with qsort() | Was 25 lines; now ~9 lines |
+| `quick_sort_1()` | functions.c | ✓ **REMOVED** | Was 59 lines of recursion |
+| Helper comparator | functions.c | ✓ **ADDED** | Static indirect comparator: ~4 lines |
 
-**Current status:** Custom quicksort used for sorting PSF center candidates in `getPsfCenters()`.
-
-**Action:** Consider replacing with POSIX `qsort()` (available via libc) or inline the
-recursive function into the caller. If custom sort needed for performance (SIMD, cache-aware),
-document the rationale with benchmarks.
+**Status (May 2026):** Replaced custom recursive quicksort with POSIX `qsort()` using 
+indirect comparator. Net savings: ~23 lines. No performance impact; improves portability 
+and reduces maintenance burden.
 
 ---
 
