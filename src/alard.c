@@ -37,8 +37,7 @@ int init_delta_basis_grid(void);
 void cleanup_delta_basis_grid(void);
 double eval_delta_basis(int basis_idx, double dx, double dy);
 double make_kernel_delta(int xi, int yi, double* kernelSol);
-int xy_conv_stamp_delta(double* stamp, int mStampX, int mStampY, int basisIdx,
-                        double* pixFitted);
+int xy_conv_stamp_delta(stamp_struct* stamp, float* image, int basisIdx);
 int build_matrix_delta(int substampIdx, double* kernelSol, int* iMatrixSize);
 
 /* =====================================================================
@@ -1112,26 +1111,18 @@ int fillStamp(stamp_struct* stamp, float* imConv, float* imRef) {
       }
     }
   } else if (iBasisType == BASIS_TYPE_DELTA) {
-    /* Delta basis: pixel-level basis functions (one per kernel pixel) */
-    double* scratch = (double*)malloc(fwKSStamp * fwKSStamp * sizeof(double));
-    if (!scratch) {
-      LOG_ERROR("Failed to allocate scratch buffer for delta basis convolution");
-      return 1;
-    }
-
+    /* Delta basis: pixel-level basis functions (one per kernel pixel)
+       Use the same approach as Gaussian: iterate over basis functions and
+       accumulate convolved stamp data into stamp->vectors[] */
     for (int basisIdx = 0; basisIdx < nCompKer; basisIdx++) {
-      if (active_basis->convolve_stamp((double*)imConv, rPixX, rPixY, basisIdx, scratch) < 0) {
+      /* xy_conv_stamp_delta performs delta convolution on the current substamp
+         and stores result in stamp->vectors[basisIdx] */
+      if (xy_conv_stamp_delta(stamp, imConv, basisIdx) < 0) {
         LOG_ERROR("Failed to convolve stamp with delta basis function %d", basisIdx);
-        free(scratch);
         return 1;
       }
-
-      /* Copy scratch buffer to stamp->vectors[basisIdx] */
-      double* vec = stamp->vectors[basisIdx];
-      memcpy(vec, scratch, fwKSStamp * fwKSStamp * sizeof(double));
-      vectorComponentIdx++;
+      ++vectorComponentIdx;
     }
-    free(scratch);
   } else {
     LOG_ERROR("Unknown basis type: %d", iBasisType);
     return 1;
@@ -1349,6 +1340,63 @@ void xy_conv_stamp(stamp_struct* stamp, float* image, int n, int ren) {
   }
 
   return;
+}
+
+/**
+ * @brief Delta basis stamp convolution for a single basis function.
+ *
+ * @details For delta basis function at kernel pixel (kx, ky), extracts the
+ *          shifted stamp pixels and stores in stamp->vectors[basisIdx].
+ *
+ *          The delta basis convolution is simply extracting the current substamp
+ *          shifted by the kernel offset, zero-padded outside bounds.
+ *
+ * @param stamp Stamp struct containing position and vector storage
+ * @param image Full image to extract pixels from
+ * @param basisIdx Kernel pixel index (0 to nCompKer-1)
+ * @return 0 on success, -1 on error
+ */
+int xy_conv_stamp_delta(stamp_struct* stamp, float* image, int basisIdx) {
+  int stampColIdx, stampRowIdx, kernel_x, kernel_y, imgColIdx, imgRowIdx, xij;
+  double *imc;
+  int stampCenterX, stampCenterY;
+
+  if (basisIdx < 0 || basisIdx >= nCompKer) {
+    LOG_ERROR("xy_conv_stamp_delta: invalid basisIdx %d (nCompKer=%d)", basisIdx, nCompKer);
+    return -1;
+  }
+
+  /* Get current substamp position */
+  stampCenterX = stamp->xss[stamp->sscnt];
+  stampCenterY = stamp->yss[stamp->sscnt];
+
+  /* Map basis index to kernel pixel offset (kx, ky) */
+  kernel_x = (basisIdx % fwKernel) - hwKernel;
+  kernel_y = (basisIdx / fwKernel) - hwKernel;
+
+  /* Get output vector for this basis function */
+  imc = stamp->vectors[basisIdx];
+
+  /* Extract stamp shifted by kernel offset, zero-padded outside bounds */
+  for (stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp; stampRowIdx++) {
+    for (stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp; stampColIdx++) {
+      xij = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
+
+      /* Compute image coordinates with kernel offset */
+      imgColIdx = stampCenterX + stampColIdx + kernel_x;
+      imgRowIdx = stampCenterY + stampRowIdx + kernel_y;
+
+      /* Extract pixel value, zero-pad if outside image bounds */
+      if (imgColIdx >= 0 && imgColIdx < (int)rPixX &&
+          imgRowIdx >= 0 && imgRowIdx < (int)rPixY) {
+        imc[xij] = (double)image[imgColIdx + rPixX * imgRowIdx];
+      } else {
+        imc[xij] = 0.0;
+      }
+    }
+  }
+
+  return 0;
 }
 
 
@@ -3193,15 +3241,15 @@ cleanup_fft:
  */
 void spatial_convolve(float* image, float** variance, int xSize, int ySize,
                       double* kernelSol, float* cRdata, int* cMask) {
-  if (iBasisType == BASIS_TYPE_GAUSSIAN) {
-    /* Gaussian basis: standard FFT convolution with polynomial-weighted Gaussians */
-    spatial_convolve_fft(image, variance, xSize, ySize, kernelSol, cRdata, cMask);
-  } else if (iBasisType == BASIS_TYPE_DELTA) {
-    /* Delta basis: FFT convolution with pixel-level delta functions */
-    /* Note: spatial_convolve_delta() ultimately calls spatial_convolve_fft() after
-       assembling the kernel from delta coefficients */
-    LOG_ERROR("Delta basis convolution not yet fully integrated with variance/mask handling");
-    /* For now, fall back to Gaussian path to avoid crashes */
+  /* Both Gaussian and Delta basis use FFT convolution.
+     The difference is in kernel evaluation:
+     - Gaussian: kernel_coeffs[] are weighted combinations of kernel_vec[]
+     - Delta: kernel[] is directly assembled from kernelSol (pixel values)
+
+     Both route through make_kernel_dispatch() which calls active_basis->eval_kernel()
+     to assemble the kernel at each image position. FFT convolution is identical. */
+
+  if (iBasisType == BASIS_TYPE_GAUSSIAN || iBasisType == BASIS_TYPE_DELTA) {
     spatial_convolve_fft(image, variance, xSize, ySize, kernelSol, cRdata, cMask);
   } else {
     LOG_ERROR("Unknown basis type: %d", iBasisType);
