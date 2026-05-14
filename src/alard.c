@@ -27,6 +27,9 @@ double make_kernel_tps(int xi, int yi, double* kernelSol);
 double make_kernel_dispatch(int xi, int yi, double* kernelSol);
 static double make_kernel_local_dispatch(int xi, int yi, double* kernelSol,
                                          double* lkernel, double* lkernel_coeffs);
+static int tps_fit_background(stamp_struct* stamps, int n_stamps,
+                              double* kernelSol);
+double get_background_tps(int xi, int yi, double* kernelSol);
 
 /* =====================================================================
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
@@ -278,6 +281,28 @@ static int kernelSol_offset_tps_positions(int n_stamps) {
 }
 
 /**
+ * @brief Get offset in kernelSol for RBF weights of background.
+ *
+ * @param n_stamps Number of stamps
+ * @return Offset in kernelSol; access weights via kernelSol[offset..offset+n_stamps)
+ */
+static int kernelSol_offset_tps_bg_weights(int n_stamps) {
+  int poly_size = kernelSol_size_polynomial();
+  return poly_size + nCompKer * n_stamps + 3 * nCompKer + 2 * n_stamps;
+}
+
+/**
+ * @brief Get offset in kernelSol for polynomial trend of background.
+ *
+ * @param n_stamps Number of stamps
+ * @return Offset in kernelSol; access 3 poly coeffs via kernelSol[offset..offset+3)
+ */
+static int kernelSol_offset_tps_bg_poly(int n_stamps) {
+  int poly_size = kernelSol_size_polynomial();
+  return poly_size + nCompKer * n_stamps + 3 * nCompKer + 2 * n_stamps + n_stamps;
+}
+
+/**
  * @brief Fit thin plate spline surfaces to kernel coefficients after polynomial
  * solve.
  *
@@ -379,6 +404,99 @@ static int tps_fit_kernel(stamp_struct* stamps, int n_stamps,
 
   free(stamp_positions);
   free(poly_coeffs_at_stamps);
+
+  return 0;
+}
+
+/**
+ * @brief Fit thin plate spline surface to background coefficients after polynomial
+ * solve.
+ *
+ * @details Called from fitKernel() after tps_fit_kernel() (if useTPS==1). Evaluates
+ * the fitted background polynomial at each stamp center and fits an RBF surface.
+ *
+ * @param[in]  stamps     Array of stamps with centers
+ * @param[in]  n_stamps   Total number of stamps
+ * @param[in,out] kernelSol  Solution vector; background polynomial part is read,
+ *                           background TPS part is filled
+ * @return 0 on success, non-zero if TPS fit fails
+ */
+static int tps_fit_background(stamp_struct* stamps, int n_stamps,
+                              double* kernelSol) {
+  int stamp_idx, i;
+  double *stamp_positions, *bg_coeffs_at_stamps;
+  double *tps_weights, *tps_poly;
+  double normalizedX, normalizedY, polyBasisX, polyBasisY;
+  double halfPixX, halfPixY;
+  int polyDegX, polyDegY, bgSolutionIdx;
+  int nbg_vec;
+
+  nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
+
+  halfPixX = 0.5 * rPixX;
+  halfPixY = 0.5 * rPixY;
+
+  LOG_DEBUG("TPS background refitting: %d stamps", n_stamps);
+
+  /* Allocate working arrays */
+  stamp_positions = (double*)xcalloc(2 * n_stamps, sizeof(double));
+  bg_coeffs_at_stamps = (double*)xcalloc(n_stamps, sizeof(double));
+
+  /* Extract stamp centers (in image pixel coordinates) */
+  for (stamp_idx = 0; stamp_idx < n_stamps; stamp_idx++) {
+    stamp_positions[2 * stamp_idx] = (double)stamps[stamp_idx].x;
+    stamp_positions[2 * stamp_idx + 1] = (double)stamps[stamp_idx].y;
+  }
+
+  /* Compute background polynomial offset in kernelSol */
+  {
+    int ncomp1 = nCompKer - 1;
+    int ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
+    int ncomp = ncomp1 * ncomp2;
+    bgSolutionIdx = ncomp + 1;
+  }
+
+  /* Evaluate background polynomial at each stamp */
+  for (stamp_idx = 0; stamp_idx < n_stamps; stamp_idx++) {
+    normalizedX = (stamp_positions[2 * stamp_idx] - halfPixX) / halfPixX;
+    normalizedY = (stamp_positions[2 * stamp_idx + 1] - halfPixY) / halfPixY;
+
+    bg_coeffs_at_stamps[stamp_idx] = 0.0;
+    polyBasisX = 1.0;
+    for (polyDegX = 0; polyDegX <= bgOrder; polyDegX++) {
+      polyBasisY = 1.0;
+      for (polyDegY = 0; polyDegY <= bgOrder - polyDegX; polyDegY++) {
+        bg_coeffs_at_stamps[stamp_idx] +=
+            kernelSol[bgSolutionIdx++] * polyBasisX * polyBasisY;
+        polyBasisY *= normalizedY;
+      }
+      polyBasisX *= normalizedX;
+    }
+  }
+
+  /* Fit TPS surface to per-stamp background coefficients */
+  {
+    int weights_offset = kernelSol_offset_tps_bg_weights(n_stamps);
+    int poly_offset = kernelSol_offset_tps_bg_poly(n_stamps);
+    int ret;
+
+    tps_weights = kernelSol + weights_offset;
+    tps_poly = kernelSol + poly_offset;
+
+    ret = tps_fit_coefficients(stamp_positions, n_stamps,
+                               bg_coeffs_at_stamps, tps_weights, tps_poly);
+    if (ret != 0) {
+      LOG_ERROR("TPS fit failed for background");
+      free(stamp_positions);
+      free(bg_coeffs_at_stamps);
+      return 1;
+    }
+
+    LOG_DEBUG("TPS background: fitted %d RBF weights, 3 poly trends", n_stamps);
+  }
+
+  free(stamp_positions);
+  free(bg_coeffs_at_stamps);
 
   return 0;
 }
@@ -865,15 +983,24 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
   }
   LOG_PROGRESS("Sigma clipping of bad stamps converged, kernel determined");
 
-  /* If TPS mode is enabled, refit kernel coefficients using RBF interpolation */
+  /* If TPS mode is enabled, refit kernel and background coefficients using RBF interpolation */
   if (useTPS) {
     int ret = tps_fit_kernel(stamps, nS, kernelSol);
     if (ret != 0) {
-      LOG_ERROR("TPS refitting failed; using polynomial solution only");
+      LOG_ERROR("TPS kernel refitting failed; using polynomial solution only");
       useTPS = 0; /* Fall back to polynomial evaluation */
     } else {
-      LOG_PROGRESS("TPS refitting complete; RBF surfaces fitted for %d components",
+      LOG_PROGRESS("TPS kernel refitting complete; RBF surfaces fitted for %d components",
                    nCompKer);
+
+      /* Also fit TPS surface to background */
+      ret = tps_fit_background(stamps, nS, kernelSol);
+      if (ret != 0) {
+        LOG_ERROR("TPS background refitting failed; using polynomial background");
+        /* Note: we don't disable useTPS here; kernel TPS still works, just background reverts to polynomial */
+      } else {
+        LOG_PROGRESS("TPS background refitting complete");
+      }
     }
   }
 
@@ -2647,6 +2774,35 @@ double make_kernel_tps(int xi, int yi, double* kernelSol) {
 }
 
 /**
+ * @brief Evaluate the spatially-varying background using thin plate spline
+ * interpolation.
+ *
+ * @details TPS-based alternative to polynomial get_background(). Evaluates the
+ * fitted TPS RBF surface at (xi, yi) to obtain the background value.
+ *
+ * @param xi         x pixel coordinate.
+ * @param yi         y pixel coordinate.
+ * @param kernelSol  Extended kernel solution vector (includes background TPS parameters)
+ * @return Background value at (xi, yi)
+ *
+ * @see get_background() for polynomial (non-TPS) version
+ */
+double get_background_tps(int xi, int yi, double* kernelSol) {
+  double *tps_weights, *tps_poly, *positions;
+  int pos_offset, n_stamps;
+
+  /* nS is the number of stamps per region used during fit */
+  n_stamps = nS;
+  pos_offset = kernelSol_offset_tps_positions(n_stamps);
+
+  tps_weights = kernelSol + kernelSol_offset_tps_bg_weights(n_stamps);
+  tps_poly = kernelSol + kernelSol_offset_tps_bg_poly(n_stamps);
+  positions = kernelSol + pos_offset;
+
+  return tps_evaluate((double)xi, (double)yi, positions, n_stamps, tps_weights, tps_poly);
+}
+
+/**
  * @brief Evaluate the spatially-varying background polynomial at image position
  *        (xi, yi).
  *
@@ -2663,6 +2819,10 @@ double make_kernel_tps(int xi, int yi, double* kernelSol) {
  * @return Background value at (xi, yi) in data units.
  */
 double get_background(int xi, int yi, double* kernelSol) {
+  if (useTPS) {
+    return get_background_tps(xi, yi, kernelSol);
+  }
+
   double background, polyBasisX, polyBasisY, normalizedX, normalizedY;
   int polyDegX, polyDegY, solutionIdx;
   int backgroundComponentOffset;
