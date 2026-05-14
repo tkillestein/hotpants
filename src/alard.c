@@ -250,8 +250,6 @@ int xy_conv_stamp_delta(double* stamp, int mStampX, int mStampY,
                         int basisIdx, double* pixFitted) {
   int stampPixelX, stampPixelY, kernelOffsetX, kernelOffsetY, pixelIdx;
   double rbf_value, sum;
-  int half_stamp_x = mStampX / 2;
-  int half_stamp_y = mStampY / 2;
 
   if (!delta_grid.nbasis) {
     LOG_ERROR("Delta grid not initialized");
@@ -795,8 +793,6 @@ static int kernelSol_size_polynomial(void) {
   int nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
   return ncomp + nbg_vec + 1;
 }
-
-/**
 
 /**
  * @brief Get offset in kernelSol for RBF weights of kernel component.

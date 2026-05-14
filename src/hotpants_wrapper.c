@@ -6,6 +6,7 @@
 #include <omp.h>
 #endif
 #include "defaults.h"
+#include "globals.h"
 
 /* BLAS/LAPACK threading control macros */
 #ifdef __OPENBLAS__
