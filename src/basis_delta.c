@@ -143,30 +143,166 @@ static double delta_eval_kernel(int xi, int yi, double* kernelSol) {
 }
 
 /**
+ * @brief Thin plate spline RBF kernel: φ(r) = r² log(r).
+ *
+ * @param r Euclidean distance between two points.
+ * @return RBF kernel value φ(r).
+ * @note Special case: φ(0) = 0 by convention.
+ */
+static inline double tps_kernel(double r) {
+  if (r < ZEROVAL) return 0.0;
+  return r * r * log(r);
+}
+
+/**
+ * @brief Evaluate a thin plate spline at a given point.
+ *
+ * @details Computes: f(x,y) = c₀ + c₁·x + c₂·y + Σᵢ wᵢ·φ(||pᵢ-(x,y)||)
+ *
+ * @param eval_x, eval_y Evaluation point coordinates
+ * @param positions Array of n_points (x,y) control point positions (interleaved)
+ * @param n_points Number of control points
+ * @param weights Array of n_points RBF weights
+ * @param poly_coeffs Array of 3 polynomial coefficients [c₀, c₁, c₂]
+ * @return Interpolated value at (eval_x, eval_y)
+ */
+static double tps_evaluate_delta(double eval_x, double eval_y, double* positions,
+                                  int n_points, double* weights, double* poly_coeffs) {
+  int i;
+  double value, dx, dy, r;
+
+  /* Initialize with polynomial trend: c₀ + c₁·x + c₂·y */
+  value = poly_coeffs[0] + poly_coeffs[1] * eval_x + poly_coeffs[2] * eval_y;
+
+  /* Add RBF contributions: Σᵢ wᵢ·φ(||pᵢ-(x,y)||) */
+  for (i = 0; i < n_points; i++) {
+    dx = eval_x - positions[2 * i];
+    dy = eval_y - positions[2 * i + 1];
+    r = sqrt(dx * dx + dy * dy);
+    value += weights[i] * tps_kernel(r);
+  }
+
+  return value;
+}
+
+/**
+ * @brief Get offset in kernelSol for polynomial (non-TPS) coefficients.
+ *
+ * Layout (same for all basis types):
+ *   [0]: reserved
+ *   [1..nComp]: kernel polynomial coefficients
+ *   [nComp+1..nComp+nbg_vec]: background polynomial coefficients
+ *
+ * where nComp = (nCompKer-1) * (kerOrder+1)*(kerOrder+2)/2
+ *       nbg_vec = (bgOrder+1)*(bgOrder+2)/2
+ */
+static int delta_kernelSol_size_polynomial(void) {
+  int ncomp1 = nCompKer - 1;
+  int ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
+  int ncomp = ncomp1 * ncomp2;
+  int nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
+  return ncomp + nbg_vec + 1;
+}
+
+/**
+ * @brief Get offset in kernelSol for TPS RBF weights of a kernel component.
+ *
+ * For delta basis, component indices are kernel pixels (0..nCompKer-1).
+ *
+ * @param comp_idx Kernel component index (0..nCompKer-1)
+ * @param n_stamps Number of stamps (control points)
+ * @return Offset in kernelSol; access weights via kernelSol[offset..offset+n_stamps)
+ */
+static int delta_kernelSol_offset_tps_weights(int comp_idx, int n_stamps) {
+  int poly_size = delta_kernelSol_size_polynomial();
+  return poly_size + comp_idx * n_stamps;
+}
+
+/**
+ * @brief Get offset in kernelSol for TPS polynomial trend of a kernel component.
+ *
+ * @param comp_idx Kernel component index (0..nCompKer-1)
+ * @param n_stamps Number of stamps
+ * @return Offset in kernelSol; access 3 poly coeffs via kernelSol[offset..offset+3)
+ */
+static int delta_kernelSol_offset_tps_poly(int comp_idx, int n_stamps) {
+  int poly_size = delta_kernelSol_size_polynomial();
+  return poly_size + nCompKer * n_stamps + comp_idx * 3;
+}
+
+/**
+ * @brief Get offset in kernelSol for stamp center positions.
+ *
+ * @param n_stamps Number of stamps
+ * @return Offset in kernelSol; positions are stored as x0,y0,x1,y1,...
+ */
+static int delta_kernelSol_offset_tps_positions(int n_stamps) {
+  int poly_size = delta_kernelSol_size_polynomial();
+  return poly_size + nCompKer * n_stamps + 3 * nCompKer;
+}
+
+/**
  * @brief Delta basis eval_kernel with TPS spatial variation.
  *
- * @details Alternative to delta_eval_kernel for TPS-based spatial variation.
- *          Evaluates RBF surfaces for each kernel pixel coefficient at (xi, yi).
- *          Requires TPS parameters in kernelSol layout (set by tps_fit_kernel).
+ * @details For delta basis with TPS, each kernel pixel coefficient is represented
+ *          as an RBF interpolant over the stamp centers:
  *
- * @param[in] xi, yi Image coordinates
- * @param[in] kernelSol Extended kernel solution with TPS parameters
- * @return Kernel pixel sum
+ *            K_pixel(xi, yi) = c₀ + c₁·xi + c₂·yi + Σⱼ wⱼ·φ(||stampⱼ-(xi,yi)||)
  *
- * @note This is a stub; full TPS integration for delta basis is deferred.
- *       Currently falls back to polynomial delta_eval_kernel.
+ *          where:
+ *          - (xi, yi) is the evaluation point (image position)
+ *          - stampⱼ are the fitted stamp center positions (control points)
+ *          - wⱼ are RBF weights for this pixel
+ *          - c₀, c₁, c₂ are polynomial trend coefficients
+ *          - φ is the thin plate spline kernel φ(r) = r² log(r)
+ *
+ *          This provides smooth spatial variation of each kernel pixel value
+ *          without tiling artifacts (suitable for single-region processing).
+ *
+ * @param[in] xi, yi Image coordinates where kernel is evaluated
+ * @param[in] kernelSol Extended kernel solution vector (includes TPS parameters)
+ * @return Sum of all kernel pixels (flux scaling factor)
  */
 static double delta_eval_kernel_tps(int xi, int yi, double* kernelSol) {
-  /* TODO: Implement TPS-based evaluation for delta basis pixels.
-     This would require:
-     1. Extract RBF weights and positions from kernelSol (TPS layout)
-     2. For each kernel pixel, evaluate its TPS surface at (xi, yi)
-     3. Assemble kernel from evaluated pixel values
-  */
+  int basisIdx, kx, ky, kernelPixelIdx;
+  double coeff, sum, *tps_weights, *tps_poly, *positions;
+  int pos_offset;
 
-  /* For now, fall back to polynomial evaluation */
-  LOG_DEBUG("Delta+TPS: using polynomial fallback (TPS not yet implemented)");
-  return delta_eval_kernel(xi, yi, kernelSol);
+  if (!kernelSol || fwKernel <= 0 || hwKernel < 0) {
+    LOG_ERROR("Invalid parameters for delta+TPS kernel evaluation");
+    return 0.0;
+  }
+
+  sum = 0.0;
+
+  /* Get stamp center positions (control points for RBF interpolation) */
+  pos_offset = delta_kernelSol_offset_tps_positions(nS);
+  positions = kernelSol + pos_offset;
+
+  LOG_DEBUG("Delta+TPS: evaluating kernel with %d pixels, %d control points", nCompKer, nS);
+
+  /* For each kernel pixel (basis function), evaluate its TPS-interpolated value
+     at the image position (xi, yi). This gives smooth spatial variation of each
+     pixel without polynomial discontinuities. */
+  for (basisIdx = 0; basisIdx < nCompKer; basisIdx++) {
+    /* Map basis index to kernel pixel (kx, ky) */
+    kx = (basisIdx % fwKernel) - hwKernel;
+    ky = (basisIdx / fwKernel) - hwKernel;
+    kernelPixelIdx = kx + hwKernel + fwKernel * (ky + hwKernel);
+
+    /* Get TPS weights and polynomial coefficients for this pixel */
+    tps_weights = kernelSol + delta_kernelSol_offset_tps_weights(basisIdx, nS);
+    tps_poly = kernelSol + delta_kernelSol_offset_tps_poly(basisIdx, nS);
+
+    /* Evaluate RBF surface: value = c₀ + c₁·xi + c₂·yi + Σⱼ wⱼ·φ(||posⱼ-(xi,yi)||) */
+    coeff = tps_evaluate_delta((double)xi, (double)yi, positions, nS, tps_weights, tps_poly);
+
+    kernel[kernelPixelIdx] = coeff;
+    sum += coeff;
+  }
+
+  LOG_DEBUG("Delta+TPS: kernel sum = %.6f", sum);
+  return sum;
 }
 
 /**
