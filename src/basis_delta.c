@@ -17,6 +17,7 @@
 #include "globals.h"
 #include "basis.h"
 #include "functions.h"
+#include "tps_utils.h"
 
 /* =====================================================================
    DELTA BASIS IMPLEMENTATION
@@ -142,48 +143,7 @@ static double delta_eval_kernel(int xi, int yi, double* kernelSol) {
   return sum;
 }
 
-/**
- * @brief Thin plate spline RBF kernel: φ(r) = r² log(r).
- *
- * @param r Euclidean distance between two points.
- * @return RBF kernel value φ(r).
- * @note Special case: φ(0) = 0 by convention.
- */
-static inline double tps_kernel(double r) {
-  if (r < ZEROVAL) return 0.0;
-  return r * r * log(r);
-}
-
-/**
- * @brief Evaluate a thin plate spline at a given point.
- *
- * @details Computes: f(x,y) = c₀ + c₁·x + c₂·y + Σᵢ wᵢ·φ(||pᵢ-(x,y)||)
- *
- * @param eval_x, eval_y Evaluation point coordinates
- * @param positions Array of n_points (x,y) control point positions (interleaved)
- * @param n_points Number of control points
- * @param weights Array of n_points RBF weights
- * @param poly_coeffs Array of 3 polynomial coefficients [c₀, c₁, c₂]
- * @return Interpolated value at (eval_x, eval_y)
- */
-static double tps_evaluate_delta(double eval_x, double eval_y, double* positions,
-                                  int n_points, double* weights, double* poly_coeffs) {
-  int i;
-  double value, dx, dy, r;
-
-  /* Initialize with polynomial trend: c₀ + c₁·x + c₂·y */
-  value = poly_coeffs[0] + poly_coeffs[1] * eval_x + poly_coeffs[2] * eval_y;
-
-  /* Add RBF contributions: Σᵢ wᵢ·φ(||pᵢ-(x,y)||) */
-  for (i = 0; i < n_points; i++) {
-    dx = eval_x - positions[2 * i];
-    dy = eval_y - positions[2 * i + 1];
-    r = sqrt(dx * dx + dy * dy);
-    value += weights[i] * tps_kernel(r);
-  }
-
-  return value;
-}
+/* tps_kernel() and tps_evaluate() are now in tps_utils.h (included above) */
 
 /**
  * @brief Get offset in kernelSol for polynomial (non-TPS) coefficients.
@@ -295,7 +255,7 @@ static double delta_eval_kernel_tps(int xi, int yi, double* kernelSol) {
     tps_poly = kernelSol + delta_kernelSol_offset_tps_poly(basisIdx, nS);
 
     /* Evaluate RBF surface: value = c₀ + c₁·xi + c₂·yi + Σⱼ wⱼ·φ(||posⱼ-(xi,yi)||) */
-    coeff = tps_evaluate_delta((double)xi, (double)yi, positions, nS, tps_weights, tps_poly);
+    coeff = tps_evaluate((double)xi, (double)yi, positions, nS, tps_weights, tps_poly);
 
     kernel[kernelPixelIdx] = coeff;
     sum += coeff;

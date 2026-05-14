@@ -10,6 +10,7 @@
 #include "globals.h"
 #include "functions.h"
 #include "basis.h"
+#include "tps_utils.h"
 
 /*
 
@@ -509,21 +510,7 @@ int spatial_convolve_delta(double* image, int mImageX, int mImageY,
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
    ===================================================================== */
 
-/**
- * @brief Thin plate spline (TPS) RBF kernel: φ(r) = r² log(r).
- *
- * The RBF is rotation-invariant and minimizes bending energy, making it
- * ideal for smooth spatial interpolation in image differencing.
- *
- * @param r Euclidean distance between two points.
- * @return RBF kernel value φ(r).
- *
- * @note Special case: φ(0) = 0 by convention.
- */
-static inline double tps_kernel(double r) {
-  if (r < ZEROVAL) return 0.0;
-  return r * r * log(r);
-}
+/* tps_kernel() is now in tps_utils.h (included above) */
 
 /**
  * @brief Assemble the augmented RBF matrix for TPS fitting.
@@ -674,25 +661,7 @@ static int tps_fit_coefficients(double* positions, int n_points,
  * @param[in] poly_coeffs        (3,) polynomial coefficients [const, cx, cy]
  * @return Interpolated coefficient value at (eval_x, eval_y)
  */
-static double tps_evaluate(double eval_x, double eval_y, double* positions,
-                           int n_points, double* weights,
-                           double* poly_coeffs) {
-  int i;
-  double value, dx, dy, r;
-
-  /* Initialize with polynomial trend */
-  value = poly_coeffs[0] + poly_coeffs[1] * eval_x + poly_coeffs[2] * eval_y;
-
-  /* Add RBF contributions */
-  for (i = 0; i < n_points; i++) {
-    dx = eval_x - positions[2 * i];
-    dy = eval_y - positions[2 * i + 1];
-    r = sqrt(dx * dx + dy * dy);
-    value += weights[i] * tps_kernel(r);
-  }
-
-  return value;
-}
+/* tps_evaluate() is now in tps_utils.h (included above) */
 
 /* =====================================================================
    TPS kernelSol Layout Management
