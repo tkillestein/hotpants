@@ -223,12 +223,80 @@ if (! strcmp(argv[ii], "-useTPS")) {
 
 ---
 
+## Implementation Progress
+
+### Phase 1: Foundation ✓ COMPLETE
+
+**Completed:**
+- Core RBF mathematics in C (tps_kernel, tps_assemble_matrix, tps_fit_coefficients, tps_evaluate)
+- Configuration infrastructure (useTPS, tpsSmoothing globals in defaults.h/globals.h)
+- Kernel evaluation stub (make_kernel_tps placeholder with fallback to polynomial)
+- Design documentation (this file)
+- LAPACK integration via LAPACKE for LU solve
+
+**Commits:**
+- `0ad814e` - Core TPS RBF infrastructure and design document
+- `5548934` - make_kernel_tps evaluation function placeholder
+
+### Phase 2: fitKernel Integration (In Progress)
+
+**Required:**
+1. Extend kernelSol layout to store TPS parameters
+   - Current: polynomial coefficients only
+   - Extended: polynomial + RBF weights + polynomial trends + stamp positions
+   
+2. Modify fitKernel() to optionally fit TPS
+   - After polynomial LAPACK solve, if useTPS==1:
+     - Extract stamp centers from stamp_struct array
+     - Evaluate polynomial at each stamp to get per-stamp coefficients
+     - Call tps_fit_coefficients() for each kernel component
+     - Store results in extended kernelSol
+   
+3. Implement tps_fit_kernel() helper
+   - Called from fitKernel() after polynomial solve
+   - Manages TPS fitting for all kernel components
+   - Handles stamp position extraction and normalization
+   
+4. Update kernelSol size calculation
+   - Need: nComp + nCompKer*(nStamps+3) + 2*nStamps
+   - Where nStamps = nStampX * nStampY (per region)
+   - Communicate new size to Python API
+
+5. Dispatcher in spatial_convolve
+   - Check useTPS flag before calling make_kernel or make_kernel_tps
+
+### Phase 3: Python API & Testing (Next)
+
+**Required:**
+1. Python API changes
+   - Handle extended kernelSol size
+   - Optionally expose TPS configuration
+   - Validate TPS requirements (nrx==1, nry==1 recommended)
+
+2. Unit tests
+   - test_tps_kernel() - verify RBF kernel values
+   - test_tps_assemble_matrix() - check matrix structure
+   - test_tps_fit_coefficients() - test LAPACK solve
+   - test_tps_evaluate() - verify interpolation
+   - test_make_kernel_tps() - kernel assembly
+
+3. Integration tests
+   - Compare TPS vs polynomial on same image
+   - Verify smoothness at region boundaries
+   - Benchmark performance
+
+### Phase 4: CLI & Documentation (Later)
+
+- Add `-useTPS` and `-tpsSmoothing` options to vargs.c
+- Update help text and README
+- Performance profiling and tuning
+
 ## Timeline
 
-- **Week 1:** Implement core TPS RBF functions, unit tests
-- **Week 2:** Integrate with fitKernel(), test on small images
-- **Week 3:** CLI integration, Python API exposure, performance tuning
-- **Week 4:** Documentation, large-scale testing, production readiness
+- **Phase 1 (Completed):** Core RBF infrastructure
+- **Phase 2 (In Progress):** fitKernel integration (1–2 days)
+- **Phase 3:** Python API & tests (1 day)
+- **Phase 4:** CLI & docs (½ day)
 
 ---
 
