@@ -662,32 +662,6 @@ int get_basis_type(void) {
 }
 
 /**
- * @brief Set delta basis grid spacing (pixels).
- *
- * Only used when basis_type == BASIS_TYPE_DELTA.
- *
- * @param[in] grid_size Spacing between delta basis function centers (> 0)
- * @return 0 on success, -1 if grid_size <= 0
- */
-int set_delta_ker_grid_size(double grid_size) {
-  if (grid_size <= 0.0) {
-    fprintf(stderr, "ERROR: deltaKerGridSize must be positive, got %f\n",
-            grid_size);
-    return -1;
-  }
-  rDeltaKerGridSize = grid_size;
-  return 0;
-}
-
-/**
- * @brief Get delta basis grid spacing.
- *
- * @return Grid spacing in pixels
- */
-double get_delta_ker_grid_size(void) {
-  return rDeltaKerGridSize;
-}
-
 /**
  * @brief Set delta basis Laplacian regularization weight.
  *

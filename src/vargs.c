@@ -107,7 +107,6 @@ void vargs(int argc, char* argv[]) {
   nThread = D_NTHREAD;
 
   iBasisType = D_BASIS_TYPE;
-  rDeltaKerGridSize = D_DELTA_KER_GRID_SIZE;
   rDeltaRegularization = D_DELTA_REGULARIZATION;
 
   useTPS = D_USE_TPS;
@@ -253,9 +252,6 @@ void vargs(int argc, char* argv[]) {
   HELP_APPEND(
       "   [-basisType type] : kernel basis (gaussian=%d, delta=%d) (default=%d)\n",
       BASIS_TYPE_GAUSSIAN, BASIS_TYPE_DELTA, D_BASIS_TYPE);
-  HELP_APPEND(
-      "   [-deltaKerGridSize sz]: grid spacing in pixels for delta basis (%.1f)\n",
-      D_DELTA_KER_GRID_SIZE);
   HELP_APPEND(
       "   [-deltaRegularization val]: Laplacian smoothness penalty for delta basis "
       "(%.1e)\n",
@@ -562,13 +558,6 @@ void vargs(int argc, char* argv[]) {
                   "ERROR: basisType must be %d (gaussian) or %d (delta), got "
                   "%d\n",
                   BASIS_TYPE_GAUSSIAN, BASIS_TYPE_DELTA, basisTypeVal);
-          exit(1);
-        }
-      } else if (strcasecmp(argv[iarg] + 1, "deltaKerGridSize") == 0) {
-        sscanf(argv[++iarg], "%lf", &rDeltaKerGridSize);
-        if (rDeltaKerGridSize <= 0.0) {
-          fprintf(stderr, "ERROR: deltaKerGridSize must be positive, got %f\n",
-                  rDeltaKerGridSize);
           exit(1);
         }
       } else if (strcasecmp(argv[iarg] + 1, "deltaRegularization") == 0) {
