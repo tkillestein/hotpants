@@ -16,6 +16,7 @@
  * the extern declarations provided by globals.h by default. */
 #include "globals.h"
 #include "functions.h"
+#include "decorrelation.h"
 
 /* Forward declaration of threading functions (implemented in hotpants_wrapper.c) */
 extern int init_threading(void);
@@ -1200,6 +1201,14 @@ int main(int argc, char* argv[]) {
         fitKernel(ctStamps, iRData, tRData, oRData, tKerSol, &meansigSubstamps,
                   &scatterSubstamps, &NskippedSubstamps);
 
+      /* Initialize decorrelation grid if enabled */
+      if (useDecorrelation) {
+        if (decorrelation_init_region(tKerSol) < 0) {
+          LOG_ERROR("Failed to initialize decorrelation grid");
+          useDecorrelation = 0; /* Disable and continue */
+        }
+      }
+
       /* zero out oRData to accept output diff image */
       oRData = (float*)realloc(oRData, rPixX * rPixY * sizeof(float));
       fset(oRData, fillVal, rPixX, rPixY);
@@ -1260,6 +1269,21 @@ int main(int argc, char* argv[]) {
 
       /* eRData now contains partial noise image */
       /* oRData now contains difference image */
+
+      /* Apply decorrelation if enabled */
+      float* oRDataDecorc = NULL;
+      if (useDecorrelation && decorr_grid) {
+        oRDataDecorc = (float*)malloc(rPixX * rPixY * sizeof(float));
+        if (oRDataDecorc && decorrelation_apply_region(oRData, rPixY, rPixX,
+                                                        oRDataDecorc) == 0) {
+          LOG_PROGRESS("Decorrelation applied to difference image");
+        } else {
+          LOG_ERROR("Decorrelation failed, using original difference image");
+          if (oRDataDecorc) free(oRDataDecorc);
+          oRDataDecorc = NULL;
+        }
+      }
+
       /* tRData is no longer needed */
       /* use to read in other noise image if necessary */
       fset(tRData, fillValNoise, rPixX, rPixY);
