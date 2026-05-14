@@ -22,6 +22,12 @@ code.
 
 */
 
+/* Forward declarations for kernel evaluation dispatchers and TPS functions */
+double make_kernel_tps(int xi, int yi, double* kernelSol);
+double make_kernel_dispatch(int xi, int yi, double* kernelSol);
+static double make_kernel_local_dispatch(int xi, int yi, double* kernelSol,
+                                         double* lkernel, double* lkernel_coeffs);
+
 /* =====================================================================
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
    ===================================================================== */
@@ -155,9 +161,9 @@ static int tps_fit_coefficients(double* positions, int n_points,
 
   if (info != 0) {
     LOG_ERROR("TPS fit failed: singular matrix (info=%d)", info);
-    xfree(matrix);
-    xfree(rhs);
-    xfree(pivots);
+    free(matrix);
+    free(rhs);
+    free(pivots);
     return 1;
   }
 
@@ -169,9 +175,9 @@ static int tps_fit_coefficients(double* positions, int n_points,
     poly_coeffs[i] = rhs[n_points + i];
   }
 
-  xfree(matrix);
-  xfree(rhs);
-  xfree(pivots);
+  free(matrix);
+  free(rhs);
+  free(pivots);
 
   return 0;
 }
@@ -235,21 +241,6 @@ static int kernelSol_size_polynomial(void) {
 }
 
 /**
- * @brief Compute the size of kernelSol array needed for TPS mode.
- *
- * Extended layout (useTPS==1):
- *   [0..poly_size-1]: same as polynomial mode
- *   [poly_size..poly_size+nCompKer*nStamps-1]: RBF weights (nCompKer groups of nStamps)
- *   [poly_size+nCompKer*nStamps..poly_size+nCompKer*nStamps+3*nCompKer-1]: poly trends
- *   [poly_size+nCompKer*nStamps+3*nCompKer..end]: stamp positions (2*nStamps)
- *
- * @param n_stamps Number of stamps per region (nStampX * nStampY)
- * @return Required size
- */
-static int kernelSol_size_tps(int n_stamps) {
-  int poly_size = kernelSol_size_polynomial();
-  return poly_size + nCompKer * n_stamps + 3 * nCompKer + 2 * n_stamps;
-}
 
 /**
  * @brief Get offset in kernelSol for RBF weights of kernel component.
@@ -376,8 +367,8 @@ static int tps_fit_kernel(stamp_struct* stamps, int n_stamps,
                                  poly_coeffs_at_stamps, tps_weights, tps_poly);
       if (ret != 0) {
         LOG_ERROR("TPS fit failed for kernel component %d", comp_idx);
-        xfree(stamp_positions);
-        xfree(poly_coeffs_at_stamps);
+        free(stamp_positions);
+        free(poly_coeffs_at_stamps);
         return 1;
       }
 
@@ -386,8 +377,8 @@ static int tps_fit_kernel(stamp_struct* stamps, int n_stamps,
     }
   }
 
-  xfree(stamp_positions);
-  xfree(poly_coeffs_at_stamps);
+  free(stamp_positions);
+  free(poly_coeffs_at_stamps);
 
   return 0;
 }
@@ -2616,14 +2607,12 @@ double make_kernel_tps(int xi, int yi, double* kernelSol) {
   int gaussianCompIdx, kernelPixelIdx, pixelCompIdx;
   double kernelSum;
   double *tps_weights, *tps_poly, *positions;
-  int weights_offset, poly_offset, pos_offset;
+  int pos_offset;
 
   /* For TPS evaluation, nS is the number of stamps per region used during fit.
      Note: This assumes single-region (nRegX=1, nRegY=1), so nS == nStampX*nStampY
   */
 
-  weights_offset = kernelSol_offset_tps_weights(0, nS);
-  poly_offset = kernelSol_offset_tps_poly(0, nS);
   pos_offset = kernelSol_offset_tps_positions(nS);
 
   /* Evaluate TPS-interpolated kernel coefficients at (xi, yi) */
@@ -2726,11 +2715,7 @@ void make_model(stamp_struct* stamp, double* kernelSol, float* csModel) {
       stampCenterX, stampCenterY;
   double polyBasisX, polyBasisY, polynomialCoeff;
   double* vector;
-  float halfPixX, halfPixY;
   double normalizedX, normalizedY;
-
-  halfPixX = 0.5 * rPixX;
-  halfPixY = 0.5 * rPixY;
 
   stampCenterX = stamp->xss[stamp->sscnt];
   stampCenterY = stamp->yss[stamp->sscnt];
