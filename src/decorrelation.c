@@ -554,3 +554,114 @@ int spatial_convolve_with_decorr(const double *diffImage, int diffImage_ny,
   LOG_PROGRESS("spatial_convolve_with_decorr: complete");
   return 0;
 }
+
+/* =====================================================================
+   HIGH-LEVEL API FOR MAIN.C INTEGRATION
+   ===================================================================== */
+
+/**
+ * @brief High-level wrapper: compute decorrelation grid for a region.
+ *
+ * Call this after fitKernel() to prepare the decorrelation grid.
+ * Initializes decorr_grid (global) with φ values at all stamp centers.
+ *
+ * @param[in] kernelSol  Fitted kernel solution (double array)
+ * @return 0 on success, -1 on error
+ */
+int decorrelation_init_region(const double *kernelSol) {
+  if (!kernelSol) {
+    LOG_ERROR("decorrelation_init_region: NULL kernelSol");
+    return -1;
+  }
+
+  /* Free any previous grid */
+  if (decorr_grid) {
+    decorrelation_grid_free(&decorr_grid);
+  }
+
+  /* Allocate grid with stamp dimensions */
+  decorr_grid = decorrelation_grid_alloc(nStampX, nStampY);
+  if (!decorr_grid) {
+    LOG_ERROR("decorrelation_init_region: allocation failed");
+    return -1;
+  }
+
+  /* Initialize grid coordinates (stamp centers in region space) */
+  int gx, gy;
+  for (gx = 0; gx < nStampX; gx++) {
+    for (gy = 0; gy < nStampY; gy++) {
+      /* Rough estimate: stamp centers based on uniform grid */
+      int idx = gx * nStampY + gy;
+      decorr_grid->grid_x[idx] = (gx + 0.5) * rPixX / nStampX;
+      decorr_grid->grid_y[idx] = (gy + 0.5) * rPixY / nStampY;
+    }
+  }
+
+  /* Fit decorrelation grid: compute φ at each stamp center */
+  int ret = fit_decorrelation_grid(decorr_grid, kernelSol,
+                                    decorrScienceVar, decorrTemplateVar,
+                                    decorrUseTPS);
+  if (ret < 0) {
+    LOG_ERROR("decorrelation_init_region: fit_decorrelation_grid failed");
+    decorrelation_grid_free(&decorr_grid);
+    return -1;
+  }
+
+  return 0;
+}
+
+/**
+ * @brief High-level wrapper: apply decorrelation to a float difference image.
+ *
+ * Call this after the difference image is complete (after spatial_convolve).
+ * Converts float difference image to double, applies decorrelation, converts back.
+ *
+ * @param[in]     diffImage_float   Input difference image (float, rPixY × rPixX)
+ * @param[in]     ny, nx            Image dimensions
+ * @param[in,out] diffImageDec_float Output decorrelated difference image (float)
+ * @return 0 on success, -1 on error
+ */
+int decorrelation_apply_region(const float *diffImage_float, int ny, int nx,
+                                 float *diffImageDec_float) {
+  if (!diffImage_float || !diffImageDec_float || !decorr_grid) {
+    LOG_ERROR("decorrelation_apply_region: NULL pointer");
+    return -1;
+  }
+
+  if (ny <= 0 || nx <= 0) {
+    LOG_ERROR("decorrelation_apply_region: invalid dimensions (%d × %d)", ny,
+              nx);
+    return -1;
+  }
+
+  /* Convert float to double for decorrelation computation */
+  double *diffImage_double =
+      (double *)xcalloc((size_t)ny * nx, sizeof(double));
+  double *diffImageDec_double =
+      (double *)xcalloc((size_t)ny * nx, sizeof(double));
+
+  int idx;
+  for (idx = 0; idx < ny * nx; idx++) {
+    diffImage_double[idx] = (double)diffImage_float[idx];
+  }
+
+  /* Apply decorrelation */
+  int ret = spatial_convolve_with_decorr(diffImage_double, ny, nx,
+                                          diffImageDec_double, decorr_grid);
+  if (ret < 0) {
+    LOG_ERROR("decorrelation_apply_region: spatial_convolve_with_decorr failed");
+    free(diffImage_double);
+    free(diffImageDec_double);
+    return -1;
+  }
+
+  /* Convert result back to float */
+  for (idx = 0; idx < ny * nx; idx++) {
+    diffImageDec_float[idx] = (float)diffImageDec_double[idx];
+  }
+
+  free(diffImage_double);
+  free(diffImageDec_double);
+
+  return 0;
+}

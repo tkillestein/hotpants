@@ -164,4 +164,33 @@ decorrelation_grid_t* decorrelation_grid_alloc(int ngrid_x, int ngrid_y);
  */
 int decorrelation_grid_free(decorrelation_grid_t **grid);
 
+/* =====================================================================
+   HIGH-LEVEL API FOR MAIN.C INTEGRATION
+   ===================================================================== */
+
+/**
+ * @brief High-level wrapper: compute decorrelation grid for a region.
+ *
+ * Call this after fitKernel() to prepare the decorrelation grid.
+ * Updates the global decorr_grid with φ values at all stamp centers.
+ *
+ * @param[in] kernelSol  Fitted kernel solution (double array)
+ * @return 0 on success, -1 on error
+ */
+int decorrelation_init_region(const double *kernelSol);
+
+/**
+ * @brief High-level wrapper: apply decorrelation to a float difference image.
+ *
+ * Call this after the difference image is complete (after spatial_convolve).
+ * Converts float image to double, applies decorrelation, converts back.
+ *
+ * @param[in]     diffImage_float    Input difference image (float)
+ * @param[in]     ny, nx             Image dimensions
+ * @param[in,out] diffImageDec_float Output decorrelated image (float)
+ * @return 0 on success, -1 on error
+ */
+int decorrelation_apply_region(const float *diffImage_float, int ny, int nx,
+                                float *diffImageDec_float);
+
 #endif  /* HOTPANTS_DECORRELATION_H */
