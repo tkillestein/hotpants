@@ -26,8 +26,8 @@ code.
 /* Forward declarations for kernel evaluation dispatchers and TPS functions */
 double make_kernel_tps(int xi, int yi, double* kernelSol);
 double make_kernel_dispatch(int xi, int yi, double* kernelSol);
-static double make_kernel_local_dispatch(int xi, int yi, double* kernelSol,
-                                         double* lkernel, double* lkernel_coeffs);
+double make_kernel_local_dispatch(int xi, int yi, double* kernelSol,
+                                  double* lkernel, double* lkernel_coeffs);
 static int tps_fit_background(stamp_struct* stamps, int n_stamps,
                               double* kernelSol);
 double get_background_tps(int xi, int yi, double* kernelSol);
@@ -2608,9 +2608,9 @@ static double make_kernel_local_tps(int xi, int yi, double* kernelSol,
  * @param lkernel_coeffs  Local coefficient buffer (output)
  * @return Kernel sum
  */
-static double make_kernel_local_dispatch(int xi, int yi, double* kernelSol,
-                                         double* lkernel,
-                                         double* lkernel_coeffs) {
+double make_kernel_local_dispatch(int xi, int yi, double* kernelSol,
+                                  double* lkernel,
+                                  double* lkernel_coeffs) {
   if (useTPS) {
     return make_kernel_local_tps(xi, yi, kernelSol, lkernel, lkernel_coeffs);
   } else {
