@@ -1398,64 +1398,6 @@ int sigma_clip(float* data, int count, double* mean, double* stdev,
   return 0;
 }
 
-/**
- * @brief Compute a spatially-smoothed noise or mean image using a sliding box
- *        window.
- *
- * @details For each pixel (i, j), collects the values of all unmasked
- * neighbours within a (2*size+1)×(2*size+1) box, calls sigma_clip() with
- * maxiter=0 (no clipping), and stores either the box mean (doavg=1, useful for
- * a smoothed noise map) or the box standard deviation (doavg=0, useful for an
- * empirical RMS noise image from the difference image).  Boundary pixels are
- * handled by simply skipping out-of-bounds neighbours.
- *
- * @param image    Input nx×ny float image.
- * @param mask     Integer mask array (same size); pixels with (mask[k] &
- * maskval) non-zero are excluded from the box statistics.
- * @param nx       Image width.
- * @param ny       Image height.
- * @param size     Half-width of the sliding box (box is (2*size+1) pixels
- * wide).
- * @param maskval  Mask bitmask: pixels with this bit set are excluded.
- * @param doavg    1 to return the box mean; 0 to return the box standard
- * deviation.
- * @return Pointer to a newly allocated nx×ny output float array, or NULL on
- *         allocation failure.
- */
-float* calculateAvgNoise(float* image, int* mask, int nx, int ny, int size,
-                         int maskval, int doavg) {
-  int pixelX, pixelY, neighborColIdx, neighborRowIdx, validPixelCount;
-  float *data, *outim;
-  double mean, stdev;
-
-  if (!(data = (float*)calloc(size * size, sizeof(float)))) return (NULL);
-  if (!(outim = (float*)calloc(nx * ny, sizeof(float)))) return (NULL);
-
-  for (pixelY = ny; pixelY--;) {
-    for (pixelX = nx; pixelX--;) {
-      /* take your average! */
-      validPixelCount = 0;
-      for (neighborRowIdx = pixelY - size; neighborRowIdx <= pixelY + size;
-           neighborRowIdx++) {
-        if ((neighborRowIdx < 0) || neighborRowIdx >= ny) continue;
-
-        for (neighborColIdx = pixelX - size; neighborColIdx <= pixelX + size;
-             neighborColIdx++) {
-          if ((neighborColIdx < 0) || neighborColIdx >= nx) continue;
-
-          if (!(mask[neighborColIdx + neighborRowIdx * nx] & maskval))
-            data[validPixelCount++] =
-                image[neighborColIdx + neighborRowIdx * nx];
-        }
-      }
-      /* we'll do no clipping */
-      sigma_clip(data, validPixelCount, &mean, &stdev, 0);
-      outim[pixelX + pixelY * nx] = doavg ? mean : stdev;
-    }
-  }
-  free(data);
-  return outim;
-}
 
 /**
  * @brief Release all dynamically allocated sub-arrays within an array of
@@ -2127,9 +2069,7 @@ void fset(float* data, double value, int nPixX, int nPixY) {
  */
 void dfset(double* data, double value, int nPixX, int nPixY) {
   int pixelIdx;
-  double* pixelPtr;
-  pixelPtr = data;
-  for (pixelIdx = nPixX * nPixY; pixelIdx--;) *(pixelPtr++) = value;
+  for (pixelIdx = nPixX * nPixY; pixelIdx--;) data[pixelIdx] = value;
 }
 
 /**
@@ -2221,12 +2161,22 @@ double ran1(int* idum) {
 #undef IA3
 #undef IC3
 
+static double* _quick_sort_list = NULL;
+
+static int _quick_sort_cmp(const void* a, const void* b) {
+  double val_a = _quick_sort_list[*(const int*)a];
+  double val_b = _quick_sort_list[*(const int*)b];
+  if (val_a < val_b) return -1;
+  if (val_a > val_b) return 1;
+  return 0;
+}
+
 /**
  * @brief Initialise an index array and sort it by the values in @p list using
- *        an in-place quicksort.
+ *        qsort().
  *
- * @details Fills index[0..n-1] with 0..n-1, then calls quick_sort_1() to
- * sort the index array so that list[index[0]] <= list[index[1]] <= ... <=
+ * @details Fills index[0..n-1] with 0..n-1, then sorts the index array using
+ * qsort() so that list[index[0]] <= list[index[1]] <= ... <=
  * list[index[n-1]].  The original @p list is not modified.  Used by
  * getPsfCenters() to rank candidate substamp positions by brightness.
  *
@@ -2237,53 +2187,11 @@ double ran1(int* idum) {
  */
 void quick_sort(double* list, int* index, int n) {
   int indexIdx;
-  void quick_sort_1();
 
   for (indexIdx = 0; indexIdx < n; indexIdx++) index[indexIdx] = indexIdx;
-  quick_sort_1(list, index, 0, n - 1);
-
-  return;
-}
-
-/**
- * @brief Recursive in-place quicksort on an index array, using a median-of-one
- *        pivot.
- *
- * @details Partitions the subarray index[left_end..right_end] around the pivot
- * list[index[mid]] (mid = (left_end+right_end)/2), then recursively sorts each
- * partition.  The sort is ascending in list values.  Called exclusively by
- * quick_sort().
- *
- * @param list       Array of double values (read-only); indexed through @p
- * index.
- * @param index      Index array being sorted in place.
- * @param left_end   Left boundary of the subarray to sort (inclusive).
- * @param right_end  Right boundary of the subarray to sort (inclusive).
- */
-void quick_sort_1(double* list, int* index, int left_end, int right_end) {
-  int rightIdx, leftIdx, tempIndex;
-  double pivotValue;
-
-  pivotValue = list[index[(left_end + right_end) / 2]];
-  rightIdx = left_end - 1;
-  leftIdx = right_end + 1;
-
-  for (;;) {
-    while (list[index[++rightIdx]] < pivotValue);
-    while (list[index[--leftIdx]] > pivotValue);
-    if (rightIdx < leftIdx) {
-      tempIndex = index[leftIdx];
-      index[leftIdx] = index[rightIdx];
-      index[rightIdx] = tempIndex;
-    } else if (rightIdx == leftIdx) {
-      ++rightIdx;
-      break;
-    } else
-      break;
-  }
-
-  if (left_end < leftIdx) quick_sort_1(list, index, left_end, leftIdx);
-  if (rightIdx < right_end) quick_sort_1(list, index, rightIdx, right_end);
+  _quick_sort_list = list;
+  qsort(index, n, sizeof(int), _quick_sort_cmp);
+  _quick_sort_list = NULL;
 
   return;
 }
