@@ -56,6 +56,13 @@
 #define D_KORDER 2      /* order of spatially varying kernel */
 #define D_BGORDER 1     /* order of spatially varying sky */
 #define D_KSIGREJECT 2. /* reject stamp at this sigma from kernel fit */
+
+/* =====================================================================
+   THIN PLATE SPLINE (TPS) SPATIAL VARIATION
+   ===================================================================== */
+#define D_USE_TPS 0       /* 0 = polynomial, 1 = thin plate spline */
+#define D_TPS_SMOOTHING \
+  1e-6 /* TPS regularization: 0 = exact fit, >0 = smoother surface */
 #define D_STATSIG 3.    /* threshold in sigma clipping algorithms */
 #define D_KFRACMASK \
   0.99 /* fraction of abs(kernel) values below which mask bit 0x8000 is set */

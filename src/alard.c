@@ -22,6 +22,198 @@ code.
 
 */
 
+/* =====================================================================
+   THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
+   ===================================================================== */
+
+/**
+ * @brief Thin plate spline (TPS) RBF kernel: φ(r) = r² log(r).
+ *
+ * The RBF is rotation-invariant and minimizes bending energy, making it
+ * ideal for smooth spatial interpolation in image differencing.
+ *
+ * @param r Euclidean distance between two points.
+ * @return RBF kernel value φ(r).
+ *
+ * @note Special case: φ(0) = 0 by convention.
+ */
+static inline double tps_kernel(double r) {
+  if (r < ZEROVAL) return 0.0;
+  return r * r * log(r);
+}
+
+/**
+ * @brief Assemble the augmented RBF matrix for TPS fitting.
+ *
+ * @details Solves the linear system:
+ *   [ Φ  P ] [ w ]   [ c ]
+ *   [ P' 0 ] [ v ] = [ 0 ]
+ *
+ * where:
+ *   Φ[i,j] = φ(||pos[i] - pos[j]||)  (RBF kernel matrix)
+ *   P[i,0:d] = polynomial basis (1, x, y) for linear trend
+ *   w = RBF weights (N values per kernel component)
+ *   v = polynomial coefficients (3 values: const, cx, cy)
+ *   c = data values at control points
+ *
+ * The system is augmented with polynomial terms to ensure the interpolant
+ * has a well-defined trend and avoids ill-conditioning.
+ *
+ * @param[in]  positions      (N, 2) array of (x, y) control point positions
+ * @param[in]  n_points       Number of control points (N)
+ * @param[out] matrix         (N+3, N+3) augmented RBF matrix (row-major)
+ *
+ * @note The caller must allocate matrix of size (n_points+3)²
+ */
+static void tps_assemble_matrix(double* positions, int n_points,
+                                double* matrix) {
+  int i, j, mat_size;
+  double dx, dy, r;
+
+  mat_size = n_points + 3;
+
+  /* Fill RBF kernel block Φ (top-left) */
+  for (i = 0; i < n_points; i++) {
+    for (j = 0; j < n_points; j++) {
+      dx = positions[2 * i] - positions[2 * j];
+      dy = positions[2 * i + 1] - positions[2 * j + 1];
+      r = sqrt(dx * dx + dy * dy);
+      matrix[i * mat_size + j] = tps_kernel(r);
+    }
+  }
+
+  /* Fill polynomial basis block P (top-right, n_points × 3) */
+  for (i = 0; i < n_points; i++) {
+    matrix[i * mat_size + n_points] = 1.0;                  /* const term */
+    matrix[i * mat_size + n_points + 1] = positions[2 * i]; /* x term */
+    matrix[i * mat_size + n_points + 2] = positions[2 * i + 1]; /* y term */
+  }
+
+  /* Fill transpose of polynomial block P' (bottom-left, 3 × n_points) */
+  for (j = 0; j < n_points; j++) {
+    matrix[n_points * mat_size + j] = 1.0;
+    matrix[(n_points + 1) * mat_size + j] = positions[2 * j];
+    matrix[(n_points + 2) * mat_size + j] = positions[2 * j + 1];
+  }
+
+  /* Fill zero block (bottom-right, 3 × 3) */
+  for (i = 0; i < 3; i++) {
+    for (j = 0; j < 3; j++) {
+      matrix[(n_points + i) * mat_size + (n_points + j)] = 0.0;
+    }
+  }
+}
+
+/**
+ * @brief Fit TPS RBF surface to scattered control points for one kernel
+ *        component.
+ *
+ * @details Solves the augmented linear system via LU decomposition (LAPACK).
+ *
+ * @param[in]  positions         (N, 2) array of stamp center positions (pixels)
+ * @param[in]  n_points          Number of stamps (control points)
+ * @param[in]  coefficient_values (N,) array of fitted coefficients c_i for one
+ *                                kernel component
+ * @param[out] weights            (N,) RBF weights for this component
+ * @param[out] poly_coeffs        (3,) polynomial trend coefficients [const, cx,
+ *                                cy]
+ * @return 0 on success, non-zero on singular matrix or other error
+ *
+ * @note Allocates and frees internal working arrays; caller provides output
+ *       arrays.
+ */
+static int tps_fit_coefficients(double* positions, int n_points,
+                                double* coefficient_values, double* weights,
+                                double* poly_coeffs) {
+  int mat_size, i, info;
+  double* matrix;
+  double* rhs;
+  int* pivots;
+
+  mat_size = n_points + 3;
+
+  /* Allocate working arrays */
+  matrix = (double*)xcalloc(mat_size * mat_size, sizeof(double));
+  rhs = (double*)xcalloc(mat_size, sizeof(double));
+  pivots = (int*)xcalloc(mat_size, sizeof(int));
+
+  /* Assemble augmented RBF matrix */
+  tps_assemble_matrix(positions, n_points, matrix);
+
+  /* Copy coefficient values into RHS vector; pad with zeros for polynomial
+   * terms */
+  for (i = 0; i < n_points; i++) {
+    rhs[i] = coefficient_values[i];
+  }
+  for (i = n_points; i < mat_size; i++) {
+    rhs[i] = 0.0;
+  }
+
+  /* Solve via LU factorization (LAPACK dgesv) */
+  info = LAPACKE_dgesv(LAPACK_ROW_MAJOR, mat_size, 1, matrix, mat_size, pivots,
+                       rhs, 1);
+
+  if (info != 0) {
+    LOG_ERROR("TPS fit failed: singular matrix (info=%d)", info);
+    xfree(matrix);
+    xfree(rhs);
+    xfree(pivots);
+    return 1;
+  }
+
+  /* Extract solution: RBF weights and polynomial coefficients */
+  for (i = 0; i < n_points; i++) {
+    weights[i] = rhs[i];
+  }
+  for (i = 0; i < 3; i++) {
+    poly_coeffs[i] = rhs[n_points + i];
+  }
+
+  xfree(matrix);
+  xfree(rhs);
+  xfree(pivots);
+
+  return 0;
+}
+
+/**
+ * @brief Evaluate fitted TPS surface at an arbitrary position.
+ *
+ * @details Computes:
+ *   c_i(x,y) = Σ_j w_j · φ(||(x,y) - pos_j||) + p[0] + p[1]·x + p[2]·y
+ *
+ * where φ is the TPS RBF kernel and p[] are polynomial trend coefficients.
+ *
+ * @param[in] eval_x, eval_y    Position at which to evaluate
+ * @param[in] positions          (N, 2) array of control point positions
+ * @param[in] n_points           Number of control points
+ * @param[in] weights            (N,) RBF weights
+ * @param[in] poly_coeffs        (3,) polynomial coefficients [const, cx, cy]
+ * @return Interpolated coefficient value at (eval_x, eval_y)
+ */
+static double tps_evaluate(double eval_x, double eval_y, double* positions,
+                           int n_points, double* weights,
+                           double* poly_coeffs) {
+  int i;
+  double value, dx, dy, r;
+
+  /* Initialize with polynomial trend */
+  value = poly_coeffs[0] + poly_coeffs[1] * eval_x + poly_coeffs[2] * eval_y;
+
+  /* Add RBF contributions */
+  for (i = 0; i < n_points; i++) {
+    dx = eval_x - positions[2 * i];
+    dy = eval_y - positions[2 * i + 1];
+    r = sqrt(dx * dx + dy * dy);
+    value += weights[i] * tps_kernel(r);
+  }
+
+  return value;
+}
+
+/* =====================================================================
+ */
+
 /**
  * @brief Precompute all kernel basis function images and store them in
  * kernel_vec.
