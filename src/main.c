@@ -16,6 +16,7 @@
  * the extern declarations provided by globals.h by default. */
 #include "globals.h"
 #include "functions.h"
+#include "hotpants_api.h"
 
 int main(int argc, char* argv[]) {
   int i, j, k, l, m;                         /* generic indices */
@@ -500,6 +501,16 @@ int main(int argc, char* argv[]) {
     }
   }
 #endif
+
+  /* Initialize FFTW3 and BLAS/LAPACK threading for multi-threaded execution.
+   * This must be called once, after OpenMP thread pool is initialized,
+   * and before any FFT or LAPACK operations. */
+  if (init_threading() == 0) {
+    LOG_PROGRESS("Threading initialized: FFTW3 OMP=%d, BLAS threads=%d",
+                 get_fftw3_threading_available(), get_blas_threads());
+  } else {
+    LOG_WARNING("FFTW3 threading initialization failed; FFT will be single-threaded");
+  }
 
   /******/
   /* determine pixel limits of regions, and of stamps in region */

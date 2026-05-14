@@ -357,4 +357,44 @@ void cleanupSpatialConvolve(void);
  */
 double computeKernelNorm(double* kernel_coeffs, int nx, int ny);
 
+/* =====================================================================
+ * Threading Control Functions
+ * =====================================================================
+ * These functions enable and query multi-threaded execution in FFTW3 and BLAS.
+ * Must be called once before any kernel fitting or convolution operations.
+ */
+
+/*
+ * Initialize FFTW3 and BLAS/LAPACK threading for multi-threaded execution.
+ *
+ * This function must be called once before any HOTPANTS kernels are executed.
+ * It enables:
+ *   - FFTW3 multi-threaded FFT execution (if libfftw3_omp is available)
+ *   - BLAS/LAPACK multi-threaded linear algebra (OpenBLAS, MKL, etc.)
+ *
+ * Sets threading to the OpenMP max threads if available, otherwise 1.
+ *
+ * Safe to call multiple times (idempotent).
+ *
+ * Returns:
+ *   0 on success, -1 if FFTW3 threading initialization failed
+ */
+int init_threading(void);
+
+/*
+ * Query the number of threads being used by BLAS/LAPACK.
+ *
+ * Returns:
+ *   Number of threads (1 if single-threaded BLAS or unknown implementation)
+ */
+int get_blas_threads(void);
+
+/*
+ * Query FFTW3 threading availability.
+ *
+ * Returns:
+ *   1 if FFTW3 threading is initialized and available, 0 otherwise
+ */
+int get_fftw3_threading_available(void);
+
 #endif /* HOTPANTS_API_H */
