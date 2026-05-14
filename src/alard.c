@@ -2306,6 +2306,47 @@ double make_kernel(int xi, int yi, double* kernelSol) {
 }
 
 /**
+ * @brief Evaluate the spatially-varying convolution kernel using thin plate
+ * spline interpolation.
+ *
+ * @details TPS-based alternative to make_kernel(). For each kernel component,
+ * evaluates the fitted TPS RBF surface at (xi, yi) to obtain the spatially-
+ * varying coefficient. Then assembles the final kernel image as a weighted
+ * sum of basis functions.
+ *
+ * TPS parameters must be stored in kernelSol when useTPS=1. Layout:
+ *   kernelSol[0..nComp-1]: reserved
+ *   kernelSol[nComp..end]: TPS weights and polynomial coefficients
+ *   (see fitKernel for complete layout)
+ *
+ * @param xi         x pixel coordinate at which to evaluate
+ * @param yi         y pixel coordinate at which to evaluate
+ * @param kernelSol  Extended kernel solution vector (includes TPS parameters)
+ * @return Sum of all pixels in the assembled kernel image
+ *
+ * @see tps_evaluate() for RBF surface evaluation
+ * @see make_kernel() for polynomial (non-TPS) version
+ */
+double make_kernel_tps(int xi, int yi, double* kernelSol) {
+  int gaussianCompIdx, kernelPixelIdx, pixelCompIdx;
+  double kernelSum;
+
+  LOG_DEBUG("TPS kernel evaluation at (%d, %d)", xi, yi);
+
+  /* Placeholder implementation.  Full implementation requires:
+     1. Extract stamp positions from kernelSol
+     2. For each kernel component:
+        - Extract RBF weights and polynomial coefficients
+        - Call tps_evaluate() to get spatially-varying coefficient
+     3. Assemble final kernel
+     This will be completed in Phase 2 (fitKernel integration).
+  */
+
+  /* For now, fall back to polynomial (this is a development marker) */
+  return make_kernel(xi, yi, kernelSol);
+}
+
+/**
  * @brief Evaluate the spatially-varying background polynomial at image position
  *        (xi, yi).
  *
