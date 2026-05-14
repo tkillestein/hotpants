@@ -265,13 +265,24 @@ if (! strcmp(argv[ii], "-useTPS")) {
 5. Dispatcher in spatial_convolve
    - Check useTPS flag before calling make_kernel or make_kernel_tps
 
-### Phase 3: Python API & Testing (Next)
+### Phase 3: Python API & Testing ✓ COMPLETE
+
+**Completed:**
+- Add useTPS and tpsSmoothing to global_state configuration (_core.py)
+- Implement calculate_kernel_solution_size() for TPS array sizing
+- Update fit_kernel() to use correct solution size for TPS parameters
+- Python API infrastructure ready; TPS disabled by default (use_tps=False)
+
+**Commits:**
+- `bac171c` - Python API support for TPS (Phase 3)
+
+### Phase 4: User-Facing Configuration & Testing (Next)
 
 **Required:**
-1. Python API changes
-   - Handle extended kernelSol size
-   - Optionally expose TPS configuration
-   - Validate TPS requirements (nrx==1, nry==1 recommended)
+1. Expose TPS to Python API
+   - Add `spatial_variation` field to `KernelConfig` with TPS support
+   - Update `fit_kernel()` to respect user TPS configuration
+   - Validate prerequisites (single region recommended for best results)
 
 2. Unit tests
    - test_tps_kernel() - verify RBF kernel values
@@ -279,24 +290,28 @@ if (! strcmp(argv[ii], "-useTPS")) {
    - test_tps_fit_coefficients() - test LAPACK solve
    - test_tps_evaluate() - verify interpolation
    - test_make_kernel_tps() - kernel assembly
+   - test_calculate_kernel_solution_size() - size calculation
 
 3. Integration tests
-   - Compare TPS vs polynomial on same image
-   - Verify smoothness at region boundaries
-   - Benchmark performance
+   - Compare TPS vs polynomial on synthetic data
+   - Verify smoothness of kernel variation
+   - Benchmark performance (TPS overhead vs gain)
+   - Test edge cases (tiny stamps, large images)
 
-### Phase 4: CLI & Documentation (Later)
+### Phase 5: CLI & Documentation (Later)
 
 - Add `-useTPS` and `-tpsSmoothing` options to vargs.c
 - Update help text and README
+- Document TPS usage patterns and when to use
 - Performance profiling and tuning
 
 ## Timeline
 
-- **Phase 1 (Completed):** Core RBF infrastructure
-- **Phase 2 (In Progress):** fitKernel integration (1–2 days)
-- **Phase 3:** Python API & tests (1 day)
-- **Phase 4:** CLI & docs (½ day)
+- **Phase 1 (Completed):** Core RBF infrastructure ✓
+- **Phase 2 (Completed):** fitKernel integration ✓
+- **Phase 3 (Completed):** Python API foundation ✓
+- **Phase 4 (Next):** User-facing configuration & testing (½ day)
+- **Phase 5:** CLI integration & documentation (½ day)
 
 ---
 
