@@ -3,7 +3,8 @@
 #include "allocate.h"
 
 /* Alard.c */
-void getKernelVec();
+int getKernelVec();
+int initKernelBasis(void);
 int fillStamp(stamp_struct*, float*, float*);
 double* kernel_vector(int, int, int, int, int*);
 void xy_conv_stamp(stamp_struct*, float*, int, int);

@@ -163,7 +163,7 @@ extern __thread double *kernel, *kernel_coeffs;
 extern __thread float *temp;
 
 /* Forward declarations - defined in alard.c */
-extern void getKernelVec(void);
+extern int getKernelVec(void);
 extern double make_kernel(int xi, int yi, double* kernelSol);
 
 /* Forward declarations - defined in functions.c */
@@ -307,7 +307,11 @@ int initKernelGlobals(int image_nx, int image_ny,
 
   /* Populate kernel_vec[i] and filter_x/filter_y via getKernelVec().
    * This replicates the per-region call at main.c lines 1093-1094. */
-  getKernelVec();
+  int nbasis = getKernelVec();
+  if (nbasis < 0) {
+    fprintf(stderr, "ERROR: Failed to initialize Gaussian kernel basis\n");
+    return -1;
+  }
 
   /* Initialize string globals normally set by vargs() — these must not be NULL
    * because buildStamps, fitKernel, and spatial_convolve call strncmp() on them.

@@ -9,6 +9,7 @@
 #include "defaults.h"
 #include "globals.h"
 #include "functions.h"
+#include "basis.h"
 
 /*
 
@@ -971,31 +972,48 @@ static int tps_fit_background(stamp_struct* stamps, int n_stamps,
  * populated global array kernel_vec is subsequently used by every convolution
  * and model-evaluation call.
  */
-void getKernelVec() {
-  int nBasisFuncs, gaussIdx, idegx, idegy, nvec, ren;
+/**
+ * @brief Initialize Gaussian kernel basis functions (Gaussian-specific).
+ *
+ * @details Creates the precomputed kernel_vec array of Gaussian basis functions.
+ *          Each basis function is a Gaussian-polynomial product.
+ *          Populates kernel_vec[nvec] for all Gaussian-polynomial combinations.
+ *
+ * @return Number of basis functions created (nCompKer), or -1 on error.
+ */
+int getKernelVec() {
+  int gaussIdx, idegx, idegy, nvec, ren;
 
-  /* Dispatch basis initialization based on iBasisType */
-  if (iBasisType == BASIS_TYPE_DELTA) {
-    nBasisFuncs = init_delta_basis_grid();
-    if (nBasisFuncs < 0) {
-      LOG_ERROR("Failed to initialize delta basis grid");
-      exit(1);
-    }
-    LOG_PROGRESS("Delta basis initialized with %d functions", nBasisFuncs);
-    return;
-  }
-
-  /* Gaussian basis initialization (default) */
+  /* Gaussian basis initialization (only for Gaussian basis type) */
   nvec = 0;
   for (gaussIdx = 0; gaussIdx < ngauss; gaussIdx++) {
     for (idegx = 0; idegx <= deg_fixe[gaussIdx]; idegx++) {
       for (idegy = 0; idegy <= deg_fixe[gaussIdx] - idegx; idegy++) {
         /* stores kernel weight mask for each order */
         kernel_vec[nvec] = kernel_vector(nvec, idegx, idegy, gaussIdx, &ren);
+        if (!kernel_vec[nvec]) {
+          LOG_ERROR("Failed to create kernel basis function %d", nvec);
+          return -1;
+        }
         nvec++;
       }
     }
   }
+
+  return nvec;
+}
+
+/**
+ * @brief Initialize the active kernel basis based on iBasisType.
+ *
+ * @details Calls set_active_basis(iBasisType) to initialize the appropriate
+ *          basis implementation (Gaussian or Delta). This is the main entry point
+ *          for basis initialization from main.c and hotpants_wrapper.c.
+ *
+ * @return 0 on success, -1 on error
+ */
+int initKernelBasis(void) {
+  return set_active_basis(iBasisType);
 }
 
 /**
@@ -3093,18 +3111,13 @@ void spatial_convolve(float* image, float** variance, int xSize, int ySize,
  * @see make_kernel_tps() for TPS evaluation
  */
 double make_kernel_dispatch(int xi, int yi, double* kernelSol) {
-  /* Dispatch based on kernel basis type (Gaussian vs. Delta) and spatial variation mode
-     (polynomial vs. TPS). */
-  if (iBasisType == BASIS_TYPE_DELTA) {
-    return make_kernel_delta(xi, yi, kernelSol);
+  /* Dispatch to active basis implementation */
+  if (!active_basis) {
+    LOG_ERROR("No active basis set");
+    return 0.0;
   }
 
-  /* Gaussian basis (default) */
-  if (useTPS) {
-    return make_kernel_tps(xi, yi, kernelSol);
-  } else {
-    return make_kernel(xi, yi, kernelSol);
-  }
+  return active_basis->eval_kernel(xi, yi, kernelSol);
 }
 
 /**

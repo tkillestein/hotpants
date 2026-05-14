@@ -1,3 +1,6 @@
+#ifndef HOTPANTS_GLOBALS_H
+#define HOTPANTS_GLOBALS_H
+
 typedef struct {
   int x0, y0;       /* origin of stamp in region coords*/
   int x, y;         /* center of stamp in region coords*/
@@ -134,3 +137,5 @@ EXTERN char xyfilename[1000];
 EXTERN int savexyflag;
 EXTERN float *xcmp, *ycmp;
 EXTERN int Ncmp;
+
+#endif  /* HOTPANTS_GLOBALS_H */
