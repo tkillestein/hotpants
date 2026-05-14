@@ -13,17 +13,35 @@ add_compile_options(-funroll-loops -O3 -Wall -D_GNU_SOURCE)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CFITSIO REQUIRED cfitsio)
 
+# Prefer OpenBLAS over Netlib BLAS for better single-threaded performance
+# and support for runtime threading control via openblas_set_num_threads().
+find_library(OPENBLAS_LIBRARY NAMES openblas)
+if(OPENBLAS_LIBRARY)
+    message(STATUS "Found OpenBLAS: ${OPENBLAS_LIBRARY}")
+    set(BLAS_LIBRARIES ${OPENBLAS_LIBRARY})
+endif()
+
 find_package(LAPACK REQUIRED)
 find_library(LAPACKE_LIBRARY NAMES lapacke REQUIRED
     DOC "LAPACKE C interface library")
 find_path(LAPACKE_INCLUDE_DIR NAMES lapacke.h REQUIRED
     DOC "Directory containing lapacke.h")
 
-# OpenMP is optional — wired up for future parallelism work.
+# OpenMP is optional — wired up for parallelism work (FFTW3 and region loops).
 find_package(OpenMP)
 
-# FFTW3 is required for FFT-accelerated convolution
+# FFTW3 is required for FFT-accelerated convolution.
+# Also find fftw3_omp for multi-threaded FFT execution.
 pkg_check_modules(FFTW3 REQUIRED fftw3)
+find_library(FFTW3_OMP_LIBRARY NAMES fftw3_omp fftw3_omp_LIBRARY
+    DOC "FFTW3 OpenMP support library")
+if(FFTW3_OMP_LIBRARY)
+    message(STATUS "Found FFTW3 OpenMP library: ${FFTW3_OMP_LIBRARY}")
+else()
+    message(WARNING "FFTW3 OpenMP library (libfftw3_omp) not found; FFT will be single-threaded. "
+                    "On Debian/Ubuntu: apt-get install libfftw3-dev. "
+                    "On macOS: brew install fftw --with-openmp")
+endif()
 message(STATUS "FFTW3 found: ${FFTW3_LIBRARIES}")
 
 # ---------------------------------------------------------------------------
@@ -55,6 +73,10 @@ target_link_libraries(hotpants PUBLIC
 
 if(OpenMP_C_FOUND)
     target_link_libraries(hotpants PUBLIC OpenMP::OpenMP_C)
+endif()
+
+if(FFTW3_OMP_LIBRARY)
+    target_link_libraries(hotpants PUBLIC ${FFTW3_OMP_LIBRARY})
 endif()
 
 # ---------------------------------------------------------------------------

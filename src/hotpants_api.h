@@ -136,22 +136,22 @@ int getPsfCenters(stamp_struct* stamp, float* iData, int nsx, int nsy,
  *
  * Args:
  *   data: pixel array
- *   nx, ny: array dimensions
- *   stat_sig: sigma-clipping threshold
- *   (additional parameters for histogram control; see defaults.h)
+ *   x0Reg, y0Reg: region origin (for internal reference)
+ *   nPixX, nPixY: array dimensions (width, height)
+ *   sum, mean, median, mode, sd, fwhm, lfwhm: output statistics
+ *   umask: pixel mask upper threshold (e.g., 0xff for OK pixels)
+ *   smask: pixel mask significance threshold (e.g., 0x8000)
+ *   maxiter: maximum iterations for sigma-clipping
  *
  * Returns:
  *   Number of pixels used in final estimate (after sigma-clipping)
  *
- * Outputs (via pointers):
- *   mean, median, mode, sd, fwhm, lfwhm
- *
  * Reference: functions.c getStampStats3() for histogram algorithm.
  */
-int getStampStats3(float* data, int nx, int ny, int nsy, int stat_type,
-                   double* mean, double* median, double* mode, double* sd,
-                   double* fwhm, double* lfwhm, int verbose, int nThread,
-                   int nComp);
+int getStampStats3(float* data, int x0Reg, int y0Reg, int nPixX, int nPixY,
+                   double* sum, double* mean, double* median, double* mode,
+                   double* sd, double* fwhm, double* lfwhm, int umask,
+                   int smask, int maxiter);
 
 /*
  * Fit spatially-varying convolution kernel via least-squares.
@@ -356,5 +356,61 @@ void cleanupSpatialConvolve(void);
  *   kernel integral (sum of all kernel pixel values at image centre)
  */
 double computeKernelNorm(double* kernel_coeffs, int nx, int ny);
+
+/* =====================================================================
+ * Threading Control Functions
+ * =====================================================================
+ * These functions enable and query multi-threaded execution in FFTW3 and BLAS.
+ * Must be called once before any kernel fitting or convolution operations.
+ */
+
+/*
+ * Initialize FFTW3 and BLAS/LAPACK threading for multi-threaded execution.
+ *
+ * This function must be called once before any HOTPANTS kernels are executed.
+ * It enables:
+ *   - FFTW3 multi-threaded FFT execution (if libfftw3_omp is available)
+ *   - BLAS/LAPACK multi-threaded linear algebra (OpenBLAS, MKL, etc.)
+ *
+ * Sets threading to the OpenMP max threads if available, otherwise 1.
+ *
+ * Safe to call multiple times (idempotent).
+ *
+ * Returns:
+ *   0 on success, -1 if FFTW3 threading initialization failed
+ */
+int init_threading(void);
+
+/*
+ * Query the number of threads being used by BLAS/LAPACK.
+ *
+ * Returns:
+ *   Number of threads (1 if single-threaded BLAS or unknown implementation)
+ */
+int get_blas_threads(void);
+
+/*
+ * Query FFTW3 threading availability.
+ *
+ * Returns:
+ *   1 if FFTW3 threading is initialized and available, 0 otherwise
+ */
+int get_fftw3_threading_available(void);
+
+/*
+ * Adjust BLAS thread count based on region layout to avoid oversubscription.
+ *
+ * In multi-region mode, sets BLAS threads to 1 (region-level parallelism is sufficient).
+ * In single-region mode, sets BLAS threads to omp_get_max_threads() (maximize per-region parallelism).
+ *
+ * Should be called once at the start of processing, before fitKernel().
+ *
+ * Args:
+ *   nRegX, nRegY: Number of regions per axis
+ *
+ * Returns:
+ *   0 on success
+ */
+int adjust_blas_threads_for_region_layout(int nRegX, int nRegY);
 
 #endif /* HOTPANTS_API_H */

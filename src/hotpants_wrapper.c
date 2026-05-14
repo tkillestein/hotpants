@@ -1,7 +1,134 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <fftw3.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include "defaults.h"
+
+/* BLAS/LAPACK threading control macros */
+#ifdef __OPENBLAS__
+extern int openblas_get_num_threads(void);
+extern void openblas_set_num_threads(int num_threads);
+#endif
+
+#ifdef __MKL__
+#include <mkl.h>
+#endif
+
+/* Track whether FFTW3 threading has been initialized (thread-safe: called once) */
+static int fftw3_threading_initialized = 0;
+
+/**
+ * @brief Initialize FFTW3 and BLAS threading for multi-threaded execution.
+ *
+ * This function must be called once before any HOTPANTS kernels are executed.
+ * It enables:
+ *   - FFTW3 multi-threaded FFT execution (if fftw3_omp is available)
+ *   - BLAS/LAPACK multi-threaded linear algebra (OpenBLAS or MKL)
+ *
+ * Sets threading to the OpenMP max threads if available, otherwise 1.
+ *
+ * Safe to call multiple times (idempotent).
+ *
+ * @return 0 on success, -1 if unable to initialize FFTW3 threads
+ */
+int init_threading(void) {
+  if (fftw3_threading_initialized)
+    return 0;  /* Already initialized */
+
+  int num_threads = 1;
+#ifdef _OPENMP
+  num_threads = omp_get_max_threads();
+#endif
+
+  /* Initialize FFTW3 multi-threaded execution.
+   * fftw_init_threads() prepares the library for threaded operation.
+   * fftw_plan_with_nthreads(n) tells FFTW3 to use n threads for plan creation and execution.
+   * Must be called BEFORE any fftw_plan_*() calls.
+   */
+  if (fftw_init_threads() == 0) {
+    fprintf(stderr, "WARNING: fftw_init_threads() failed; FFT will be single-threaded\n");
+    return -1;
+  }
+  fftw_plan_with_nthreads(num_threads);
+
+  /* Initialize BLAS/LAPACK threading.
+   * Different BLAS implementations have different APIs; we support OpenBLAS and MKL.
+   */
+#ifdef __OPENBLAS__
+  openblas_set_num_threads(num_threads);
+#endif
+
+#ifdef __MKL__
+  mkl_set_num_threads(num_threads);
+#endif
+
+  fftw3_threading_initialized = 1;
+  return 0;
+}
+
+/**
+ * @brief Query the number of threads being used by BLAS/LAPACK.
+ *
+ * @return Number of threads (1 if single-threaded BLAS or unknown implementation)
+ */
+int get_blas_threads(void) {
+#ifdef __OPENBLAS__
+  return openblas_get_num_threads();
+#elif defined(__MKL__)
+  return mkl_get_max_threads();
+#else
+  return 1;  /* Single-threaded or unknown */
+#endif
+}
+
+/**
+ * @brief Get FFTW3 threading status.
+ *
+ * @return 1 if FFTW3 threading is initialized and available, 0 otherwise
+ */
+int get_fftw3_threading_available(void) {
+  return fftw3_threading_initialized;
+}
+
+/**
+ * @brief Adjust BLAS thread count based on region layout to avoid oversubscription.
+ *
+ * In multi-region mode (nRegX > 1 or nRegY > 1), region-level OpenMP parallelism
+ * provides sufficient parallelism, so BLAS is set to single-threaded to avoid spawning
+ * too many threads (e.g., 4 regions × 4 BLAS threads = 16 threads on 4-core system).
+ *
+ * In single-region mode, BLAS is configured to use all available threads for maximum
+ * parallelism within the Cholesky solve and other linear algebra operations.
+ *
+ * @param nRegX, nRegY: Number of regions per axis
+ * @return 0 on success
+ */
+int adjust_blas_threads_for_region_layout(int nRegX, int nRegY) {
+  int blas_threads = 1;
+
+  /* Single-region mode: use all threads for BLAS */
+  if (nRegX == 1 && nRegY == 1) {
+#ifdef _OPENMP
+    blas_threads = omp_get_max_threads();
+#else
+    blas_threads = 1;
+#endif
+  }
+  /* Multi-region mode: use single thread for BLAS (region loop provides parallelism) */
+
+#ifdef __OPENBLAS__
+  openblas_set_num_threads(blas_threads);
+#endif
+
+#ifdef __MKL__
+  mkl_set_num_threads(blas_threads);
+#endif
+
+  return 0;
+}
 
 /* stamp_struct definition (copied from globals.h) */
 typedef struct {

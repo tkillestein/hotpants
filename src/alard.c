@@ -2227,30 +2227,19 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
     }
   }
 
-  /* --- Create FFTW plans (not thread-safe: serialise with critical) --- */
+  /* --- Create FFTW plans (not thread-safe: serialise with critical) ---
+   * Use FFTW_MEASURE (optimized, slow planning) in single-region mode, or
+   * FFTW_ESTIMATE (quick planning) in multi-region mode.
+   */
 #ifdef _OPENMP
 #pragma omp critical(fftw_plan)
 #endif
   {
-    /* FFTW_ESTIMATE avoids timing runs, keeping plan creation fast.
-     *
-     * Plan Shape (fft_ny, fft_nx) means:
-     *   - Input/output are 2D arrays with fft_ny rows and fft_nx columns
-     *   - Memory layout: C row-major, stride = fft_nx
-     *
-     * Forward plan (r2c):
-     *   - Input:  real_buf[fft_ny][fft_nx] = fft_ny*fft_nx doubles
-     *   - Output: ker_fft[fft_ny][fft_nx/2+1] = fft_ny*(fft_nx/2+1) complexes
-     *
-     * Inverse plan (c2r):
-     *   - Input:  ker_fft[fft_ny][fft_nx/2+1] = fft_ny*(fft_nx/2+1) complexes
-     *   - Output: real_buf[fft_ny][fft_nx] = fft_ny*fft_nx doubles (unnormalized)
-     */
-    plan_fwd =
-        fftw_plan_dft_r2c_2d(fft_ny, fft_nx, real_buf, ker_fft, FFTW_ESTIMATE);
-    plan_inv =
-        fftw_plan_dft_c2r_2d(fft_ny, fft_nx, ker_fft, real_buf, FFTW_ESTIMATE);
+    int plan_flags = (nRegX == 1 && nRegY == 1) ? FFTW_MEASURE : FFTW_ESTIMATE;
+    plan_fwd = fftw_plan_dft_r2c_2d(fft_ny, fft_nx, real_buf, ker_fft, plan_flags);
+    plan_inv = fftw_plan_dft_c2r_2d(fft_ny, fft_nx, ker_fft, real_buf, plan_flags);
   }
+
   if (!plan_fwd || !plan_inv) {
     LOG_ERROR("spatial_convolve_fft: FFTW plan creation failed");
     goto cleanup_fft;

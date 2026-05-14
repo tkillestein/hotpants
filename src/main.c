@@ -17,6 +17,11 @@
 #include "globals.h"
 #include "functions.h"
 
+/* Forward declaration of threading functions (implemented in hotpants_wrapper.c) */
+extern int init_threading(void);
+extern int get_fftw3_threading_available(void);
+extern int get_blas_threads(void);
+
 int main(int argc, char* argv[]) {
   int i, j, k, l, m;                         /* generic indices */
   char scrStr[SCRLEN];                       /* scratch string */
@@ -501,6 +506,19 @@ int main(int argc, char* argv[]) {
   }
 #endif
 
+  /* Initialize FFTW3 and BLAS/LAPACK threading for multi-threaded execution.
+   * This must be called once, after OpenMP thread pool is initialized,
+   * and before any FFT or LAPACK operations. */
+  if (init_threading() == 0) {
+    LOG_PROGRESS("Threading initialized: FFTW3 OMP=%d, BLAS threads=%d",
+                 get_fftw3_threading_available(), get_blas_threads());
+  } else {
+    LOG_WARNING("FFTW3 threading initialization failed; FFT will be single-threaded");
+  }
+
+  /* Note: BLAS thread count will be adjusted adaptively when region layout is known.
+   * See adjust_blas_threads_for_region_layout() call after regions are determined. */
+
   /******/
   /* determine pixel limits of regions, and of stamps in region */
   /******/
@@ -605,6 +623,13 @@ int main(int argc, char* argv[]) {
       }
     }
   }
+
+  /* Adjust BLAS thread count based on region layout to avoid oversubscription.
+   * In multi-region mode, BLAS uses 1 thread (region parallelism sufficient).
+   * In single-region mode, BLAS uses all threads (maximize per-region performance). */
+  adjust_blas_threads_for_region_layout(nRegX, nRegY);
+  LOG_PROGRESS("BLAS threads adjusted for region layout (%dx%d): %d threads",
+               nRegX, nRegY, get_blas_threads());
 
   /* now that we know the number of regions, if we want a fits
      binary table for the kernel info, create it here */
