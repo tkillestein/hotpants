@@ -33,6 +33,11 @@ static int tps_fit_background(stamp_struct* stamps, int n_stamps,
                               double* kernelSol);
 double get_background_tps(int xi, int yi, double* kernelSol);
 
+/* Forward declarations for FFT convolution */
+void spatial_convolve_fft(float* image, float** variance, int xSize,
+                          int ySize, double* kernelSol, float* cRdata,
+                          int* cMask);
+
 /* Forward declarations for delta function basis */
 int init_delta_basis_grid(void);
 void cleanup_delta_basis_grid(void);
@@ -119,42 +124,7 @@ void cleanup_delta_basis_grid(void) {
  *
  * Reference: Bramich (2008), Section 2.1
  */
-int xy_conv_stamp_delta(double* stamp, int mStampX, int mStampY,
-                        int basisIdx, double* pixFitted) {
-  int stampPixelX, stampPixelY, pixelIdx;
-  int kernel_x, kernel_y;
-
-  if (basisIdx < 0 || basisIdx >= fwKernel * fwKernel) {
-    LOG_ERROR("Invalid basisIdx %d (kernel has %d×%d = %d pixels)", basisIdx,
-              fwKernel, fwKernel, fwKernel * fwKernel);
-    return -1;
-  }
-
-  /* Map basis index to kernel offset (kx, ky) */
-  kernel_x = (basisIdx % fwKernel) - hwKernel;
-  kernel_y = (basisIdx / fwKernel) - hwKernel;
-
-  /* Extract stamp values shifted by kernel offset (zero-padded outside bounds) */
-  pixelIdx = 0;
-  for (stampPixelY = 0; stampPixelY < mStampY; stampPixelY++) {
-    for (stampPixelX = 0; stampPixelX < mStampX; stampPixelX++) {
-      int stamp_y = stampPixelY + kernel_y;
-      int stamp_x = stampPixelX + kernel_x;
-
-      /* Zero-pad outside stamp bounds */
-      if (stamp_x >= 0 && stamp_x < mStampX && stamp_y >= 0 &&
-          stamp_y < mStampY) {
-        int stamp_idx = stamp_x + mStampX * stamp_y;
-        pixFitted[pixelIdx] = stamp[stamp_idx];
-      } else {
-        pixFitted[pixelIdx] = 0.0;
-      }
-      pixelIdx++;
-    }
-  }
-
-  return 0;
-}
+/* xy_conv_stamp_delta is defined later in this file (see line ~1344) */
 
 /**
  * @brief Accumulate normal equations for delta basis kernel fitting.
@@ -499,8 +469,11 @@ int spatial_convolve_delta(double* image, int mImageX, int mImageY,
   LOG_DEBUG("Kernel sum from delta coefficients: %.6f", kernel_sum);
 
   /* Perform FFT-based convolution using the assembled kernel.
-     This reuses the standard FFT machinery from spatial_convolve_fft(). */
-  spatial_convolve_fft((float*)image, NULL, mImageX, mImageY, (float*)diffimage, NULL);
+     This reuses the standard FFT machinery from spatial_convolve_fft().
+     Note: spatial_convolve_fft routes through make_kernel_dispatch() which
+     handles both Gaussian and Delta bases internally. */
+  spatial_convolve_fft((float*)image, NULL, mImageX, mImageY, (double*)kernelSol,
+                       (float*)diffimage, NULL);
 
   LOG_PROGRESS("Delta basis convolution complete");
   return 0;
