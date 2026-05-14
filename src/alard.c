@@ -505,6 +505,86 @@ int apply_regularization(double* matrix, int matrixSize,
 }
 
 /* =====================================================================
+   DELTA FUNCTION BASIS — Kernel Evaluation & Convolution
+   ===================================================================== */
+
+/**
+ * @brief Evaluate the spatially-varying kernel using delta basis at position
+ *        (xi, yi).
+ *
+ * @details For delta basis, evaluates the fitted kernel as a sum of delta RBF
+ *          functions weighted by their fitted coefficients:
+ *
+ *          K(x,y) = Σᵢ cᵢ · φᵢ(x,y)
+ *
+ *          where:
+ *          - cᵢ are the fitted delta basis coefficients
+ *          - φᵢ are the delta RBF basis functions
+ *          - Spatial variation (polynomial or TPS) can be applied to cᵢ(x,y)
+ *
+ * @param xi, yi Image coordinates where kernel is evaluated
+ * @param kernelSol Fitted delta basis coefficients (output of fitKernel)
+ * @return Sum of all pixels in the assembled kernel image (flux-scaling factor)
+ *
+ * @note Integrates with make_kernel_dispatch() through iBasisType routing.
+ * @note Currently a stub returning error (full implementation deferred to
+ *       extended work that requires integration with spatial variation logic).
+ *
+ * Reference: Bramich (2008), Section 2.3 for kernel evaluation.
+ */
+double make_kernel_delta(int xi, int yi, double* kernelSol) {
+  LOG_ERROR("Delta kernel evaluation not yet fully implemented (Phase 5+)");
+  /* TODO: Implement delta kernel evaluation.
+           This requires:
+           1. For each delta basis function i:
+              - Evaluate spatial variation coefficient cᵢ(xi, yi)
+              - Evaluate delta basis function φᵢ at each kernel pixel
+              - Accumulate weighted sum into kernel[]
+           2. Handle integration with polynomial/TPS spatial variation
+           3. Return kernel pixel sum
+  */
+  return 0.0;
+}
+
+/**
+ * @brief Apply spatially-varying delta basis kernel via FFT convolution.
+ *
+ * @details Convolves a full image with a spatially-varying kernel based on
+ *          delta basis functions. For each output pixel, evaluates the kernel
+ *          at that position using make_kernel_delta() and applies FFT
+ *          convolution.
+ *
+ *          Parallel to spatial_convolve_fft() for Gaussian basis.
+ *
+ * @param image Input image (template or science)
+ * @param mImageX, mImageY Image dimensions
+ * @param diffimage Output difference image (pre-allocated)
+ * @param kernelSol Fitted delta basis coefficients
+ * @return 0 on success, -1 on error
+ *
+ * @note Currently a stub returning error (full implementation deferred).
+ * @note Would use FFT-accelerated convolution for performance.
+ * @note Requires proper integration with rPixX, rPixY global context.
+ *
+ * Reference: Alard & Lupton (1998), Section 3 for FFT convolution strategy.
+ */
+int spatial_convolve_delta(double* image, int mImageX, int mImageY,
+                           double* diffimage, const double* kernelSol) {
+  LOG_ERROR("Delta basis spatial convolution not yet fully implemented (Phase 5+)");
+  /* TODO: Implement delta basis convolution.
+           Strategy (parallel to spatial_convolve_fft):
+           1. If single-region (nRegX=1, nRegY=1):
+              - Evaluate kernel at each pixel via make_kernel_delta()
+              - Convolve image with spatially-varying kernel (FFT accelerated)
+           2. If multi-region:
+              - Use region-level parallelism, evaluate kernel per region
+           3. Handle boundary padding for FFT
+           4. Accumulate result into diffimage
+  */
+  return -1;
+}
+
+/* =====================================================================
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
    ===================================================================== */
 
@@ -3113,12 +3193,9 @@ void spatial_convolve(float* image, float** variance, int xSize, int ySize,
  */
 double make_kernel_dispatch(int xi, int yi, double* kernelSol) {
   /* Dispatch based on kernel basis type (Gaussian vs. Delta) and spatial variation mode
-     (polynomial vs. TPS).
-     NOTE: Phase 2+ will add iBasisType == BASIS_TYPE_DELTA branch. */
+     (polynomial vs. TPS). */
   if (iBasisType == BASIS_TYPE_DELTA) {
-    LOG_ERROR("Delta function basis not yet implemented (Phase 2+)");
-    return 0.0;
-    /* TODO: return make_kernel_delta(xi, yi, kernelSol); */
+    return make_kernel_delta(xi, yi, kernelSol);
   }
 
   /* Gaussian basis (default) */
