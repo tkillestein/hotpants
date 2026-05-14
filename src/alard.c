@@ -203,8 +203,6 @@ int fillStamp(stamp_struct* stamp, float* imConv, float* imRef) {
  * Alard & Lupton (1998), §2.  When this subtraction is applied *ren is set to
  * 1 (the "renormalise" flag propagated to xy_conv_stamp).
  *
- * If usePCA is set the work is delegated to kernel_vector_PCA().
- *
  * @param n     Sequential index of this basis function within kernel_vec.
  * @param deg_x Polynomial degree of the x-direction filter.
  * @param deg_y Polynomial degree of the y-direction filter.
@@ -218,10 +216,6 @@ double* kernel_vector(int n, int deg_x, int deg_y, int ig, int* ren) {
   int kernelRow, kernelCol, xFilterIdx, xParityCheck, yParityCheck, xKernelIdx,
       pixelIdx;
   double filterXSum, filterYSum, kernelPosition, gaussianVal;
-
-  if (usePCA) {
-    return kernel_vector_PCA(n, deg_x, deg_y, ig, ren);
-  }
 
   vector = (double*)malloc(fwKernel * fwKernel * sizeof(double));
   /* Detect parity: (deg/2)*2 - deg = 0 if even, -1 if odd.
@@ -282,49 +276,6 @@ double* kernel_vector(int n, int deg_x, int deg_y, int ig, int* ren) {
 }
 
 /**
- * @brief Compute the n-th kernel basis function image from a pre-supplied PCA
- *        basis set.
- *
- * @details Instead of Gaussian-polynomial analytic forms, each basis image is
- * read directly from the global PCA[n] array (empirical principal components
- * derived from observed PSFs).  As with kernel_vector(), for n > 0 the zeroth
- * PCA component is subtracted so that higher components represent differential
- * corrections, and *ren is set to 1 to propagate this renormalisation flag to
- * xy_conv_stamp_PCA().
- *
- * @param n     Sequential index of this basis function.
- * @param deg_x Polynomial degree (unused in PCA mode; kept for API symmetry).
- * @param deg_y Polynomial degree (unused in PCA mode; kept for API symmetry).
- * @param ig    Gaussian index (unused in PCA mode; kept for API symmetry).
- * @param ren   Output flag: set to 1 when the zeroth PCA basis is subtracted.
- * @return Pointer to a newly allocated fwKernel*fwKernel double array
- *         initialised with PCA[n] (minus PCA[0] for n > 0).
- */
-double* kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int* ren) {
-  double *vector = NULL, *kernel0 = NULL;
-  int xIdx, yIdx;
-
-  vector = (double*)malloc(fwKernel * fwKernel * sizeof(double));
-
-  for (xIdx = 0; xIdx < fwKernel; xIdx++) {
-    for (yIdx = 0; yIdx < fwKernel; yIdx++) {
-      vector[xIdx + fwKernel * yIdx] = PCA[n][xIdx + fwKernel * yIdx];
-    }
-  }
-
-  if (n > 0) kernel0 = kernel_vec[0];
-
-  if (n > 0) {
-    for (xIdx = 0; xIdx < fwKernel * fwKernel; xIdx++) {
-      vector[xIdx] -= kernel0[xIdx];
-    }
-    *ren = 1;
-  }
-
-  return vector;
-}
-
-/**
  * @brief Convolve the substamp region of an image with the n-th separable
  *        Gaussian-polynomial kernel basis function.
  *
@@ -348,8 +299,6 @@ double* kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int* ren) {
  * subtracted pixel-by-pixel from the result, matching the differential
  * construction of the higher-order basis images.
  *
- * In PCA mode the call is forwarded to xy_conv_stamp_PCA().
- *
  * Reference: Alard & Lupton (1998), Sect. 2; classic signal-processing
  * optimization.
  *
@@ -365,11 +314,6 @@ void xy_conv_stamp(stamp_struct* stamp, float* image, int n, int ren) {
   int stampColIdx, stampRowIdx, kerOffsetX, kerOffsetY, xij, sub_width, xi, yi,
       imgColIdx, imgRowIdx, pixelIdx;
   double *v0, *imc;
-
-  if (usePCA) {
-    xy_conv_stamp_PCA(stamp, image, n, ren);
-    return;
-  }
 
   xi = stamp->xss[stamp->sscnt];
   yi = stamp->yss[stamp->sscnt];
@@ -414,58 +358,6 @@ void xy_conv_stamp(stamp_struct* stamp, float* image, int n, int ren) {
   return;
 }
 
-/**
- * @brief Convolve the substamp region of an image with the n-th PCA kernel
- *        basis function using a direct 2-D summation.
- *
- * @details Unlike xy_conv_stamp(), which exploits filter separability, this
- * routine performs a full 2-D correlation between the image patch and the
- * fwKernel×fwKernel PCA basis image PCA[n].  The fwKSStamp×fwKSStamp result
- * is written into stamp->vectors[n].  If @p ren is non-zero, stamp->vectors[0]
- * is subtracted to match the differential construction used in PCA mode.
- *
- * @param stamp  Stamp whose current substamp defines the pixel region to
- * convolve.
- * @param image  Full-frame input image to be convolved.
- * @param n      PCA basis index; selects PCA[n] and the output slot
- *               stamp->vectors[n].
- * @param ren    If non-zero, subtract stamp->vectors[0] from the result after
- *               convolution.
- */
-void xy_conv_stamp_PCA(stamp_struct* stamp, float* image, int n, int ren) {
-  int imgColIdx, imgRowIdx, kerOffsetX, kerOffsetY, xij, xi, yi, pixelIdx;
-  double *v0, *imc;
-
-  xi = stamp->xss[stamp->sscnt];
-  yi = stamp->yss[stamp->sscnt];
-  imc = stamp->vectors[n];
-
-  /* pull area to convolve out of full reference image region */
-  for (imgRowIdx = yi - hwKSStamp; imgRowIdx <= yi + hwKSStamp; imgRowIdx++) {
-    for (imgColIdx = xi - hwKSStamp; imgColIdx <= xi + hwKSStamp; imgColIdx++) {
-      xij = imgColIdx - (xi - hwKSStamp) +
-            fwKSStamp * (imgRowIdx - (yi - hwKSStamp));
-      imc[xij] = 0.;
-
-      for (kerOffsetY = -hwKernel; kerOffsetY <= hwKernel; kerOffsetY++) {
-        for (kerOffsetX = -hwKernel; kerOffsetX <= hwKernel; kerOffsetX++) {
-          imc[xij] += image[(imgColIdx + kerOffsetX) +
-                            rPixX * (imgRowIdx + kerOffsetY)] *
-                      PCA[n][(kerOffsetX + hwKernel) +
-                             fwKernel * (kerOffsetY + hwKernel)];
-        }
-      }
-    }
-  }
-
-  if (ren) {
-    v0 = stamp->vectors[0];
-    for (pixelIdx = 0; pixelIdx < fwKSStamp * fwKSStamp; pixelIdx++)
-      imc[pixelIdx] -= v0[pixelIdx];
-  }
-
-  return;
-}
 
 /**
  * @brief Solve A·x = b in-place where A is symmetric positive-definite.
@@ -1003,140 +895,6 @@ double check_stamps(stamp_struct* stamps, int nS, float* imRef,
     return 0;
 
   return 0;
-}
-
-/**
- * @brief Alternative implementation of build_matrix() using a slightly
- *        different spatial coordinate normalisation.
- *
- * @details Functionally equivalent to build_matrix() but computes the
- * spatial polynomial weights wxy[istamp][k] using coordinates normalised as
- * fx = (xstamp - rPixX/2) / (rPixX/2) rather than the half-pixel-shifted
- * convention used in build_matrix().  This version is not called in the
- * default code path; build_matrix() is used instead.  Kept for reference and
- * potential future use.
- *
- * See build_matrix() for a full description of the matrix structure.
- *
- * @param stamps  Array of nS stamps with pre-built per-stamp matrices.
- * @param nS      Number of stamps.
- * @param matrix  Pre-allocated (mat_size+1)×(mat_size+1) output matrix,
- *                zeroed on entry; filled with the assembled normal-equations
- *                matrix on return.
- */
-void build_matrix_new(stamp_struct* stamps, int nS, double** matrix) {
-  int mat_size, i, j, pixStamp, istamp, k, i1, i2, j1, j2, ibg, jbg, ivecbg, jj;
-  int ncomp1, ncomp2, ncomp, nbg_vec;
-  double **matrix0, p0, q, fx, fy;
-  double** vec;
-
-  int ideg1, ideg2, xstamp, ystamp;
-  double a1, a2;
-
-  ncomp1 = nCompKer - 1;
-  ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
-  ncomp = ncomp1 * ncomp2;
-  nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-
-  pixStamp = fwKSStamp * fwKSStamp;
-
-  mat_size = ncomp1 * ncomp2 + nbg_vec + 1;
-  LOG_DEBUG("Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i", mat_size, ncomp2,
-            ncomp1, nbg_vec);
-
-  for (i = 0; i <= mat_size; i++)
-    for (j = 0; j <= mat_size; j++) matrix[i][j] = 0.0;
-
-  for (i = 0; i < nS; i++)
-    for (j = 0; j < ncomp2; j++) wxy[i][j] = 0.0;
-
-  for (istamp = 0; istamp < nS; istamp++) {
-    /* skip over any bad stamps along the way */
-    while (stamps[istamp].sscnt >= stamps[istamp].nss) {
-      ++istamp;
-      if (istamp >= nS) break;
-    }
-    if (istamp >= nS) break;
-
-    vec = stamps[istamp].vectors;
-    xstamp = stamps[istamp].xss[stamps[istamp].sscnt];
-    ystamp = stamps[istamp].yss[stamps[istamp].sscnt];
-
-    /* build weight function *HERE*, implicitly giving bad stamps zero weight */
-    /*   because we skip them over above... */
-    k = 0;
-
-    fx = (xstamp - rPixX / 2) / rPixX / 2;
-    fy = (ystamp - rPixY / 2) / rPixY / 2;
-
-    for (ideg1 = 0, a1 = 1.0; ideg1 <= kerOrder; ideg1++, a1 *= fx)
-      for (ideg2 = 0, a2 = 1.0; ideg2 <= kerOrder - ideg1; ideg2++, a2 *= fy)
-        wxy[istamp][k++] = a1 * a2;
-
-    matrix0 = stamps[istamp].mat;
-    for (i = 0; i < ncomp; i++) {
-      /* Decompose linear index i into (i1, i2):
-         i1 = which Gaussian component (0 to ncomp1-1)
-         i2 = which polynomial term within that component (0 to ncomp2-1) */
-      i1 = i / ncomp2;
-      i2 = i - i1 * ncomp2;
-
-      for (j = 0; j <= i; j++) {
-        /* Same decomposition for column index j */
-        j1 = j / ncomp2;
-        j2 = j - j1 * ncomp2;
-
-        /* spatially weighted W_m1 and W_m2 integrals */
-        matrix[i + 2][j + 2] +=
-            wxy[istamp][i2] * wxy[istamp][j2] * matrix0[i1 + 2][j1 + 2];
-      }
-    }
-
-    matrix[1][1] += matrix0[1][1];
-    for (i = 0; i < ncomp; i++) {
-      i1 = i / ncomp2;
-      i2 = i - i1 * ncomp2;
-      matrix[i + 2][1] += wxy[istamp][i2] * matrix0[i1 + 2][1];
-    }
-
-    for (ibg = 0; ibg < nbg_vec; ibg++) {
-      i = ncomp + ibg + 1;
-      ivecbg = ncomp1 + ibg + 1;
-      for (i1 = 1; i1 < ncomp1 + 1; i1++) {
-        p0 = 0.0;
-
-        /* integrate convolved images over all order backgrounds */
-        for (k = 0; k < pixStamp; k++) p0 += vec[i1][k] * vec[ivecbg][k];
-
-        /* spatially weighted image * background terms */
-        for (i2 = 0; i2 < ncomp2; i2++) {
-          jj = (i1 - 1) * ncomp2 + i2 + 1;
-          matrix[i + 1][jj + 1] += p0 * wxy[istamp][i2];
-        }
-      }
-
-      p0 = 0.0;
-      for (k = 0; k < pixStamp; k++) p0 += vec[0][k] * vec[ivecbg][k];
-      matrix[i + 1][1] += p0;
-
-      /* background * background */
-      for (jbg = 0; jbg <= ibg; jbg++) {
-        for (k = 0, q = 0.0; k < pixStamp; k++)
-          q += vec[ivecbg][k] * vec[ncomp1 + jbg + 1][k];
-        matrix[i + 1][ncomp + jbg + 2] += q;
-      }
-    }
-  }
-
-  /* fill lower half of matrix */
-  for (i = 0; i < mat_size; i++) {
-    for (j = 0; j <= i; j++) {
-      matrix[j + 1][i + 1] = matrix[i + 1][j + 1];
-      /* fprintf(stderr, "matrix[%i][%i]: %lf\n", i,j,matrix[i+1][j+1]); */
-    }
-  }
-
-  return;
 }
 
 /**

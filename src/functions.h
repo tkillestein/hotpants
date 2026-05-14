@@ -6,9 +6,7 @@
 void getKernelVec();
 int fillStamp(stamp_struct*, float*, float*);
 double* kernel_vector(int, int, int, int, int*);
-double* kernel_vector_PCA(int, int, int, int, int*);
 void xy_conv_stamp(stamp_struct*, float*, int, int);
-void xy_conv_stamp_PCA(stamp_struct*, float*, int, int);
 void fitKernel(stamp_struct*, float*, float*, float*, double*, double*, double*,
                int*);
 void build_matrix0(stamp_struct*);
@@ -35,14 +33,12 @@ int cutSStamp(stamp_struct*, float*);
 double checkPsfCenter(float*, int, int, int, int, int, int, double, float,
                       float, int, int, int, int);
 int getPsfCenters(stamp_struct*, float*, int, int, double, int, int);
-int getPsfCentersORIG(stamp_struct*, float*, int, int, double, int, int);
 int getStampStats3(float*, int, int, int, int, double*, double*, double*,
                    double*, double*, double*, double*, int, int, int);
 void getNoiseStats3(float*, float*, double*, int*, int, int);
 int stampStats(double*, int*, long, double*, double*, double*, double*, double*,
                double*, double*);
 int sigma_clip(float*, int, double*, double*, int);
-float* calculateAvgNoise(float*, int*, int, int, int, int, int); /* not used? */
 void freeStampMem(stamp_struct*, int);
 /*int         makeNoiseImage2(float **, float, float, float *, float, float,
  * int, int, double *);*/
