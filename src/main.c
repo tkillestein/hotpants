@@ -16,6 +16,7 @@
  * the extern declarations provided by globals.h by default. */
 #include "globals.h"
 #include "functions.h"
+#include "decorrelation.h"
 
 /* Forward declaration of threading functions (implemented in hotpants_wrapper.c) */
 extern int init_threading(void);
@@ -63,6 +64,7 @@ int main(int argc, char* argv[]) {
   int oBitpix, oNaxis;
   long oNaxes[MAXDIM];
   float* oRData = NULL;
+  float* oRDataDecorc = NULL; /* Decorrelated difference image buffer */
 
   /* extraneous image; eRData now defined in globals.h */
   fitsfile* ePtr;
@@ -1200,6 +1202,14 @@ int main(int argc, char* argv[]) {
         fitKernel(ctStamps, iRData, tRData, oRData, tKerSol, &meansigSubstamps,
                   &scatterSubstamps, &NskippedSubstamps);
 
+      /* Initialize decorrelation grid if enabled */
+      if (useDecorrelation) {
+        if (decorrelation_init_region(tKerSol) < 0) {
+          LOG_ERROR("Failed to initialize decorrelation grid");
+          useDecorrelation = 0; /* Disable and continue */
+        }
+      }
+
       /* zero out oRData to accept output diff image */
       oRData = (float*)realloc(oRData, rPixX * rPixY * sizeof(float));
       fset(oRData, fillVal, rPixX, rPixY);
@@ -1260,6 +1270,20 @@ int main(int argc, char* argv[]) {
 
       /* eRData now contains partial noise image */
       /* oRData now contains difference image */
+
+      /* Apply decorrelation if enabled */
+      if (useDecorrelation && decorr_grid) {
+        oRDataDecorc = (float*)malloc(rPixX * rPixY * sizeof(float));
+        if (oRDataDecorc && decorrelation_apply_region(oRData, rPixY, rPixX,
+                                                        oRDataDecorc) == 0) {
+          LOG_PROGRESS("Decorrelation applied to difference image");
+        } else {
+          LOG_ERROR("Decorrelation failed, using original difference image");
+          if (oRDataDecorc) free(oRDataDecorc);
+          oRDataDecorc = NULL;
+        }
+      }
+
       /* tRData is no longer needed */
       /* use to read in other noise image if necessary */
       fset(tRData, fillValNoise, rPixX, rPixY);
@@ -1745,7 +1769,33 @@ int main(int argc, char* argv[]) {
                                lpixelOutX, lpixelOutY, xBufLo, yBufLo))
         printError(status);
 
-      /* extraneous code, but the convolved image is the second layer if its
+      /* decorrelated difference image (if computed) is the second layer */
+      if (oRDataDecorc) {
+        if (fits_movrel_hdu(oPtr, 1, NULL, &status) ||
+            hp_fits_write_subset(oPtr, 0, 2, oNaxes, oRDataDecorc, &status,
+                                 outShort, outBzero, outBscale, fpixelOutX,
+                                 fpixelOutY, lpixelOutX, lpixelOutY, xBufLo,
+                                 yBufLo))
+          printError(status);
+
+        /* Add FITS header keywords for decorrelated layer */
+        if (fits_write_key_str(oPtr, "EXTNAME", "DECORR",
+                               "Decorrelated difference image (DMTN-021)",
+                               &status) ||
+            fits_write_key_str(oPtr, "HIERARCH DECORR_METHOD", "AFTERBURNER",
+                               "Decorrelation method (LSST DMTN-021)", &status) ||
+            fits_write_key_flt(oPtr, "HIERARCH DECORR_SCI_VAR", decorrScienceVar,
+                               -8, "Science image variance for decorrelation",
+                               &status) ||
+            fits_write_key_flt(oPtr, "HIERARCH DECORR_TPL_VAR", decorrTemplateVar,
+                               -8, "Template image variance for decorrelation",
+                               &status))
+          printError(status);
+
+        LOG_PROGRESS("Wrote decorrelated difference image to FITS layer 2");
+      }
+
+      /* extraneous code, but the convolved image is the next layer if its
        * asked for... */
       if (inclConvImage)
         if (fits_movrel_hdu(oPtr, 1, NULL, &status)) printError(status);
@@ -2102,6 +2152,14 @@ int main(int argc, char* argv[]) {
                          "HOTPanTS : Reference Image", &status);
   fits_write_key_longstr(oPtr, "DIFFIM", outim, "HOTPanTS : Difference Image",
                          &status);
+
+  if (useDecorrelation) {
+    fits_write_key_str(oPtr, "COMMENT",
+                       "This file includes decorrelated difference image (layer 2)",
+                       "", &status);
+    fits_write_key_str(oPtr, "COMMENT",
+                       "See DMTN-021: LSST Afterburner Decorrelation", "", &status);
+  }
 
   fits_write_key_str(oPtr, "PHOTNORM", photNormalize,
                      "Direction of photometric normalization", &status);

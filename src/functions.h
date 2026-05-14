@@ -22,6 +22,7 @@ char check_again(stamp_struct*, double*, float*, float*, float*, double*,
 void spatial_convolve(float*, float**, int, int, double*, float*, int*);
 double make_kernel(int, int, double*);
 double get_background(int, int, double*);
+double make_kernel_local_dispatch(int, int, double*, double*, double*);
 void make_model(stamp_struct*, double*, float*);
 
 /* Functions.c */

@@ -112,6 +112,11 @@ void vargs(int argc, char* argv[]) {
   useTPS = D_USE_TPS;
   tpsSmoothing = D_TPS_SMOOTHING;
 
+  useDecorrelation = D_USE_DECORRELATION;
+  decorrUseTPS = D_DECORR_USE_TPS;
+  decorrScienceVar = D_DECORR_SCIENCE_VAR;
+  decorrTemplateVar = D_DECORR_TEMPLATE_VAR;
+
 #define HELP_APPEND(fmt, ...) \
   snprintf(help + strlen(help), sizeof(help) - strlen(help), fmt, ##__VA_ARGS__)
   snprintf(help, sizeof(help), "Usage:  hotpants [options]\n");
@@ -262,6 +267,21 @@ void vargs(int argc, char* argv[]) {
   HELP_APPEND(
       "   [-tpsSmoothing val]: TPS regularization parameter (%.1e)\n",
       tpsSmoothing);
+  HELP_APPEND(
+      "   [-useDecorrelation flag]: enable LSST afterburner decorrelation (DMTN-021) "
+      "(%d)\n",
+      D_USE_DECORRELATION);
+  HELP_APPEND(
+      "   [-decorrUseTPS flag]: use TPS for φ interpolation in decorrelation (%d)\n",
+      D_DECORR_USE_TPS);
+  HELP_APPEND(
+      "   [-decorrScienceVar val]: science image variance for decorrelation (%.1e, "
+      "0=auto)\n",
+      D_DECORR_SCIENCE_VAR);
+  HELP_APPEND(
+      "   [-decorrTemplateVar val]: template image variance for decorrelation "
+      "(%.1e, 0=auto)\n",
+      D_DECORR_TEMPLATE_VAR);
   HELP_APPEND(
       "   [-ssig statsig]   : threshold for sigma clipping statistics  "
       "(%.1f)\n",
@@ -572,6 +592,14 @@ void vargs(int argc, char* argv[]) {
         sscanf(argv[++iarg], "%d", &useTPS);
       } else if (strcasecmp(argv[iarg] + 1, "tpsSmoothing") == 0) {
         sscanf(argv[++iarg], "%lf", &tpsSmoothing);
+      } else if (strcasecmp(argv[iarg] + 1, "useDecorrelation") == 0) {
+        sscanf(argv[++iarg], "%d", &useDecorrelation);
+      } else if (strcasecmp(argv[iarg] + 1, "decorrUseTPS") == 0) {
+        sscanf(argv[++iarg], "%d", &decorrUseTPS);
+      } else if (strcasecmp(argv[iarg] + 1, "decorrScienceVar") == 0) {
+        sscanf(argv[++iarg], "%lf", &decorrScienceVar);
+      } else if (strcasecmp(argv[iarg] + 1, "decorrTemplateVar") == 0) {
+        sscanf(argv[++iarg], "%lf", &decorrTemplateVar);
       } else {
         fprintf(stderr, "Unknown option : %s\n", argv[iarg]);
         exit(1);
