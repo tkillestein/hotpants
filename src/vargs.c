@@ -106,6 +106,9 @@ void vargs(int argc, char* argv[]) {
 
   nThread = D_NTHREAD;
 
+  useTPS = D_USE_TPS;
+  tpsSmoothing = D_TPS_SMOOTHING;
+
 #define HELP_APPEND(fmt, ...) \
   snprintf(help + strlen(help), sizeof(help) - strlen(help), fmt, ##__VA_ARGS__)
   snprintf(help, sizeof(help), "Usage:  hotpants [options]\n");
@@ -243,6 +246,12 @@ void vargs(int argc, char* argv[]) {
       "   [-bgo bgorder]    : spatial order of background variation within "
       "region (%d)\n",
       bgOrder);
+  HELP_APPEND(
+      "   [-useTPS flag]    : use thin plate splines for kernel variation (%d)\n",
+      useTPS);
+  HELP_APPEND(
+      "   [-tpsSmoothing val]: TPS regularization parameter (%.1e)\n",
+      tpsSmoothing);
   HELP_APPEND(
       "   [-ssig statsig]   : threshold for sigma clipping statistics  "
       "(%.1f)\n",
@@ -528,6 +537,10 @@ void vargs(int argc, char* argv[]) {
         }
       } else if (strcasecmp(argv[iarg] + 1, "nt") == 0) {
         sscanf(argv[++iarg], "%d", &nThread);
+      } else if (strcasecmp(argv[iarg] + 1, "useTPS") == 0) {
+        sscanf(argv[++iarg], "%d", &useTPS);
+      } else if (strcasecmp(argv[iarg] + 1, "tpsSmoothing") == 0) {
+        sscanf(argv[++iarg], "%lf", &tpsSmoothing);
       } else {
         fprintf(stderr, "Unknown option : %s\n", argv[iarg]);
         exit(1);
