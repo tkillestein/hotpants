@@ -136,22 +136,22 @@ int getPsfCenters(stamp_struct* stamp, float* iData, int nsx, int nsy,
  *
  * Args:
  *   data: pixel array
- *   nx, ny: array dimensions
- *   stat_sig: sigma-clipping threshold
- *   (additional parameters for histogram control; see defaults.h)
+ *   x0Reg, y0Reg: region origin (for internal reference)
+ *   nPixX, nPixY: array dimensions (width, height)
+ *   sum, mean, median, mode, sd, fwhm, lfwhm: output statistics
+ *   umask: pixel mask upper threshold (e.g., 0xff for OK pixels)
+ *   smask: pixel mask significance threshold (e.g., 0x8000)
+ *   maxiter: maximum iterations for sigma-clipping
  *
  * Returns:
  *   Number of pixels used in final estimate (after sigma-clipping)
  *
- * Outputs (via pointers):
- *   mean, median, mode, sd, fwhm, lfwhm
- *
  * Reference: functions.c getStampStats3() for histogram algorithm.
  */
-int getStampStats3(float* data, int nx, int ny, int nsy, int stat_type,
-                   double* mean, double* median, double* mode, double* sd,
-                   double* fwhm, double* lfwhm, int verbose, int nThread,
-                   int nComp);
+int getStampStats3(float* data, int x0Reg, int y0Reg, int nPixX, int nPixY,
+                   double* sum, double* mean, double* median, double* mode,
+                   double* sd, double* fwhm, double* lfwhm, int umask,
+                   int smask, int maxiter);
 
 /*
  * Fit spatially-varying convolution kernel via least-squares.

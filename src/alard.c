@@ -32,86 +32,6 @@ static int tps_fit_background(stamp_struct* stamps, int n_stamps,
 double get_background_tps(int xi, int yi, double* kernelSol);
 
 /* =====================================================================
-   FFT PLAN CACHE — Performance Optimization
-   ===================================================================== */
-
-/* Cache FFTW plans by (nx, ny) to avoid replanning on repeated calls.
- * Single-region mode may process the same image dimensions many times;
- * caching eliminates repeated planning overhead (~1-2s per unique size). */
-#define FFTW_PLAN_CACHE_SIZE 8
-
-typedef struct {
-  int nx, ny;                    /* cached plan dimensions */
-  fftw_plan plan_fwd, plan_inv;  /* forward (r2c) and inverse (c2r) plans */
-  double* real_buf;              /* working buffer (may be shared) */
-} fftw_plan_cache_entry;
-
-static fftw_plan_cache_entry fftw_plan_cache[FFTW_PLAN_CACHE_SIZE] = {0};
-static int fftw_plan_cache_count = 0;
-
-/**
- * @brief Look up or create cached FFTW plans for given dimensions.
- *
- * Caching avoids replanning when the same FFT size is encountered multiple times
- * (common in single-region or uniform multi-region processing).
- *
- * Plan creation uses FFTW_MEASURE (for optimized execution) in single-region mode,
- * or FFTW_ESTIMATE (faster planning) in multi-region mode where planning overhead
- * is less significant. This balances plan quality against planning time.
- *
- * Thread Safety: Plan creation is protected by #pragma omp critical(fftw_plan)
- * in spatial_convolve_fft; this function assumes it's called only within that
- * critical section.
- *
- * @param nx, ny: FFT dimensions (padded to power-of-2 or composite for FFTW)
- * @param real_buf: pre-allocated working buffer (fftw_malloc'd, size >= nx*ny)
- * @param plan_fwd, plan_inv: output plan pointers
- * @return 1 on cache hit, 0 on cache miss (plans created), -1 on creation failure
- */
-static int get_fftw_plans(int nx, int ny, double* real_buf,
-                          fftw_plan* plan_fwd, fftw_plan* plan_inv) {
-  int i;
-
-  /* Search cache for existing plans */
-  for (i = 0; i < fftw_plan_cache_count; i++) {
-    if (fftw_plan_cache[i].nx == nx && fftw_plan_cache[i].ny == ny) {
-      *plan_fwd = fftw_plan_cache[i].plan_fwd;
-      *plan_inv = fftw_plan_cache[i].plan_inv;
-      return 1;  /* Cache hit */
-    }
-  }
-
-  /* Cache miss: create new plans.
-   * Use FFTW_MEASURE for optimized execution in single-region mode (slow planning,
-   * but fast execution repeated many times). Use FFTW_ESTIMATE in multi-region mode
-   * (quick planning, acceptable execution since each region does few iterations). */
-  int plan_flags = FFTW_ESTIMATE;
-  if (nRegX == 1 && nRegY == 1) {
-    plan_flags = FFTW_MEASURE;  /* Optimize plan for single-region full-frame processing */
-  }
-
-  *plan_fwd = fftw_plan_dft_r2c_2d(ny, nx, real_buf, NULL, plan_flags);
-  *plan_inv = fftw_plan_dft_c2r_2d(ny, nx, NULL, real_buf, plan_flags);
-
-  if (!*plan_fwd || !*plan_inv) {
-    if (*plan_fwd) fftw_destroy_plan(*plan_fwd);
-    if (*plan_inv) fftw_destroy_plan(*plan_inv);
-    return -1;
-  }
-
-  /* Store in cache if space available */
-  if (fftw_plan_cache_count < FFTW_PLAN_CACHE_SIZE) {
-    fftw_plan_cache[fftw_plan_cache_count].nx = nx;
-    fftw_plan_cache[fftw_plan_cache_count].ny = ny;
-    fftw_plan_cache[fftw_plan_cache_count].plan_fwd = *plan_fwd;
-    fftw_plan_cache[fftw_plan_cache_count].plan_inv = *plan_inv;
-    fftw_plan_cache_count++;
-  }
-
-  return 0;  /* Cache miss but plans created successfully */
-}
-
-/* =====================================================================
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
    ===================================================================== */
 
@@ -2307,39 +2227,21 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
     }
   }
 
-  /* --- Get FFTW plans (cached to avoid replanning) ---
-   *
-   * Plan caching is essential for single-region processing where the same
-   * FFT dimensions are used repeatedly. For multi-region processing with
-   * uniform region sizes, caching also provides benefit.
-   *
-   * Plan creation uses FFTW_MEASURE (optimized, slow planning) in single-region
-   * mode, or FFTW_ESTIMATE (quick planning) in multi-region mode.
-   *
-   * Thread safety: get_fftw_plans() is called within #pragma omp critical(fftw_plan)
-   * to ensure only one thread creates plans at a time.
+  /* --- Create FFTW plans (not thread-safe: serialise with critical) ---
+   * Use FFTW_MEASURE (optimized, slow planning) in single-region mode, or
+   * FFTW_ESTIMATE (quick planning) in multi-region mode.
    */
 #ifdef _OPENMP
 #pragma omp critical(fftw_plan)
 #endif
   {
-    int cache_status = get_fftw_plans(fft_nx, fft_ny, real_buf, &plan_fwd, &plan_inv);
-    if (cache_status == 1) {
-      /* Cache hit: plans were already computed and stored */
-      LOG_DEBUG("FFT plan cache hit for %dx%d", fft_nx, fft_ny);
-    } else if (cache_status == 0) {
-      /* Cache miss: new plans created and stored */
-      LOG_DEBUG("FFT plan cache miss for %dx%d (created %s)",
-                fft_nx, fft_ny, (nRegX == 1 && nRegY == 1) ? "MEASURE" : "ESTIMATE");
-    } else {
-      /* Creation failure */
-      LOG_ERROR("spatial_convolve_fft: FFTW plan creation failed");
-      goto cleanup_fft;
-    }
+    int plan_flags = (nRegX == 1 && nRegY == 1) ? FFTW_MEASURE : FFTW_ESTIMATE;
+    plan_fwd = fftw_plan_dft_r2c_2d(fft_ny, fft_nx, real_buf, ker_fft, plan_flags);
+    plan_inv = fftw_plan_dft_c2r_2d(fft_ny, fft_nx, ker_fft, real_buf, plan_flags);
   }
 
   if (!plan_fwd || !plan_inv) {
-    LOG_ERROR("spatial_convolve_fft: FFTW plan pointers are NULL");
+    LOG_ERROR("spatial_convolve_fft: FFTW plan creation failed");
     goto cleanup_fft;
   }
 
@@ -2420,11 +2322,16 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
             (float)(real_buf[xp + fft_nx * yp] * norm);
   }
 
-  /* --- Release spectral buffers (plans are cached and reused) ---
-   * Plans are not destroyed here; they remain in the cache for reuse
-   * on subsequent calls with the same dimensions. The cache persists
-   * for the lifetime of the program. Spectral buffers (real_buf, img_fft,
-   * ker_fft) are local to this function and freed immediately. */
+  /* --- Destroy plans and release spectral buffers --- */
+#ifdef _OPENMP
+#pragma omp critical(fftw_plan)
+#endif
+  {
+    fftw_destroy_plan(plan_fwd);
+    plan_fwd = NULL;
+    fftw_destroy_plan(plan_inv);
+    plan_inv = NULL;
+  }
   fftw_free(real_buf);
   real_buf = NULL;
   fftw_free(img_fft);
@@ -2585,8 +2492,19 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
   return;
 
 cleanup_fft:
-  /* Plans are cached and reused; they persist for the program lifetime.
-   * Do not destroy them here even on error paths. */
+#ifdef _OPENMP
+#pragma omp critical(fftw_plan)
+#endif
+{
+  if (plan_fwd) {
+    fftw_destroy_plan(plan_fwd);
+    plan_fwd = NULL;
+  }
+  if (plan_inv) {
+    fftw_destroy_plan(plan_inv);
+    plan_inv = NULL;
+  }
+}
   if (real_buf) {
     fftw_free(real_buf);
     real_buf = NULL;

@@ -16,7 +16,11 @@
  * the extern declarations provided by globals.h by default. */
 #include "globals.h"
 #include "functions.h"
-#include "hotpants_api.h"
+
+/* Forward declaration of threading functions (implemented in hotpants_wrapper.c) */
+extern int init_threading(void);
+extern int get_fftw3_threading_available(void);
+extern int get_blas_threads(void);
 
 int main(int argc, char* argv[]) {
   int i, j, k, l, m;                         /* generic indices */
