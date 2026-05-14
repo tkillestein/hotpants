@@ -17,6 +17,7 @@
 #include "globals.h"
 #include "functions.h"
 #include "decorrelation.h"
+#include "hotpants_api.h"
 
 /* Forward declaration of threading functions (implemented in hotpants_wrapper.c) */
 extern int init_threading(void);
