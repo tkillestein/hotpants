@@ -93,6 +93,43 @@ int get_fftw3_threading_available(void) {
   return fftw3_threading_initialized;
 }
 
+/**
+ * @brief Adjust BLAS thread count based on region layout to avoid oversubscription.
+ *
+ * In multi-region mode (nRegX > 1 or nRegY > 1), region-level OpenMP parallelism
+ * provides sufficient parallelism, so BLAS is set to single-threaded to avoid spawning
+ * too many threads (e.g., 4 regions × 4 BLAS threads = 16 threads on 4-core system).
+ *
+ * In single-region mode, BLAS is configured to use all available threads for maximum
+ * parallelism within the Cholesky solve and other linear algebra operations.
+ *
+ * @param nRegX, nRegY: Number of regions per axis
+ * @return 0 on success
+ */
+int adjust_blas_threads_for_region_layout(int nRegX, int nRegY) {
+  int blas_threads = 1;
+
+  /* Single-region mode: use all threads for BLAS */
+  if (nRegX == 1 && nRegY == 1) {
+#ifdef _OPENMP
+    blas_threads = omp_get_max_threads();
+#else
+    blas_threads = 1;
+#endif
+  }
+  /* Multi-region mode: use single thread for BLAS (region loop provides parallelism) */
+
+#ifdef __OPENBLAS__
+  openblas_set_num_threads(blas_threads);
+#endif
+
+#ifdef __MKL__
+  mkl_set_num_threads(blas_threads);
+#endif
+
+  return 0;
+}
+
 /* stamp_struct definition (copied from globals.h) */
 typedef struct {
   int x0, y0;

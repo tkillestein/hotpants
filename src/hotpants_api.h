@@ -397,4 +397,20 @@ int get_blas_threads(void);
  */
 int get_fftw3_threading_available(void);
 
+/*
+ * Adjust BLAS thread count based on region layout to avoid oversubscription.
+ *
+ * In multi-region mode, sets BLAS threads to 1 (region-level parallelism is sufficient).
+ * In single-region mode, sets BLAS threads to omp_get_max_threads() (maximize per-region parallelism).
+ *
+ * Should be called once at the start of processing, before fitKernel().
+ *
+ * Args:
+ *   nRegX, nRegY: Number of regions per axis
+ *
+ * Returns:
+ *   0 on success
+ */
+int adjust_blas_threads_for_region_layout(int nRegX, int nRegY);
+
 #endif /* HOTPANTS_API_H */
