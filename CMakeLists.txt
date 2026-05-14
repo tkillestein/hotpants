@@ -56,6 +56,7 @@ add_library(hotpants SHARED
     src/basis_delta.c
     src/alard.c
     src/functions.c
+    src/decorrelation.c
     src/hotpants_wrapper.c
 )
 

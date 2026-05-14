@@ -73,6 +73,15 @@
 #define D_USE_TPS 0       /* 0 = polynomial, 1 = thin plate spline */
 #define D_TPS_SMOOTHING \
   1e-6 /* TPS regularization: 0 = exact fit, >0 = smoother surface */
+
+/* =====================================================================
+   AFTERBURNER DECORRELATION (DMTN-021 LSST)
+   ===================================================================== */
+#define D_USE_DECORRELATION 0     /* 0 = disable, 1 = enable decorrelation */
+#define D_DECORR_USE_TPS 0        /* 0 = bilinear interp, 1 = TPS for φ */
+#define D_DECORR_SCIENCE_VAR 0.0  /* σ_s² (0 = auto-estimate from data) */
+#define D_DECORR_TEMPLATE_VAR 0.0 /* σ_t² (0 = auto-estimate from data) */
+
 #define D_STATSIG 3.    /* threshold in sigma clipping algorithms */
 #define D_KFRACMASK \
   0.99 /* fraction of abs(kernel) values below which mask bit 0x8000 is set */

@@ -88,6 +88,12 @@ EXTERN int iBasisType;              /* Kernel basis type (BASIS_TYPE_*) */
 EXTERN double rDeltaRegularization; /* Delta basis Laplacian penalty weight */
 EXTERN int useTPS;                  /* 1 = use TPS, 0 = polynomial */
 EXTERN double tpsSmoothing;         /* TPS regularization parameter */
+EXTERN int useDecorrelation;        /* 1 = enable afterburner decorrelation */
+EXTERN int decorrUseTPS;            /* 1 = use TPS for φ interpolation, 0 = bilinear */
+EXTERN double decorrScienceVar;     /* Science image variance σ_s² (0 = auto-estimate) */
+EXTERN double decorrTemplateVar;    /* Template image variance σ_t² (0 = auto-estimate) */
+EXTERN char *decorrImageOut;        /* Output filename for decorrelated difference image */
+EXTERN int inclDecorrImage;         /* 1 = include decorr image in main output FITS */
 EXTERN float statSig, kerSigReject, kerFracMask;
 EXTERN char *forceConvolve, *photNormalize, *figMerit;
 EXTERN int sameConv, rescaleOK;
@@ -114,6 +120,10 @@ EXTERN float *temp, *temp2;
 EXTERN double *check_stack, *filter_x, *filter_y, **kernel_vec;
 EXTERN double **wxy, *kernel_coeffs, *kernel, **check_mat, *check_vec;
 EXTERN char version[32];
+
+/* Decorrelation grid (forward declaration; defined in decorrelation.h) */
+struct decorrelation_grid;
+EXTERN struct decorrelation_grid *decorr_grid;
 
 /* REGION SIZED */
 EXTERN int* mRData; /* bad input data mask */
