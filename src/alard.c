@@ -44,8 +44,6 @@ void cleanup_delta_basis_grid(void);
 double eval_delta_basis(int basis_idx, double dx, double dy);
 double make_kernel_delta(int xi, int yi, double* kernelSol);
 int xy_conv_stamp_delta(stamp_struct* stamp, float* image, int basisIdx);
-void build_matrix_delta(stamp_struct* stamps, int nS, double** matrix);
-void build_scprod_delta(stamp_struct* stamps, int nS, float* image, double* kernelSol);
 
 /* =====================================================================
    DELTA FUNCTION KERNEL BASIS (Bramich 2008)
@@ -157,105 +155,6 @@ void cleanup_delta_basis_grid(void) {
  * @param nS Number of stamps
  * @param matrix Output normal equations matrix
  */
-void build_matrix_delta(stamp_struct* stamps, int nS, double** matrix) {
-  int stampIdx, basisIdx1, basisIdx2, pixIdx;
-  int pixStamp = fwKSStamp * fwKSStamp;
-  double crossProduct;
-
-  /* Initialize matrix */
-  for (basisIdx1 = 0; basisIdx1 <= nCompKer; basisIdx1++) {
-    for (basisIdx2 = 0; basisIdx2 <= nCompKer; basisIdx2++) {
-      matrix[basisIdx1][basisIdx2] = 0.0;
-    }
-  }
-
-  /* Accumulate cross-products from all stamps */
-  for (stampIdx = 0; stampIdx < nS; stampIdx++) {
-    /* Skip bad stamps */
-    while (stamps[stampIdx].sscnt >= stamps[stampIdx].nss) {
-      ++stampIdx;
-      if (stampIdx >= nS) break;
-    }
-    if (stampIdx >= nS) break;
-
-    /* For each pair of basis functions, accumulate dot product of their vectors */
-    for (basisIdx1 = 0; basisIdx1 < nCompKer; basisIdx1++) {
-      for (basisIdx2 = 0; basisIdx2 <= basisIdx1; basisIdx2++) {
-        crossProduct = 0.0;
-
-        /* Dot product: vec[i] · vec[j] over all stamp pixels */
-        for (pixIdx = 0; pixIdx < pixStamp; pixIdx++) {
-          crossProduct += stamps[stampIdx].vectors[basisIdx1][pixIdx] *
-                         stamps[stampIdx].vectors[basisIdx2][pixIdx];
-        }
-
-        /* Accumulate into matrix (symmetric, so set both [i][j] and [j][i]) */
-        matrix[basisIdx1 + 1][basisIdx2 + 1] += crossProduct;
-        if (basisIdx1 != basisIdx2) {
-          matrix[basisIdx2 + 1][basisIdx1 + 1] += crossProduct;
-        }
-      }
-    }
-  }
-
-  LOG_DEBUG("Delta basis matrix built: %d basis functions, %d stamps",
-            nCompKer, nS);
-}
-
-/**
- * @brief Build RHS vector for delta basis normal equations.
- *
- * @details Accumulates dot products of each basis function's vector with the
- * reference image, producing the RHS vector b for the system M·x = b.
- *
- * @param stamps Array of stamp structures
- * @param nS Number of stamps
- * @param image Reference image to correlate with
- * @param kernelSol Output RHS vector (solution vector)
- */
-void build_scprod_delta(stamp_struct* stamps, int nS, float* image,
-                        double* kernelSol) {
-  int stampIdx, basisIdx, stampColIdx, stampRowIdx, stampCenterX, stampCenterY,
-      pixIdx;
-  double innerProduct;
-
-  /* Initialize RHS vector */
-  for (basisIdx = 0; basisIdx <= nCompKer; basisIdx++) {
-    kernelSol[basisIdx] = 0.0;
-  }
-
-  /* Accumulate correlations with reference image */
-  for (stampIdx = 0; stampIdx < nS; stampIdx++) {
-    /* Skip bad stamps */
-    while (stamps[stampIdx].sscnt >= stamps[stampIdx].nss) {
-      ++stampIdx;
-      if (stampIdx >= nS) break;
-    }
-    if (stampIdx >= nS) break;
-
-    stampCenterX = stamps[stampIdx].xss[stamps[stampIdx].sscnt];
-    stampCenterY = stamps[stampIdx].yss[stamps[stampIdx].sscnt];
-
-    /* For each basis function, correlate with reference image */
-    for (basisIdx = 0; basisIdx < nCompKer; basisIdx++) {
-      innerProduct = 0.0;
-
-      /* Dot product: vec[i] · reference_image over stamp region */
-      for (stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp; stampRowIdx++) {
-        for (stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp; stampColIdx++) {
-          pixIdx = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
-          innerProduct +=
-              stamps[stampIdx].vectors[basisIdx][pixIdx] *
-              image[stampColIdx + stampCenterX + rPixX * (stampRowIdx + stampCenterY)];
-        }
-      }
-
-      kernelSol[basisIdx + 1] += innerProduct;
-    }
-  }
-
-  LOG_DEBUG("Delta basis RHS vector built from %d stamps", nS);
-}
 
 /* =====================================================================
    DELTA FUNCTION BASIS — Laplacian Regularization for Smoothness
@@ -1528,14 +1427,9 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
 
   LOG_DEBUG("Expanding Matrix For Full Fit");
 
-  /* Dispatch to basis-specific matrix building */
-  if (iBasisType == BASIS_TYPE_DELTA) {
-    build_matrix_delta(stamps, nS, matrix);
-    build_scprod_delta(stamps, nS, imRef, kernelSol);
-  } else {
-    build_matrix(stamps, nS, matrix);
-    build_scprod(stamps, nS, imRef, kernelSol);
-  }
+  /* Build matrix and RHS using unified basis-agnostic accumulators */
+  build_matrix(stamps, nS, matrix);
+  build_scprod(stamps, nS, imRef, kernelSol);
 
   /* Apply Laplacian regularization for delta basis to encourage smooth kernels.
      Regularization is not needed for Gaussian basis (Gaussians are smooth by design).
@@ -1576,14 +1470,9 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
 
   while (convergedFlag) {
     LOG_PROGRESS("Re-Expanding Matrix");
-    /* Dispatch to basis-specific matrix building */
-    if (iBasisType == BASIS_TYPE_DELTA) {
-      build_matrix_delta(stamps, nS, matrix);
-      build_scprod_delta(stamps, nS, imRef, kernelSol);
-    } else {
-      build_matrix(stamps, nS, matrix);
-      build_scprod(stamps, nS, imRef, kernelSol);
-    }
+    /* Build matrix and RHS using unified basis-agnostic accumulators */
+    build_matrix(stamps, nS, matrix);
+    build_scprod(stamps, nS, imRef, kernelSol);
 
     /* Apply regularization again for delta basis in sigma-clipping iterations */
     if (iBasisType == BASIS_TYPE_DELTA && rDeltaRegularization > 0.0) {
@@ -2071,7 +1960,8 @@ void build_matrix(stamp_struct* stamps, int nS, double** matrix) {
   int polyDegX, polyDegY, stampCenterX, stampCenterY;
   double polyBasisX, polyBasisY, normalizedX, normalizedY;
 
-  ncomp1 = nCompKer - 1;
+  /* For delta basis, use all nCompKer basis functions; for Gaussian, skip first */
+  ncomp1 = (iBasisType == BASIS_TYPE_DELTA) ? nCompKer : (nCompKer - 1);
   ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
   ncomp = ncomp1 * ncomp2;
   nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
@@ -2227,7 +2117,8 @@ void build_scprod(stamp_struct* stamps, int nS, float* image,
   double scalarProduct, innerProduct;
   double** vectorArray;
 
-  ncomp1 = nCompKer - 1;
+  /* For delta basis, use all nCompKer basis functions; for Gaussian, skip first */
+  ncomp1 = (iBasisType == BASIS_TYPE_DELTA) ? nCompKer : (nCompKer - 1);
   ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
   ncomp = ncomp1 * ncomp2;
   nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
