@@ -74,6 +74,17 @@ class KernelConfig(BaseModel):
         hw_ks_stamp: Half-width of kernel test substamps (pixels).
             Must be <= kernel_half_width. Typical: 10.
             (Maps to C global: hwKSStamp)
+
+        use_tps: Enable thin plate spline (TPS) spatial variation instead of polynomial.
+            TPS provides smoother kernel variation across the image, ideal for single-region
+            full-frame processing (n_regions_x=1, n_regions_y=1). Typical: False.
+            (Maps to C global: useTPS)
+
+        tps_smoothing: TPS regularization parameter (0 = exact fit, >0 = smooth).
+            Controls the trade-off between fitting precision and smoothness.
+            Typical: 1e-6 (nearly exact fit). Increase for more regularization.
+            Only used if use_tps=True.
+            (Maps to C global: tpsSmoothing)
     """
 
     kernel_half_width: int = Field(default=15, gt=0)
@@ -83,6 +94,8 @@ class KernelConfig(BaseModel):
     scale_fit_threshold: float = Field(default=0.5, gt=0, le=1)
     n_ks_stamps: int = Field(default=3, gt=0)
     hw_ks_stamp: int = Field(default=10, gt=0)
+    use_tps: bool = False
+    tps_smoothing: float = Field(default=1e-6, ge=0)
 
     @field_validator("hw_ks_stamp")
     @classmethod
@@ -239,8 +252,15 @@ def fit_kernel(
     1. Divide image into regions and lay out stamp grid
     2. Identify bright star centers in each stamp
     3. Accumulate normal equations for least-squares kernel fit
-    4. Solve for spatially-varying kernel coefficients via Cholesky decomposition
+    4. Solve for spatially-varying kernel coefficients (polynomial or TPS)
     5. Return fitted kernel with quality metrics
+
+    The default uses polynomial spatial variation. For smoother kernel variation
+    across the full image without tiling artifacts, enable TPS mode:
+        config.use_tps = True
+        config.tps_smoothing = 1e-6  # regularization parameter
+
+    TPS is recommended for single-region processing (n_regions_x=1, n_regions_y=1).
 
     Args:
         template: Reference image (numpy array, float32, 2D).
@@ -255,9 +275,11 @@ def fit_kernel(
 
         config: KernelConfig instance (default: KernelConfig()).
             Controls kernel order, fit thresholds, and basis configuration.
+            Set config.use_tps=True to enable thin plate spline spatial variation.
 
         layout: RegionLayout instance (default: RegionLayout()).
             Controls image tiling and stamp grid.
+            TPS works best with single region (n_regions_x=1, n_regions_y=1).
 
         thresholds: NoiseThresholds instance (default: NoiseThresholds()).
             Specifies saturation thresholds and noise model parameters.
@@ -344,8 +366,8 @@ def fit_kernel(
         "iPedestal": thresholds.science_pedestal,
         "verbose": verbose,
         "nThread": n_thread,
-        "useTPS": 0,  # Will be set after global_state context is set up
-        "tpsSmoothing": 0.0,
+        "useTPS": 1 if config.use_tps else 0,
+        "tpsSmoothing": config.tps_smoothing,
     }
 
     with global_state(config_dict):
@@ -370,11 +392,10 @@ def fit_kernel(
             kernel_info = _core.get_kernel_info()
             # Calculate kernelSol size for polynomial or TPS mode
             # Note: TPS uses more space to store RBF weights and control point positions
-            use_tps = False  # Currently TPS is not exposed to user; default to polynomial
             n_coeffs = _core.calculate_kernel_solution_size(
                 layout.stamps_per_region_x,
                 layout.stamps_per_region_y,
-                use_tps=use_tps,
+                use_tps=config.use_tps,
             )
 
             # If no noise image provided, compute Poisson variance to match main.c's
@@ -500,6 +521,8 @@ def spatial_convolve(
         "hwKernel": config.kernel_half_width,
         "kerOrder": config.kernel_order,
         "bgOrder": config.bg_order,
+        "useTPS": 1 if config.use_tps else 0,
+        "tpsSmoothing": config.tps_smoothing,
         "verbose": verbose,
     }
 

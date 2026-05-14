@@ -61,6 +61,28 @@ class TestKernelConfig:
         with pytest.raises(ValidationError):
             KernelConfig(scale_fit_threshold=0.0)
 
+    def test_tps_disabled_by_default(self):
+        """TPS should be disabled by default."""
+        config = KernelConfig()
+        assert config.use_tps is False
+        assert config.tps_smoothing == 1e-6
+
+    def test_tps_config_valid(self):
+        """TPS configuration should be valid."""
+        config = KernelConfig(use_tps=True, tps_smoothing=1e-3)
+        assert config.use_tps is True
+        assert config.tps_smoothing == 1e-3
+
+    def test_tps_smoothing_negative_invalid(self):
+        """Negative tps_smoothing should raise ValidationError."""
+        with pytest.raises(ValidationError):
+            KernelConfig(tps_smoothing=-0.1)
+
+    def test_tps_smoothing_zero_valid(self):
+        """Zero tps_smoothing (exact fit) should be valid."""
+        config = KernelConfig(tps_smoothing=0.0)
+        assert config.tps_smoothing == 0.0
+
 
 class TestRegionLayout:
     """Test RegionLayout dataclass validation."""
