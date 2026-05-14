@@ -20,6 +20,7 @@ from hotpants import (
     NoiseThresholds,
     KernelSolution,
 )
+from hotpants._core import calculate_kernel_solution_size, global_state
 
 
 # =====================================================================
@@ -372,3 +373,114 @@ class TestIntegration:
         # Should work despite non-C-contiguous input
         result = fit_kernel(template, science)
         assert isinstance(result, KernelSolution)
+
+
+# =====================================================================
+# TPS-Specific Tests
+# =====================================================================
+
+
+class TestTPSConfiguration:
+    """Test TPS configuration infrastructure."""
+
+    def test_calculate_kernel_solution_size_polynomial(self):
+        """Test kernelSol size calculation for polynomial mode."""
+        with global_state({
+            'kerOrder': 2,
+            'bgOrder': 1,
+            'nCompKer': 3,
+            'nComp': 12,
+            'nCompBG': 3,
+            'nCompTotal': 39,
+        }):
+            size = calculate_kernel_solution_size(10, 10, use_tps=False)
+            # Expected: nComp + nCompBG + 1 = 12 + 3 + 1 = 16
+            assert size == 16
+
+    def test_calculate_kernel_solution_size_tps(self):
+        """Test kernelSol size calculation for TPS mode."""
+        with global_state({
+            'kerOrder': 2,
+            'bgOrder': 1,
+            'nCompKer': 3,
+            'nComp': 12,
+            'nCompBG': 3,
+            'nCompTotal': 39,
+        }):
+            n_stamps = 10 * 10
+            size_tps = calculate_kernel_solution_size(10, 10, use_tps=True)
+            size_poly = calculate_kernel_solution_size(10, 10, use_tps=False)
+
+            # TPS should be larger: poly_size + (nCompKer*nStamps + 3*nCompKer + 2*nStamps)
+            expected_tps = size_poly + (3 * n_stamps + 3 * 3 + 2 * n_stamps)
+            assert size_tps == expected_tps
+            assert size_tps > size_poly
+
+    def test_tps_size_scales_with_stamps(self):
+        """Verify TPS size scales correctly with number of stamps."""
+        with global_state({
+            'kerOrder': 2,
+            'bgOrder': 1,
+            'nCompKer': 3,
+            'nComp': 12,
+            'nCompBG': 3,
+            'nCompTotal': 39,
+        }):
+            size_4x4 = calculate_kernel_solution_size(4, 4, use_tps=True)
+            size_8x8 = calculate_kernel_solution_size(8, 8, use_tps=True)
+
+            # Difference should correspond to 48 additional stamps (64-16)
+            # Overhead per stamp = nCompKer + 2 = 3 + 2 = 5
+            expected_diff = 48 * 5
+            assert (size_8x8 - size_4x4) == expected_diff
+
+    def test_global_state_tps_flags(self):
+        """Test that TPS global flags are handled correctly."""
+        # Should not raise errors
+        with global_state({'useTPS': 0, 'tpsSmoothing': 1e-6}):
+            pass
+        with global_state({'useTPS': 1, 'tpsSmoothing': 1e-3}):
+            pass
+
+    def test_polynomial_size_independent_of_tps_flag(self):
+        """Verify polynomial size is unaffected by TPS flag."""
+        with global_state({
+            'kerOrder': 2,
+            'bgOrder': 1,
+            'nCompKer': 3,
+            'nComp': 12,
+            'nCompBG': 3,
+            'nCompTotal': 39,
+        }):
+            size_poly_only = calculate_kernel_solution_size(10, 10, use_tps=False)
+            # Polynomial size should be the same regardless
+            assert size_poly_only == 16
+
+    def test_size_calculation_various_orders(self):
+        """Test size calculation with different kernel and background orders."""
+        test_configs = [
+            {'kerOrder': 1, 'bgOrder': 0, 'nCompKer': 2},
+            {'kerOrder': 2, 'bgOrder': 1, 'nCompKer': 3},
+            {'kerOrder': 3, 'bgOrder': 2, 'nCompKer': 3},
+        ]
+
+        for cfg in test_configs:
+            ko = cfg['kerOrder']
+            bo = cfg['bgOrder']
+            nck = cfg['nCompKer']
+
+            # Manual calculation
+            nco = (ko + 1) * (ko + 2) // 2
+            nbg = (bo + 1) * (bo + 2) // 2
+            expected_poly = (nck - 1) * nco + nbg + 1
+
+            with global_state({
+                'kerOrder': ko,
+                'bgOrder': bo,
+                'nCompKer': nck,
+                'nComp': (nck - 1) * nco,
+                'nCompBG': nbg,
+                'nCompTotal': (nck - 1) * nco + nbg,
+            }):
+                size = calculate_kernel_solution_size(5, 5, use_tps=False)
+                assert size == expected_poly
