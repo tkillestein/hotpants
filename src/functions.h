@@ -6,9 +6,7 @@
 void getKernelVec();
 int fillStamp(stamp_struct*, float*, float*);
 double* kernel_vector(int, int, int, int, int*);
-double* kernel_vector_PCA(int, int, int, int, int*);
 void xy_conv_stamp(stamp_struct*, float*, int, int);
-void xy_conv_stamp_PCA(stamp_struct*, float*, int, int);
 void fitKernel(stamp_struct*, float*, float*, float*, double*, double*, double*,
                int*);
 void build_matrix0(stamp_struct*);

@@ -574,7 +574,9 @@ and might prove useful in using the algorithm.
           Made multi-threaded by region
             * Added `-nt` argument to specify number of threads to use
           Removed extractkern module
-          Removed PCA code
+          Intended to remove PCA code (kernel_vector_PCA, xy_conv_stamp_PCA)
+            * NOTE: This was inadvertently overlooked; PCA stubs were actually removed
+              in a later cleanup (May 2026)
           Removed `-sconv` argument
             * pre-compute convolution direction and pass `-c` instead to ensure all convolved in same direction)
           Removed `-gd` argument

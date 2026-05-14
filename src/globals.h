@@ -91,8 +91,6 @@ EXTERN int doKerInfo, outShort, outNShort;
 EXTERN float outBzero, outBscale, outNiBzero, outNiBscale;
 EXTERN int convolveVariance;
 EXTERN int nThread;
-EXTERN int usePCA, fwKernelPCA;
-EXTERN float** PCA;
 
 /* GLOBAL VARS NOT SET ON COMMAND LINE */
 EXTERN int ngauss, *deg_fixe;

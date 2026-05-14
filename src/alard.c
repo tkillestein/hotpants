@@ -203,8 +203,6 @@ int fillStamp(stamp_struct* stamp, float* imConv, float* imRef) {
  * Alard & Lupton (1998), §2.  When this subtraction is applied *ren is set to
  * 1 (the "renormalise" flag propagated to xy_conv_stamp).
  *
- * If usePCA is set the work is delegated to kernel_vector_PCA().
- *
  * @param n     Sequential index of this basis function within kernel_vec.
  * @param deg_x Polynomial degree of the x-direction filter.
  * @param deg_y Polynomial degree of the y-direction filter.
@@ -218,10 +216,6 @@ double* kernel_vector(int n, int deg_x, int deg_y, int ig, int* ren) {
   int kernelRow, kernelCol, xFilterIdx, xParityCheck, yParityCheck, xKernelIdx,
       pixelIdx;
   double filterXSum, filterYSum, kernelPosition, gaussianVal;
-
-  if (usePCA) {
-    return kernel_vector_PCA(n, deg_x, deg_y, ig, ren);
-  }
 
   vector = (double*)malloc(fwKernel * fwKernel * sizeof(double));
   /* Detect parity: (deg/2)*2 - deg = 0 if even, -1 if odd.
@@ -282,49 +276,6 @@ double* kernel_vector(int n, int deg_x, int deg_y, int ig, int* ren) {
 }
 
 /**
- * @brief Compute the n-th kernel basis function image from a pre-supplied PCA
- *        basis set.
- *
- * @details Instead of Gaussian-polynomial analytic forms, each basis image is
- * read directly from the global PCA[n] array (empirical principal components
- * derived from observed PSFs).  As with kernel_vector(), for n > 0 the zeroth
- * PCA component is subtracted so that higher components represent differential
- * corrections, and *ren is set to 1 to propagate this renormalisation flag to
- * xy_conv_stamp_PCA().
- *
- * @param n     Sequential index of this basis function.
- * @param deg_x Polynomial degree (unused in PCA mode; kept for API symmetry).
- * @param deg_y Polynomial degree (unused in PCA mode; kept for API symmetry).
- * @param ig    Gaussian index (unused in PCA mode; kept for API symmetry).
- * @param ren   Output flag: set to 1 when the zeroth PCA basis is subtracted.
- * @return Pointer to a newly allocated fwKernel*fwKernel double array
- *         initialised with PCA[n] (minus PCA[0] for n > 0).
- */
-double* kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int* ren) {
-  double *vector = NULL, *kernel0 = NULL;
-  int xIdx, yIdx;
-
-  vector = (double*)malloc(fwKernel * fwKernel * sizeof(double));
-
-  for (xIdx = 0; xIdx < fwKernel; xIdx++) {
-    for (yIdx = 0; yIdx < fwKernel; yIdx++) {
-      vector[xIdx + fwKernel * yIdx] = PCA[n][xIdx + fwKernel * yIdx];
-    }
-  }
-
-  if (n > 0) kernel0 = kernel_vec[0];
-
-  if (n > 0) {
-    for (xIdx = 0; xIdx < fwKernel * fwKernel; xIdx++) {
-      vector[xIdx] -= kernel0[xIdx];
-    }
-    *ren = 1;
-  }
-
-  return vector;
-}
-
-/**
  * @brief Convolve the substamp region of an image with the n-th separable
  *        Gaussian-polynomial kernel basis function.
  *
@@ -348,8 +299,6 @@ double* kernel_vector_PCA(int n, int deg_x, int deg_y, int ig, int* ren) {
  * subtracted pixel-by-pixel from the result, matching the differential
  * construction of the higher-order basis images.
  *
- * In PCA mode the call is forwarded to xy_conv_stamp_PCA().
- *
  * Reference: Alard & Lupton (1998), Sect. 2; classic signal-processing
  * optimization.
  *
@@ -365,11 +314,6 @@ void xy_conv_stamp(stamp_struct* stamp, float* image, int n, int ren) {
   int stampColIdx, stampRowIdx, kerOffsetX, kerOffsetY, xij, sub_width, xi, yi,
       imgColIdx, imgRowIdx, pixelIdx;
   double *v0, *imc;
-
-  if (usePCA) {
-    xy_conv_stamp_PCA(stamp, image, n, ren);
-    return;
-  }
 
   xi = stamp->xss[stamp->sscnt];
   yi = stamp->yss[stamp->sscnt];
@@ -414,58 +358,6 @@ void xy_conv_stamp(stamp_struct* stamp, float* image, int n, int ren) {
   return;
 }
 
-/**
- * @brief Convolve the substamp region of an image with the n-th PCA kernel
- *        basis function using a direct 2-D summation.
- *
- * @details Unlike xy_conv_stamp(), which exploits filter separability, this
- * routine performs a full 2-D correlation between the image patch and the
- * fwKernel×fwKernel PCA basis image PCA[n].  The fwKSStamp×fwKSStamp result
- * is written into stamp->vectors[n].  If @p ren is non-zero, stamp->vectors[0]
- * is subtracted to match the differential construction used in PCA mode.
- *
- * @param stamp  Stamp whose current substamp defines the pixel region to
- * convolve.
- * @param image  Full-frame input image to be convolved.
- * @param n      PCA basis index; selects PCA[n] and the output slot
- *               stamp->vectors[n].
- * @param ren    If non-zero, subtract stamp->vectors[0] from the result after
- *               convolution.
- */
-void xy_conv_stamp_PCA(stamp_struct* stamp, float* image, int n, int ren) {
-  int imgColIdx, imgRowIdx, kerOffsetX, kerOffsetY, xij, xi, yi, pixelIdx;
-  double *v0, *imc;
-
-  xi = stamp->xss[stamp->sscnt];
-  yi = stamp->yss[stamp->sscnt];
-  imc = stamp->vectors[n];
-
-  /* pull area to convolve out of full reference image region */
-  for (imgRowIdx = yi - hwKSStamp; imgRowIdx <= yi + hwKSStamp; imgRowIdx++) {
-    for (imgColIdx = xi - hwKSStamp; imgColIdx <= xi + hwKSStamp; imgColIdx++) {
-      xij = imgColIdx - (xi - hwKSStamp) +
-            fwKSStamp * (imgRowIdx - (yi - hwKSStamp));
-      imc[xij] = 0.;
-
-      for (kerOffsetY = -hwKernel; kerOffsetY <= hwKernel; kerOffsetY++) {
-        for (kerOffsetX = -hwKernel; kerOffsetX <= hwKernel; kerOffsetX++) {
-          imc[xij] += image[(imgColIdx + kerOffsetX) +
-                            rPixX * (imgRowIdx + kerOffsetY)] *
-                      PCA[n][(kerOffsetX + hwKernel) +
-                             fwKernel * (kerOffsetY + hwKernel)];
-        }
-      }
-    }
-  }
-
-  if (ren) {
-    v0 = stamp->vectors[0];
-    for (pixelIdx = 0; pixelIdx < fwKSStamp * fwKSStamp; pixelIdx++)
-      imc[pixelIdx] -= v0[pixelIdx];
-  }
-
-  return;
-}
 
 /**
  * @brief Solve A·x = b in-place where A is symmetric positive-definite.
