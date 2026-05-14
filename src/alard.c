@@ -1070,9 +1070,11 @@ static int tps_fit_background(stamp_struct* stamps, int n_stamps,
  * and model-evaluation call.
  */
 void getKernelVec() {
+  int nBasisFuncs, gaussIdx, idegx, idegy, nvec, ren;
+
   /* Dispatch basis initialization based on iBasisType */
   if (iBasisType == BASIS_TYPE_DELTA) {
-    int nBasisFuncs = init_delta_basis_grid();
+    nBasisFuncs = init_delta_basis_grid();
     if (nBasisFuncs < 0) {
       LOG_ERROR("Failed to initialize delta basis grid");
       exit(1);
@@ -1082,9 +1084,6 @@ void getKernelVec() {
   }
 
   /* Gaussian basis initialization (default) */
-  int gaussIdx, idegx, idegy, nvec;
-  int ren;
-
   nvec = 0;
   for (gaussIdx = 0; gaussIdx < ngauss; gaussIdx++) {
     for (idegx = 0; idegx <= deg_fixe[gaussIdx]; idegx++) {
