@@ -653,3 +653,90 @@ double computeKernelNorm(double* kernel_coeffs, int nx, int ny) {
   rPixY = ny;
   return make_kernel(nx / 2, ny / 2, kernel_coeffs);
 }
+
+/* =====================================================================
+ * Kernel Basis Type Configuration
+ * =====================================================================
+ * Functions for managing kernel basis type selection.
+ */
+
+/**
+ * @brief Set the kernel basis type.
+ *
+ * @param[in] basis_type BASIS_TYPE_GAUSSIAN (0) or BASIS_TYPE_DELTA (1)
+ * @return 0 on success, -1 if basis_type is invalid
+ */
+int set_basis_type(int basis_type) {
+  if (basis_type != BASIS_TYPE_GAUSSIAN && basis_type != BASIS_TYPE_DELTA) {
+    fprintf(stderr, "ERROR: Invalid basis_type %d (must be %d or %d)\n",
+            basis_type, BASIS_TYPE_GAUSSIAN, BASIS_TYPE_DELTA);
+    return -1;
+  }
+  iBasisType = basis_type;
+  return 0;
+}
+
+/**
+ * @brief Get the current kernel basis type.
+ *
+ * @return Current basis type (BASIS_TYPE_GAUSSIAN or BASIS_TYPE_DELTA)
+ */
+int get_basis_type(void) {
+  return iBasisType;
+}
+
+/**
+ * @brief Set delta basis grid spacing (pixels).
+ *
+ * Only used when basis_type == BASIS_TYPE_DELTA.
+ *
+ * @param[in] grid_size Spacing between delta basis function centers (> 0)
+ * @return 0 on success, -1 if grid_size <= 0
+ */
+int set_delta_ker_grid_size(double grid_size) {
+  if (grid_size <= 0.0) {
+    fprintf(stderr, "ERROR: deltaKerGridSize must be positive, got %f\n",
+            grid_size);
+    return -1;
+  }
+  rDeltaKerGridSize = grid_size;
+  return 0;
+}
+
+/**
+ * @brief Get delta basis grid spacing.
+ *
+ * @return Grid spacing in pixels
+ */
+double get_delta_ker_grid_size(void) {
+  return rDeltaKerGridSize;
+}
+
+/**
+ * @brief Set delta basis Laplacian regularization weight.
+ *
+ * Only used when basis_type == BASIS_TYPE_DELTA.
+ * Higher values enforce smoother kernels; 0 = no regularization.
+ *
+ * @param[in] regularization_weight Regularization strength (>= 0)
+ * @return 0 on success, -1 if regularization_weight < 0
+ */
+int set_delta_regularization(double regularization_weight) {
+  if (regularization_weight < 0.0) {
+    fprintf(stderr,
+            "ERROR: deltaRegularization must be non-negative, got %f\n",
+            regularization_weight);
+    return -1;
+  }
+  rDeltaRegularization = regularization_weight;
+  return 0;
+}
+
+/**
+ * @brief Get delta basis Laplacian regularization weight.
+ *
+ * @return Current regularization weight
+ */
+double get_delta_regularization(void) {
+  return rDeltaRegularization;
+}

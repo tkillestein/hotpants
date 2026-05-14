@@ -31,6 +31,14 @@ static int tps_fit_background(stamp_struct* stamps, int n_stamps,
                               double* kernelSol);
 double get_background_tps(int xi, int yi, double* kernelSol);
 
+/* Forward declarations for delta function basis (Phase 2+) */
+/* TODO: Implement delta basis functions in Phase 2
+double make_kernel_delta(int xi, int yi, double* kernelSol);
+int xy_conv_stamp_delta(double* stamp, int mStampX, int mStampY, int basisIdx,
+                        double* pixFitted);
+int build_matrix_delta(int substampIdx, double* kernelSol, int* iMatrixSize);
+*/
+
 /* =====================================================================
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
    ===================================================================== */
@@ -517,6 +525,16 @@ static int tps_fit_background(stamp_struct* stamps, int n_stamps,
  * and model-evaluation call.
  */
 void getKernelVec() {
+  /* Dispatch basis initialization based on iBasisType */
+  if (iBasisType == BASIS_TYPE_DELTA) {
+    LOG_ERROR("Delta function basis not yet implemented (Phase 2+)");
+    /* TODO: int nBasisFuncs = 0;
+           init_delta_basis_grid(&nBasisFuncs);
+           nCompKer = nBasisFuncs; */
+    return;
+  }
+
+  /* Gaussian basis initialization (default) */
   int gaussIdx, idegx, idegy, nvec;
   int ren;
 
@@ -2627,6 +2645,16 @@ void spatial_convolve(float* image, float** variance, int xSize, int ySize,
  * @see make_kernel_tps() for TPS evaluation
  */
 double make_kernel_dispatch(int xi, int yi, double* kernelSol) {
+  /* Dispatch based on kernel basis type (Gaussian vs. Delta) and spatial variation mode
+     (polynomial vs. TPS).
+     NOTE: Phase 2+ will add iBasisType == BASIS_TYPE_DELTA branch. */
+  if (iBasisType == BASIS_TYPE_DELTA) {
+    LOG_ERROR("Delta function basis not yet implemented (Phase 2+)");
+    return 0.0;
+    /* TODO: return make_kernel_delta(xi, yi, kernelSol); */
+  }
+
+  /* Gaussian basis (default) */
   if (useTPS) {
     return make_kernel_tps(xi, yi, kernelSol);
   } else {
