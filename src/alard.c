@@ -333,6 +333,178 @@ int build_matrix_delta(int substampIdx, double* kernelSol,
 }
 
 /* =====================================================================
+   DELTA FUNCTION BASIS — Laplacian Regularization for Smoothness
+   ===================================================================== */
+
+/**
+ * @brief Assemble discrete 2D Laplacian regularization matrix for delta grid.
+ *
+ * @details Builds the regularization matrix that penalizes kernel curvature:
+ *
+ *          Regularization term: λ · ||L·x||²
+ *
+ *          where L is the discrete 2D Laplacian operator (5-point stencil)
+ *          on the delta grid, and λ = rDeltaRegularization.
+ *
+ *          The Laplacian is computed as:
+ *          L[i,j] = 4·x[i,j] - x[i±1,j] - x[i,j±1]  (5-point stencil)
+ *
+ *          The regularization matrix added to normal equations is:
+ *          R = λ · L^T · L
+ *
+ *          This encourages the kernel solution to be smooth, reducing noise
+ *          amplification from ill-conditioning.
+ *
+ * @param[out] laplacian_regularization Output matrix (n×n, row-major)
+ *             Caller must allocate sufficient space.
+ * @return 0 on success, -1 on error (grid not initialized, etc.)
+ *
+ * @note Laplacian uses 5-point stencil (cardinal neighbors only).
+ *       Boundary points use one-sided differences.
+ * @note The regularization weight λ is taken from rDeltaRegularization.
+ * @note Output matrix is symmetric positive semi-definite.
+ *
+ * Reference: Bramich (2008), Section 3 discusses regularization strategy.
+ *            Numerical recipes for 2D Laplacian on regular grids.
+ */
+int assemble_laplacian_regularization(double* laplacian_regularization) {
+  int i, j, grid_idx, neighbor_idx, n;
+  double lambda;
+  double* laplacian_matrix;
+
+  if (!delta_grid.nbasis) {
+    LOG_ERROR("Delta grid not initialized");
+    return -1;
+  }
+
+  n = delta_grid.nbasis;
+  lambda = rDeltaRegularization;
+
+  /* Allocate temporary Laplacian matrix (will be converted to R = Lᵀ·L) */
+  laplacian_matrix = (double*)calloc((size_t)n * n, sizeof(double));
+  if (!laplacian_matrix) {
+    LOG_ERROR("Failed to allocate Laplacian matrix");
+    return -1;
+  }
+
+  /* Build discrete 2D Laplacian (5-point stencil):
+     For interior grid points (not on boundary):
+       L[i,j] = 4·x[i,j] - (x[i-1,j] + x[i+1,j] + x[i,j-1] + x[i,j+1])
+
+     Boundary conditions: one-sided differences for edge points.
+  */
+
+  grid_idx = 0;
+  for (i = 0; i < delta_grid.ngrid_x; i++) {
+    for (j = 0; j < delta_grid.ngrid_y; j++) {
+      int n_neighbors = 0;
+
+      /* Diagonal: +4 for interior, reduced for boundary */
+      laplacian_matrix[grid_idx * n + grid_idx] = 4.0;
+
+      /* Cardinal neighbors (5-point stencil):
+         Left (i-1, j) */
+      if (i > 0) {
+        neighbor_idx = (i - 1) * delta_grid.ngrid_y + j;
+        laplacian_matrix[grid_idx * n + neighbor_idx] -= 1.0;
+        n_neighbors++;
+      } else {
+        laplacian_matrix[grid_idx * n + grid_idx] -= 1.0;  /* Boundary: reflect */
+      }
+
+      /* Right (i+1, j) */
+      if (i < delta_grid.ngrid_x - 1) {
+        neighbor_idx = (i + 1) * delta_grid.ngrid_y + j;
+        laplacian_matrix[grid_idx * n + neighbor_idx] -= 1.0;
+        n_neighbors++;
+      } else {
+        laplacian_matrix[grid_idx * n + grid_idx] -= 1.0;  /* Boundary: reflect */
+      }
+
+      /* Bottom (i, j-1) */
+      if (j > 0) {
+        neighbor_idx = i * delta_grid.ngrid_y + (j - 1);
+        laplacian_matrix[grid_idx * n + neighbor_idx] -= 1.0;
+        n_neighbors++;
+      } else {
+        laplacian_matrix[grid_idx * n + grid_idx] -= 1.0;  /* Boundary: reflect */
+      }
+
+      /* Top (i, j+1) */
+      if (j < delta_grid.ngrid_y - 1) {
+        neighbor_idx = i * delta_grid.ngrid_y + (j + 1);
+        laplacian_matrix[grid_idx * n + neighbor_idx] -= 1.0;
+        n_neighbors++;
+      } else {
+        laplacian_matrix[grid_idx * n + grid_idx] -= 1.0;  /* Boundary: reflect */
+      }
+
+      grid_idx++;
+    }
+  }
+
+  /* Compute regularization matrix: R = λ · Lᵀ·L
+     For memory efficiency, we directly compute the symmetric outer product.
+     This is the matrix that will be added to the normal equations. */
+  for (i = 0; i < n; i++) {
+    for (j = i; j < n; j++) {
+      double sum = 0.0;
+      for (int k = 0; k < n; k++) {
+        sum +=
+            laplacian_matrix[k * n + i] * laplacian_matrix[k * n + j];
+      }
+      laplacian_regularization[i * n + j] =
+          lambda * sum;
+      if (i != j) {
+        laplacian_regularization[j * n + i] =
+            lambda * sum;  /* Symmetric */
+      }
+    }
+  }
+
+  free(laplacian_matrix);
+  LOG_DEBUG("Laplacian regularization assembled (n=%d, lambda=%.1e)", n, lambda);
+  return 0;
+}
+
+/**
+ * @brief Apply Laplacian regularization to normal equation matrix.
+ *
+ * @details Adds the regularization matrix to the accumulated normal equations:
+ *          M_regularized = M_normal + R
+ *          where R is the Laplacian regularization matrix.
+ *
+ * @param[in,out] matrix Input normal equation matrix (modified in place)
+ * @param[in] matrixSize Dimension of matrix (n×n)
+ * @param[in] regularization Regularization matrix (pre-computed by
+ *            assemble_laplacian_regularization())
+ * @return 0 on success
+ *
+ * @note Called immediately before LAPACK Cholesky solve in fitKernel()
+ *       when iBasisType == BASIS_TYPE_DELTA and rDeltaRegularization > 0.
+ */
+int apply_regularization(double* matrix, int matrixSize,
+                         const double* regularization) {
+  int i, j;
+
+  if (!matrix || !regularization) {
+    LOG_ERROR("NULL pointer passed to apply_regularization");
+    return -1;
+  }
+
+  /* Add regularization matrix to normal equations (element-wise) */
+  for (i = 0; i < matrixSize; i++) {
+    for (j = 0; j < matrixSize; j++) {
+      matrix[i * matrixSize + j] +=
+          regularization[i * matrixSize + j];
+    }
+  }
+
+  LOG_DEBUG("Regularization applied to %d×%d matrix", matrixSize, matrixSize);
+  return 0;
+}
+
+/* =====================================================================
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
    ===================================================================== */
 
