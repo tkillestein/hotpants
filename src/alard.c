@@ -31,13 +31,196 @@ static int tps_fit_background(stamp_struct* stamps, int n_stamps,
                               double* kernelSol);
 double get_background_tps(int xi, int yi, double* kernelSol);
 
-/* Forward declarations for delta function basis (Phase 2+) */
-/* TODO: Implement delta basis functions in Phase 2
+/* Forward declarations for delta function basis */
+int init_delta_basis_grid(void);
+void cleanup_delta_basis_grid(void);
+double eval_delta_basis(int basis_idx, double dx, double dy);
 double make_kernel_delta(int xi, int yi, double* kernelSol);
 int xy_conv_stamp_delta(double* stamp, int mStampX, int mStampY, int basisIdx,
                         double* pixFitted);
 int build_matrix_delta(int substampIdx, double* kernelSol, int* iMatrixSize);
-*/
+
+/* =====================================================================
+   DELTA FUNCTION KERNEL BASIS (Bramich 2008) — RBF-based soft delta kernel
+   =====================================================================
+
+   References:
+   - Bramich (2008): "The Optimal Difference Image Combination of Dithered
+     Images", MNRAS 389:1365 (arXiv:0802.1273)
+
+   Instead of Gaussian basis functions, delta basis uses narrow RBFs
+   (thin-plate splines) centered on a regular grid within the kernel
+   footprint. Grid spacing is controlled by rDeltaKerGridSize (pixels).
+   ===================================================================== */
+
+typedef struct {
+  int ngrid_x, ngrid_y;      /* Number of grid points in x, y */
+  int nbasis;                 /* Total number of basis functions */
+  double* grid_cx;            /* Grid center X coordinates */
+  double* grid_cy;            /* Grid center Y coordinates */
+  double grid_spacing;        /* Spacing between grid points (pixels) */
+  double kernel_radius;       /* Radius of kernel footprint (hwKernel) */
+  int kernel_footprint_size;  /* fwKernel (full width) */
+} delta_basis_grid_t;
+
+static delta_basis_grid_t delta_grid = {0};  /* Global delta grid context */
+
+/* =====================================================================
+   DELTA FUNCTION BASIS — Core Implementation Functions
+   ===================================================================== */
+
+/**
+ * @brief Thin plate spline RBF kernel for delta basis: φ(r) = r² log(r).
+ *
+ * Used for soft delta functions centered on grid points.
+ * Same kernel as TPS but applied to delta basis grid.
+ *
+ * @param r Euclidean distance from grid center (pixels)
+ * @return RBF kernel value
+ *
+ * @note φ(0) = 0 by convention (approximated as 0 when r < ZEROVAL)
+ */
+static inline double delta_rbf_kernel(double r) {
+  if (r < ZEROVAL) return 0.0;
+  return r * r * log(r);
+}
+
+/**
+ * @brief Evaluate a single delta basis function at pixel offset (dx, dy).
+ *
+ * @details Each delta basis function is centered at a grid point
+ *          (grid_cx[i], grid_cy[i]) and evaluates to the RBF kernel
+ *          φ(r) where r = ||((dx, dy) - (grid_cx[i], grid_cy[i]))||.
+ *
+ * @param[in] basis_idx Index of basis function (0 to nbasis-1)
+ * @param[in] dx Pixel offset in X (relative to grid center)
+ * @param[in] dy Pixel offset in Y (relative to grid center)
+ * @return RBF kernel value (non-negative, 0 at grid center by convention)
+ *
+ * @note Returns 0.0 if basis_idx is invalid or grid not initialized
+ * @note dx, dy are raw pixel offsets; no normalization applied here
+ */
+double eval_delta_basis(int basis_idx, double dx, double dy) {
+  if (!delta_grid.ngrid_x || !delta_grid.nbasis) {
+    return 0.0;  /* Grid not initialized */
+  }
+  if (basis_idx < 0 || basis_idx >= delta_grid.nbasis) {
+    return 0.0;  /* Invalid basis index */
+  }
+
+  /* Compute distance from this basis function's center to (dx, dy) */
+  double dist_x = dx - delta_grid.grid_cx[basis_idx];
+  double dist_y = dy - delta_grid.grid_cy[basis_idx];
+  double distance = sqrt(dist_x * dist_x + dist_y * dist_y);
+
+  return delta_rbf_kernel(distance);
+}
+
+/**
+ * @brief Initialize the delta function basis grid.
+ *
+ * @details Creates a regular 2D grid of RBF basis functions with spacing
+ *          rDeltaKerGridSize within the kernel footprint of half-width hwKernel.
+ *          Grid points are centered on the kernel footprint origin (0, 0).
+ *
+ *          For example, with hwKernel=10 (fwKernel=21) and gridSize=2:
+ *          Grid spans [-10, +10] in each dimension with 6×6 points.
+ *
+ * @return Number of basis functions allocated (> 0 on success, -1 on error)
+ *
+ * @note Must be called after hwKernel is set but before fitKernel()
+ * @note Allocates memory for grid_cx, grid_cy; caller must call
+ *       cleanup_delta_basis_grid() to free
+ * @note Sets nCompKer to the total number of basis functions
+ *
+ * Reference: Bramich (2008), Section 2.1 for grid parameterization
+ */
+int init_delta_basis_grid(void) {
+  int i, j, grid_idx;
+  double cx, cy, half_kernel_width;
+
+  /* Free any existing grid */
+  if (delta_grid.grid_cx) free(delta_grid.grid_cx);
+  if (delta_grid.grid_cy) free(delta_grid.grid_cy);
+  memset(&delta_grid, 0, sizeof(delta_basis_grid_t));
+
+  /* Validate parameters */
+  if (hwKernel <= 0) {
+    LOG_ERROR("hwKernel must be positive; cannot initialize delta grid");
+    return -1;
+  }
+  if (rDeltaKerGridSize <= 0.0) {
+    LOG_ERROR("deltaKerGridSize must be positive; cannot initialize delta grid");
+    return -1;
+  }
+
+  half_kernel_width = (double)hwKernel;
+  delta_grid.kernel_radius = half_kernel_width;
+  delta_grid.kernel_footprint_size = fwKernel;
+  delta_grid.grid_spacing = rDeltaKerGridSize;
+
+  /* Compute grid dimensions.
+     Grid spans [-hwKernel, +hwKernel] in each dimension with spacing gridSize.
+     Number of points: ceil(2*hwKernel / gridSize) + 1 for each axis */
+  delta_grid.ngrid_x =
+      (int)ceil(2.0 * half_kernel_width / delta_grid.grid_spacing) + 1;
+  delta_grid.ngrid_y =
+      (int)ceil(2.0 * half_kernel_width / delta_grid.grid_spacing) + 1;
+  delta_grid.nbasis = delta_grid.ngrid_x * delta_grid.ngrid_y;
+
+  LOG_PROGRESS("Delta basis grid: %d×%d = %d functions (spacing %.2f px, kernel "
+               "radius %.1f px)",
+               delta_grid.ngrid_x, delta_grid.ngrid_y, delta_grid.nbasis,
+               delta_grid.grid_spacing, half_kernel_width);
+
+  /* Allocate grid coordinate arrays */
+  delta_grid.grid_cx = (double*)malloc(delta_grid.nbasis * sizeof(double));
+  delta_grid.grid_cy = (double*)malloc(delta_grid.nbasis * sizeof(double));
+  if (!delta_grid.grid_cx || !delta_grid.grid_cy) {
+    LOG_ERROR("Failed to allocate delta basis grid coordinates");
+    free(delta_grid.grid_cx);
+    free(delta_grid.grid_cy);
+    memset(&delta_grid, 0, sizeof(delta_basis_grid_t));
+    return -1;
+  }
+
+  /* Populate grid points.
+     Grid is centered at (0, 0) with spacing delta_grid.grid_spacing.
+     Points span from approximately -hwKernel to +hwKernel in each axis. */
+  grid_idx = 0;
+  for (i = 0; i < delta_grid.ngrid_x; i++) {
+    for (j = 0; j < delta_grid.ngrid_y; j++) {
+      cx = -half_kernel_width + i * delta_grid.grid_spacing;
+      cy = -half_kernel_width + j * delta_grid.grid_spacing;
+      delta_grid.grid_cx[grid_idx] = cx;
+      delta_grid.grid_cy[grid_idx] = cy;
+      LOG_DEBUG("Delta basis [%d]: (%.2f, %.2f)", grid_idx, cx, cy);
+      grid_idx++;
+    }
+  }
+
+  /* Update global nCompKer (number of kernel components) */
+  nCompKer = delta_grid.nbasis;
+
+  return delta_grid.nbasis;
+}
+
+/**
+ * @brief Clean up delta basis grid memory.
+ *
+ * @details Frees allocated coordinate arrays and resets grid context to zero.
+ */
+void cleanup_delta_basis_grid(void) {
+  if (delta_grid.grid_cx) {
+    free(delta_grid.grid_cx);
+    delta_grid.grid_cx = NULL;
+  }
+  if (delta_grid.grid_cy) {
+    free(delta_grid.grid_cy);
+    delta_grid.grid_cy = NULL;
+  }
+  memset(&delta_grid, 0, sizeof(delta_basis_grid_t));
+}
 
 /* =====================================================================
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
@@ -527,10 +710,12 @@ static int tps_fit_background(stamp_struct* stamps, int n_stamps,
 void getKernelVec() {
   /* Dispatch basis initialization based on iBasisType */
   if (iBasisType == BASIS_TYPE_DELTA) {
-    LOG_ERROR("Delta function basis not yet implemented (Phase 2+)");
-    /* TODO: int nBasisFuncs = 0;
-           init_delta_basis_grid(&nBasisFuncs);
-           nCompKer = nBasisFuncs; */
+    int nBasisFuncs = init_delta_basis_grid();
+    if (nBasisFuncs < 0) {
+      LOG_ERROR("Failed to initialize delta basis grid");
+      exit(1);
+    }
+    LOG_PROGRESS("Delta basis initialized with %d functions", nBasisFuncs);
     return;
   }
 
