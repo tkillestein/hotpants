@@ -344,6 +344,8 @@ def fit_kernel(
         "iPedestal": thresholds.science_pedestal,
         "verbose": verbose,
         "nThread": n_thread,
+        "useTPS": 0,  # Will be set after global_state context is set up
+        "tpsSmoothing": 0.0,
     }
 
     with global_state(config_dict):
@@ -366,8 +368,14 @@ def fit_kernel(
             # Fit kernel
             logger.debug("Fitting kernel...")
             kernel_info = _core.get_kernel_info()
-            # fitKernel writes nCompTotal+1 coefficients; must allocate exactly that size
-            n_coeffs = kernel_info["total_components"] + 1
+            # Calculate kernelSol size for polynomial or TPS mode
+            # Note: TPS uses more space to store RBF weights and control point positions
+            use_tps = False  # Currently TPS is not exposed to user; default to polynomial
+            n_coeffs = _core.calculate_kernel_solution_size(
+                layout.stamps_per_region_x,
+                layout.stamps_per_region_y,
+                use_tps=use_tps,
+            )
 
             # If no noise image provided, compute Poisson variance to match main.c's
             # makeNoiseImage4 call: var = |img| / gain + (rdnoise / gain)^2.

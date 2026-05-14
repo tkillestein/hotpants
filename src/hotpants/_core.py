@@ -155,6 +155,7 @@ def global_state(config_dict: dict[str, int | float]) -> Generator:
         "nCompBG",
         "nCompTotal",
         "nS",
+        "useTPS",  # TPS spatial variation flag (0 = polynomial, 1 = TPS)
     }
     float_vars = {
         "kerFitThresh",
@@ -169,6 +170,7 @@ def global_state(config_dict: dict[str, int | float]) -> Generator:
         "iRdnoise",
         "tPedestal",
         "iPedestal",
+        "tpsSmoothing",  # TPS regularization parameter
     }
 
     # Save original values
@@ -435,6 +437,42 @@ def get_kernel_info() -> dict[str, int]:
         "bg_terms": _hotpants_ffi.get_global_int("nCompBG"),
         "total_components": _hotpants_ffi.get_global_int("nCompTotal"),
     }
+
+
+def calculate_kernel_solution_size(
+    n_stamps_x: int,
+    n_stamps_y: int,
+    use_tps: bool = False,
+) -> int:
+    """
+    Calculate required size of kernelSol array for polynomial or TPS mode.
+
+    Args:
+        n_stamps_x: Number of stamps along x axis
+        n_stamps_y: Number of stamps along y axis
+        use_tps: If True, calculate size for TPS mode; else polynomial
+
+    Returns:
+        Required size of kernelSol array in doubles
+
+    Note:
+        Requires globals nCompKer, kerOrder, bgOrder to be set via global_state().
+    """
+    kernel_info = get_kernel_info()
+    n_comp_ker = kernel_info["kernel_components"]
+    n_comp = kernel_info["kernel_terms"]
+    n_comp_bg = kernel_info["bg_terms"]
+
+    # Base size: kernel polynomial + background polynomial
+    poly_size = n_comp + n_comp_bg + 1
+
+    if not use_tps:
+        return poly_size
+
+    # Extended size for TPS: add RBF weights, polynomial trends, and positions
+    n_stamps = n_stamps_x * n_stamps_y
+    tps_additional = n_comp_ker * n_stamps + 3 * n_comp_ker + 2 * n_stamps
+    return poly_size + tps_additional
 
 
 # =====================================================================
