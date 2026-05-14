@@ -1473,6 +1473,36 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
   build_matrix(stamps, nS, matrix);
   build_scprod(stamps, nS, imRef, kernelSol);
 
+  /* Apply Laplacian regularization for delta basis to encourage smooth kernels.
+     Regularization is not needed for Gaussian basis (Gaussians are smooth by design).
+     Bramich (2008) discusses how Laplacian smoothness prevents noise amplification
+     in direct kernel representations like delta basis.
+  */
+  if (iBasisType == BASIS_TYPE_DELTA && rDeltaRegularization > 0.0) {
+    LOG_PROGRESS("Delta basis: applying Laplacian regularization (lambda=%.2e)", rDeltaRegularization);
+
+    double* laplacian_reg = (double*)malloc((size_t)mat_size * mat_size * sizeof(double));
+    if (!laplacian_reg) {
+      LOG_ERROR("Failed to allocate Laplacian regularization matrix");
+      goto cleanup_fitKernel;
+    }
+
+    if (assemble_laplacian_regularization(laplacian_reg) < 0) {
+      LOG_ERROR("Failed to assemble Laplacian regularization");
+      free(laplacian_reg);
+      goto cleanup_fitKernel;
+    }
+
+    /* Add regularization to the normal equations: M = M + λ·L^T·L */
+    for (matrixRowIdx = 0; matrixRowIdx < mat_size; matrixRowIdx++) {
+      for (int col = 0; col < mat_size; col++) {
+        matrix[matrixRowIdx + 1][col + 1] += laplacian_reg[matrixRowIdx * mat_size + col];
+      }
+    }
+
+    free(laplacian_reg);
+  }
+
   solve_spd(matrix, mat_size, kernelSol);
 
   LOG_DEBUG("Checking again");
@@ -1484,6 +1514,28 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
     LOG_PROGRESS("Re-Expanding Matrix");
     build_matrix(stamps, nS, matrix);
     build_scprod(stamps, nS, imRef, kernelSol);
+
+    /* Apply regularization again for delta basis in sigma-clipping iterations */
+    if (iBasisType == BASIS_TYPE_DELTA && rDeltaRegularization > 0.0) {
+      double* laplacian_reg = (double*)malloc((size_t)mat_size * mat_size * sizeof(double));
+      if (!laplacian_reg) {
+        LOG_ERROR("Failed to allocate Laplacian regularization matrix in iteration");
+        goto cleanup_fitKernel;
+      }
+
+      if (assemble_laplacian_regularization(laplacian_reg) < 0) {
+        free(laplacian_reg);
+        goto cleanup_fitKernel;
+      }
+
+      for (matrixRowIdx = 0; matrixRowIdx < mat_size; matrixRowIdx++) {
+        for (int col = 0; col < mat_size; col++) {
+          matrix[matrixRowIdx + 1][col + 1] += laplacian_reg[matrixRowIdx * mat_size + col];
+        }
+      }
+
+      free(laplacian_reg);
+    }
 
     solve_spd(matrix, mat_size, kernelSol);
 
@@ -1515,6 +1567,7 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
     }
   }
 
+cleanup_fitKernel:
   for (matrixRowIdx = 0; matrixRowIdx <= mat_size; matrixRowIdx++)
     free(matrix[matrixRowIdx]);
   for (matrixRowIdx = 0; matrixRowIdx < nS; matrixRowIdx++)

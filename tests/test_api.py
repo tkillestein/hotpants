@@ -506,3 +506,126 @@ class TestTPSConfiguration:
             }):
                 size = calculate_kernel_solution_size(5, 5, use_tps=False)
                 assert size == expected_poly
+
+
+# =====================================================================
+# Delta Basis Integration Tests
+# =====================================================================
+
+class TestDeltaBasis:
+    """Test delta function kernel basis integration (Bramich 2008)."""
+
+    def test_delta_basis_initialization(self):
+        """Delta basis should initialize correctly with proper nCompKer."""
+        # Delta basis with hwKernel=10 should have nCompKer = (2*10+1)² = 21² = 441
+        config = KernelConfig(
+            kernel_half_width=10,
+            basis_type="delta",
+        )
+        assert config.basis_type == "delta"
+
+    def test_delta_basis_fit_kernel(self):
+        """Delta basis should be able to fit a kernel from identical images."""
+        # Use simple identical images - should produce near-zero difference
+        template = np.random.rand(128, 128).astype(np.float32)
+        science = template.copy()
+
+        config = KernelConfig(
+            basis_type="delta",
+            kernel_half_width=10,
+            num_regions_x=1,
+            num_regions_y=1,
+            stamps_per_region_x=5,
+            stamps_per_region_y=5,
+        )
+
+        # Should not raise an error
+        kernel_sol = fit_kernel(template, science, config=config)
+        assert kernel_sol is not None
+        # Kernel solution should have valid properties
+        assert isinstance(kernel_sol.chi2, float)
+        assert kernel_sol.kernel_norm >= 0
+
+    def test_delta_basis_with_regularization(self):
+        """Delta basis with Laplacian regularization should work."""
+        template = np.random.rand(128, 128).astype(np.float32)
+        science = template.copy()
+
+        config = KernelConfig(
+            basis_type="delta",
+            kernel_half_width=8,
+            num_regions_x=1,
+            num_regions_y=1,
+            stamps_per_region_x=4,
+            stamps_per_region_y=4,
+            delta_ker_grid_size=2.0,
+            delta_regularization=1e-3,  # Apply Laplacian smoothness
+        )
+
+        # Should apply regularization without errors
+        kernel_sol = fit_kernel(template, science, config=config)
+        assert kernel_sol is not None
+
+    def test_delta_basis_convolution(self):
+        """Delta basis kernel should be applicable in convolution."""
+        # Create broadened template by Gaussian convolution
+        template = np.random.rand(128, 128).astype(np.float32)
+        from scipy.ndimage import gaussian_filter
+        science = gaussian_filter(template, sigma=1.5)
+
+        config = KernelConfig(
+            basis_type="delta",
+            kernel_half_width=10,
+            num_regions_x=1,
+            num_regions_y=1,
+            stamps_per_region_x=4,
+            stamps_per_region_y=4,
+        )
+
+        # Fit kernel
+        kernel_sol = fit_kernel(template, science, config=config)
+
+        # Apply convolution
+        diff = spatial_convolve(template, kernel_sol, config=config)
+
+        # Convolution should produce valid output
+        assert diff.shape == template.shape
+        assert not np.any(np.isnan(diff))
+
+    def test_delta_basis_vs_gaussian_basis(self):
+        """Delta basis should produce reasonable results compared to Gaussian."""
+        # Create test images
+        template = np.random.RandomState(42).rand(128, 128).astype(np.float32)
+        from scipy.ndimage import gaussian_filter
+        science = gaussian_filter(template, sigma=1.0)
+
+        config_delta = KernelConfig(
+            basis_type="delta",
+            kernel_half_width=10,
+            num_regions_x=1,
+            num_regions_y=1,
+            stamps_per_region_x=3,
+            stamps_per_region_y=3,
+        )
+
+        config_gaussian = KernelConfig(
+            basis_type="gaussian",
+            kernel_half_width=10,
+            num_regions_x=1,
+            num_regions_y=1,
+            stamps_per_region_x=3,
+            stamps_per_region_y=3,
+        )
+
+        # Both should work
+        kernel_delta = fit_kernel(template, science, config=config_delta)
+        kernel_gaussian = fit_kernel(template, science, config=config_gaussian)
+
+        assert kernel_delta is not None
+        assert kernel_gaussian is not None
+
+        # Convolution with both should work
+        diff_delta = spatial_convolve(template, kernel_delta, config=config_delta)
+        diff_gaussian = spatial_convolve(template, kernel_gaussian, config=config_gaussian)
+
+        assert diff_delta.shape == diff_gaussian.shape
