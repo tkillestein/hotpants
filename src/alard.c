@@ -446,39 +446,6 @@ double make_kernel_delta(int xi, int yi, double* kernelSol) {
  * @param[in] kernelSol Delta basis coefficients (length nCompKer = fwKernel²)
  * @return 0 on success, -1 on error
  */
-int spatial_convolve_delta(double* image, int mImageX, int mImageY,
-                           double* diffimage, const double* kernelSol) {
-  int xi, yi, pixelIdx;
-
-  if (!kernelSol || !image || !diffimage || nCompKer <= 0) {
-    LOG_ERROR("spatial_convolve_delta: invalid parameters");
-    return -1;
-  }
-
-  LOG_PROGRESS("Delta basis convolution: assembling kernel from %d coefficients", nCompKer);
-
-  /* Assemble the kernel array from delta basis coefficients.
-     For delta basis, kernelSol contains one coefficient per kernel pixel.
-     kernel[] is already declared as a global thread-local array. */
-  double kernel_sum = 0.0;
-  for (pixelIdx = 0; pixelIdx < nCompKer; pixelIdx++) {
-    kernel[pixelIdx] = kernelSol[pixelIdx];
-    kernel_sum += kernelSol[pixelIdx];
-  }
-
-  LOG_DEBUG("Kernel sum from delta coefficients: %.6f", kernel_sum);
-
-  /* Perform FFT-based convolution using the assembled kernel.
-     This reuses the standard FFT machinery from spatial_convolve_fft().
-     Note: spatial_convolve_fft routes through make_kernel_dispatch() which
-     handles both Gaussian and Delta bases internally. */
-  spatial_convolve_fft((float*)image, NULL, mImageX, mImageY, (double*)kernelSol,
-                       (float*)diffimage, NULL);
-
-  LOG_PROGRESS("Delta basis convolution complete");
-  return 0;
-}
-
 /* =====================================================================
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
    ===================================================================== */
