@@ -13,6 +13,7 @@
 #define HOTPANTS_TPS_UTILS_H
 
 #include <math.h>
+#include "defaults.h"
 
 /**
  * @brief Thin plate spline (TPS) RBF kernel: φ(r) = r² log(r).
@@ -23,10 +24,10 @@
  * @param r Euclidean distance between two points.
  * @return RBF kernel value φ(r).
  *
- * @note Special case: φ(0) = 0 by convention (r < 1e-10 treated as 0).
+ * @note Special case: φ(0) = 0 by convention (r < ZEROVAL treated as 0).
  */
 static inline double tps_kernel(double r) {
-  if (r < 1e-10) return 0.0;
+  if (r < ZEROVAL) return 0.0;
   return r * r * log(r);
 }
 
