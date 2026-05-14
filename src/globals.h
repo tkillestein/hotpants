@@ -81,6 +81,8 @@ EXTERN int nKSStamps, hwKSStamp;
 EXTERN char* sstampFile;
 EXTERN int findSSC;
 EXTERN int kerOrder, bgOrder;
+EXTERN int useTPS;           /* 1 = use TPS, 0 = polynomial */
+EXTERN double tpsSmoothing;  /* TPS regularization parameter */
 EXTERN float statSig, kerSigReject, kerFracMask;
 EXTERN char *forceConvolve, *photNormalize, *figMerit;
 EXTERN int sameConv, rescaleOK;

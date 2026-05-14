@@ -22,6 +22,488 @@ code.
 
 */
 
+/* Forward declarations for kernel evaluation dispatchers and TPS functions */
+double make_kernel_tps(int xi, int yi, double* kernelSol);
+double make_kernel_dispatch(int xi, int yi, double* kernelSol);
+static double make_kernel_local_dispatch(int xi, int yi, double* kernelSol,
+                                         double* lkernel, double* lkernel_coeffs);
+static int tps_fit_background(stamp_struct* stamps, int n_stamps,
+                              double* kernelSol);
+double get_background_tps(int xi, int yi, double* kernelSol);
+
+/* =====================================================================
+   THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
+   ===================================================================== */
+
+/**
+ * @brief Thin plate spline (TPS) RBF kernel: φ(r) = r² log(r).
+ *
+ * The RBF is rotation-invariant and minimizes bending energy, making it
+ * ideal for smooth spatial interpolation in image differencing.
+ *
+ * @param r Euclidean distance between two points.
+ * @return RBF kernel value φ(r).
+ *
+ * @note Special case: φ(0) = 0 by convention.
+ */
+static inline double tps_kernel(double r) {
+  if (r < ZEROVAL) return 0.0;
+  return r * r * log(r);
+}
+
+/**
+ * @brief Assemble the augmented RBF matrix for TPS fitting.
+ *
+ * @details Solves the linear system:
+ *   [ Φ  P ] [ w ]   [ c ]
+ *   [ P' 0 ] [ v ] = [ 0 ]
+ *
+ * where:
+ *   Φ[i,j] = φ(||pos[i] - pos[j]||)  (RBF kernel matrix)
+ *   P[i,0:d] = polynomial basis (1, x, y) for linear trend
+ *   w = RBF weights (N values per kernel component)
+ *   v = polynomial coefficients (3 values: const, cx, cy)
+ *   c = data values at control points
+ *
+ * The system is augmented with polynomial terms to ensure the interpolant
+ * has a well-defined trend and avoids ill-conditioning.
+ *
+ * @param[in]  positions      (N, 2) array of (x, y) control point positions
+ * @param[in]  n_points       Number of control points (N)
+ * @param[out] matrix         (N+3, N+3) augmented RBF matrix (row-major)
+ *
+ * @note The caller must allocate matrix of size (n_points+3)²
+ */
+static void tps_assemble_matrix(double* positions, int n_points,
+                                double* matrix) {
+  int i, j, mat_size;
+  double dx, dy, r;
+
+  mat_size = n_points + 3;
+
+  /* Fill RBF kernel block Φ (top-left) */
+  for (i = 0; i < n_points; i++) {
+    for (j = 0; j < n_points; j++) {
+      dx = positions[2 * i] - positions[2 * j];
+      dy = positions[2 * i + 1] - positions[2 * j + 1];
+      r = sqrt(dx * dx + dy * dy);
+      matrix[i * mat_size + j] = tps_kernel(r);
+    }
+  }
+
+  /* Fill polynomial basis block P (top-right, n_points × 3) */
+  for (i = 0; i < n_points; i++) {
+    matrix[i * mat_size + n_points] = 1.0;                  /* const term */
+    matrix[i * mat_size + n_points + 1] = positions[2 * i]; /* x term */
+    matrix[i * mat_size + n_points + 2] = positions[2 * i + 1]; /* y term */
+  }
+
+  /* Fill transpose of polynomial block P' (bottom-left, 3 × n_points) */
+  for (j = 0; j < n_points; j++) {
+    matrix[n_points * mat_size + j] = 1.0;
+    matrix[(n_points + 1) * mat_size + j] = positions[2 * j];
+    matrix[(n_points + 2) * mat_size + j] = positions[2 * j + 1];
+  }
+
+  /* Fill zero block (bottom-right, 3 × 3) */
+  for (i = 0; i < 3; i++) {
+    for (j = 0; j < 3; j++) {
+      matrix[(n_points + i) * mat_size + (n_points + j)] = 0.0;
+    }
+  }
+}
+
+/**
+ * @brief Fit TPS RBF surface to scattered control points for one kernel
+ *        component.
+ *
+ * @details Solves the augmented linear system via LU decomposition (LAPACK).
+ *
+ * @param[in]  positions         (N, 2) array of stamp center positions (pixels)
+ * @param[in]  n_points          Number of stamps (control points)
+ * @param[in]  coefficient_values (N,) array of fitted coefficients c_i for one
+ *                                kernel component
+ * @param[out] weights            (N,) RBF weights for this component
+ * @param[out] poly_coeffs        (3,) polynomial trend coefficients [const, cx,
+ *                                cy]
+ * @return 0 on success, non-zero on singular matrix or other error
+ *
+ * @note Allocates and frees internal working arrays; caller provides output
+ *       arrays.
+ */
+static int tps_fit_coefficients(double* positions, int n_points,
+                                double* coefficient_values, double* weights,
+                                double* poly_coeffs) {
+  int mat_size, i, info;
+  double* matrix;
+  double* rhs;
+  int* pivots;
+
+  mat_size = n_points + 3;
+
+  /* Allocate working arrays */
+  matrix = (double*)xcalloc(mat_size * mat_size, sizeof(double));
+  rhs = (double*)xcalloc(mat_size, sizeof(double));
+  pivots = (int*)xcalloc(mat_size, sizeof(int));
+
+  /* Assemble augmented RBF matrix */
+  tps_assemble_matrix(positions, n_points, matrix);
+
+  /* Copy coefficient values into RHS vector; pad with zeros for polynomial
+   * terms */
+  for (i = 0; i < n_points; i++) {
+    rhs[i] = coefficient_values[i];
+  }
+  for (i = n_points; i < mat_size; i++) {
+    rhs[i] = 0.0;
+  }
+
+  /* Solve via LU factorization (LAPACK dgesv) */
+  info = LAPACKE_dgesv(LAPACK_ROW_MAJOR, mat_size, 1, matrix, mat_size, pivots,
+                       rhs, 1);
+
+  if (info != 0) {
+    LOG_ERROR("TPS fit failed: singular matrix (info=%d)", info);
+    free(matrix);
+    free(rhs);
+    free(pivots);
+    return 1;
+  }
+
+  /* Extract solution: RBF weights and polynomial coefficients */
+  for (i = 0; i < n_points; i++) {
+    weights[i] = rhs[i];
+  }
+  for (i = 0; i < 3; i++) {
+    poly_coeffs[i] = rhs[n_points + i];
+  }
+
+  free(matrix);
+  free(rhs);
+  free(pivots);
+
+  return 0;
+}
+
+/**
+ * @brief Evaluate fitted TPS surface at an arbitrary position.
+ *
+ * @details Computes:
+ *   c_i(x,y) = Σ_j w_j · φ(||(x,y) - pos_j||) + p[0] + p[1]·x + p[2]·y
+ *
+ * where φ is the TPS RBF kernel and p[] are polynomial trend coefficients.
+ *
+ * @param[in] eval_x, eval_y    Position at which to evaluate
+ * @param[in] positions          (N, 2) array of control point positions
+ * @param[in] n_points           Number of control points
+ * @param[in] weights            (N,) RBF weights
+ * @param[in] poly_coeffs        (3,) polynomial coefficients [const, cx, cy]
+ * @return Interpolated coefficient value at (eval_x, eval_y)
+ */
+static double tps_evaluate(double eval_x, double eval_y, double* positions,
+                           int n_points, double* weights,
+                           double* poly_coeffs) {
+  int i;
+  double value, dx, dy, r;
+
+  /* Initialize with polynomial trend */
+  value = poly_coeffs[0] + poly_coeffs[1] * eval_x + poly_coeffs[2] * eval_y;
+
+  /* Add RBF contributions */
+  for (i = 0; i < n_points; i++) {
+    dx = eval_x - positions[2 * i];
+    dy = eval_y - positions[2 * i + 1];
+    r = sqrt(dx * dx + dy * dy);
+    value += weights[i] * tps_kernel(r);
+  }
+
+  return value;
+}
+
+/* =====================================================================
+   TPS kernelSol Layout Management
+   ===================================================================== */
+
+/**
+ * @brief Compute the size of kernelSol array needed for polynomial mode.
+ *
+ * Layout:
+ *   [0]: reserved
+ *   [1..nComp]: kernel polynomial coefficients
+ *   [nComp+1..nComp+nbg_vec]: background polynomial coefficients
+ *
+ * where nComp = (nCompKer-1) * (kerOrder+1)*(kerOrder+2)/2
+ *       nbg_vec = (bgOrder+1)*(bgOrder+2)/2
+ */
+static int kernelSol_size_polynomial(void) {
+  int ncomp1 = nCompKer - 1;
+  int ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
+  int ncomp = ncomp1 * ncomp2;
+  int nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
+  return ncomp + nbg_vec + 1;
+}
+
+/**
+
+/**
+ * @brief Get offset in kernelSol for RBF weights of kernel component.
+ *
+ * @param comp_idx Kernel component index (0..nCompKer-1)
+ * @param n_stamps Number of stamps
+ * @return Offset in kernelSol; access weights via kernelSol[offset..offset+n_stamps)
+ */
+static int kernelSol_offset_tps_weights(int comp_idx, int n_stamps) {
+  int poly_size = kernelSol_size_polynomial();
+  return poly_size + comp_idx * n_stamps;
+}
+
+/**
+ * @brief Get offset in kernelSol for polynomial trend of kernel component.
+ *
+ * @param comp_idx Kernel component index (0..nCompKer-1)
+ * @param n_stamps Number of stamps
+ * @return Offset in kernelSol; access 3 poly coeffs via kernelSol[offset..offset+3)
+ */
+static int kernelSol_offset_tps_poly(int comp_idx, int n_stamps) {
+  int poly_size = kernelSol_size_polynomial();
+  return poly_size + nCompKer * n_stamps + comp_idx * 3;
+}
+
+/**
+ * @brief Get offset in kernelSol for stamp positions.
+ *
+ * @param n_stamps Number of stamps
+ * @return Offset in kernelSol; positions are stored as x0,y0,x1,y1,...
+ */
+static int kernelSol_offset_tps_positions(int n_stamps) {
+  int poly_size = kernelSol_size_polynomial();
+  return poly_size + nCompKer * n_stamps + 3 * nCompKer;
+}
+
+/**
+ * @brief Get offset in kernelSol for RBF weights of background.
+ *
+ * @param n_stamps Number of stamps
+ * @return Offset in kernelSol; access weights via kernelSol[offset..offset+n_stamps)
+ */
+static int kernelSol_offset_tps_bg_weights(int n_stamps) {
+  int poly_size = kernelSol_size_polynomial();
+  return poly_size + nCompKer * n_stamps + 3 * nCompKer + 2 * n_stamps;
+}
+
+/**
+ * @brief Get offset in kernelSol for polynomial trend of background.
+ *
+ * @param n_stamps Number of stamps
+ * @return Offset in kernelSol; access 3 poly coeffs via kernelSol[offset..offset+3)
+ */
+static int kernelSol_offset_tps_bg_poly(int n_stamps) {
+  int poly_size = kernelSol_size_polynomial();
+  return poly_size + nCompKer * n_stamps + 3 * nCompKer + 2 * n_stamps + n_stamps;
+}
+
+/**
+ * @brief Fit thin plate spline surfaces to kernel coefficients after polynomial
+ * solve.
+ *
+ * @details Called from fitKernel() after LAPACK solve (if useTPS==1). For each
+ * kernel component:
+ *   1. Evaluate the fitted polynomial at each stamp center
+ *   2. Call tps_fit_coefficients() to fit RBF surface
+ *   3. Store RBF weights and poly trend in kernelSol
+ *
+ * @param[in]  stamps     Array of stamps with centers
+ * @param[in]  n_stamps   Total number of stamps
+ * @param[in,out] kernelSol  Solution vector; polynomial part is read, TPS part
+ *                           is filled
+ * @return 0 on success, non-zero if any TPS fit fails
+ */
+static int tps_fit_kernel(stamp_struct* stamps, int n_stamps,
+                          double* kernelSol) {
+  int comp_idx, stamp_idx, i;
+  int ncomp1, ncomp2, ncomp, solutionIdx;
+  double *stamp_positions, *poly_coeffs_at_stamps;
+  double *tps_weights, *tps_poly;
+  double normalizedX, normalizedY, polyBasisX, polyBasisY;
+  double halfPixX, halfPixY;
+  int polyDegX, polyDegY;
+
+  ncomp1 = nCompKer - 1;
+  ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
+  ncomp = ncomp1 * ncomp2;
+
+  halfPixX = 0.5 * rPixX;
+  halfPixY = 0.5 * rPixY;
+
+  LOG_DEBUG("TPS refitting: %d stamps, %d kernel components", n_stamps, nCompKer);
+
+  /* Allocate working arrays */
+  stamp_positions = (double*)xcalloc(2 * n_stamps, sizeof(double));
+  poly_coeffs_at_stamps = (double*)xcalloc(n_stamps, sizeof(double));
+
+  /* Extract stamp centers (in image pixel coordinates) */
+  for (stamp_idx = 0; stamp_idx < n_stamps; stamp_idx++) {
+    stamp_positions[2 * stamp_idx] = (double)stamps[stamp_idx].x;
+    stamp_positions[2 * stamp_idx + 1] = (double)stamps[stamp_idx].y;
+  }
+
+  /* Store stamp positions in kernelSol for later evaluation */
+  {
+    int pos_offset = kernelSol_offset_tps_positions(n_stamps);
+    for (i = 0; i < 2 * n_stamps; i++) {
+      kernelSol[pos_offset + i] = stamp_positions[i];
+    }
+  }
+
+  /* For each kernel component (excluding constant term), fit TPS surface */
+  for (comp_idx = 1; comp_idx < nCompKer; comp_idx++) {
+    solutionIdx = 2 + (comp_idx - 1) * ncomp2;
+
+    /* Evaluate polynomial at each stamp to get per-stamp coefficients */
+    for (stamp_idx = 0; stamp_idx < n_stamps; stamp_idx++) {
+      normalizedX =
+          (stamp_positions[2 * stamp_idx] - halfPixX) / halfPixX;
+      normalizedY =
+          (stamp_positions[2 * stamp_idx + 1] - halfPixY) / halfPixY;
+
+      poly_coeffs_at_stamps[stamp_idx] = 0.0;
+      polyBasisX = 1.0;
+      for (polyDegX = 0; polyDegX <= kerOrder; polyDegX++) {
+        polyBasisY = 1.0;
+        for (polyDegY = 0; polyDegY <= kerOrder - polyDegX; polyDegY++) {
+          poly_coeffs_at_stamps[stamp_idx] +=
+              kernelSol[solutionIdx++] * polyBasisX * polyBasisY;
+          polyBasisY *= normalizedY;
+        }
+        polyBasisX *= normalizedX;
+      }
+    }
+
+    /* Fit TPS surface to per-stamp coefficients */
+    {
+      int weights_offset = kernelSol_offset_tps_weights(comp_idx, n_stamps);
+      int poly_offset = kernelSol_offset_tps_poly(comp_idx, n_stamps);
+      int ret;
+
+      tps_weights = kernelSol + weights_offset;
+      tps_poly = kernelSol + poly_offset;
+
+      ret = tps_fit_coefficients(stamp_positions, n_stamps,
+                                 poly_coeffs_at_stamps, tps_weights, tps_poly);
+      if (ret != 0) {
+        LOG_ERROR("TPS fit failed for kernel component %d", comp_idx);
+        free(stamp_positions);
+        free(poly_coeffs_at_stamps);
+        return 1;
+      }
+
+      LOG_DEBUG("TPS component %d: fitted %d RBF weights, 3 poly trends", comp_idx,
+                n_stamps);
+    }
+  }
+
+  free(stamp_positions);
+  free(poly_coeffs_at_stamps);
+
+  return 0;
+}
+
+/**
+ * @brief Fit thin plate spline surface to background coefficients after polynomial
+ * solve.
+ *
+ * @details Called from fitKernel() after tps_fit_kernel() (if useTPS==1). Evaluates
+ * the fitted background polynomial at each stamp center and fits an RBF surface.
+ *
+ * @param[in]  stamps     Array of stamps with centers
+ * @param[in]  n_stamps   Total number of stamps
+ * @param[in,out] kernelSol  Solution vector; background polynomial part is read,
+ *                           background TPS part is filled
+ * @return 0 on success, non-zero if TPS fit fails
+ */
+static int tps_fit_background(stamp_struct* stamps, int n_stamps,
+                              double* kernelSol) {
+  int stamp_idx, i;
+  double *stamp_positions, *bg_coeffs_at_stamps;
+  double *tps_weights, *tps_poly;
+  double normalizedX, normalizedY, polyBasisX, polyBasisY;
+  double halfPixX, halfPixY;
+  int polyDegX, polyDegY, bgSolutionIdx;
+  int nbg_vec;
+
+  nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
+
+  halfPixX = 0.5 * rPixX;
+  halfPixY = 0.5 * rPixY;
+
+  LOG_DEBUG("TPS background refitting: %d stamps", n_stamps);
+
+  /* Allocate working arrays */
+  stamp_positions = (double*)xcalloc(2 * n_stamps, sizeof(double));
+  bg_coeffs_at_stamps = (double*)xcalloc(n_stamps, sizeof(double));
+
+  /* Extract stamp centers (in image pixel coordinates) */
+  for (stamp_idx = 0; stamp_idx < n_stamps; stamp_idx++) {
+    stamp_positions[2 * stamp_idx] = (double)stamps[stamp_idx].x;
+    stamp_positions[2 * stamp_idx + 1] = (double)stamps[stamp_idx].y;
+  }
+
+  /* Compute background polynomial offset in kernelSol */
+  {
+    int ncomp1 = nCompKer - 1;
+    int ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
+    int ncomp = ncomp1 * ncomp2;
+    bgSolutionIdx = ncomp + 1;
+  }
+
+  /* Evaluate background polynomial at each stamp */
+  for (stamp_idx = 0; stamp_idx < n_stamps; stamp_idx++) {
+    normalizedX = (stamp_positions[2 * stamp_idx] - halfPixX) / halfPixX;
+    normalizedY = (stamp_positions[2 * stamp_idx + 1] - halfPixY) / halfPixY;
+
+    bg_coeffs_at_stamps[stamp_idx] = 0.0;
+    polyBasisX = 1.0;
+    for (polyDegX = 0; polyDegX <= bgOrder; polyDegX++) {
+      polyBasisY = 1.0;
+      for (polyDegY = 0; polyDegY <= bgOrder - polyDegX; polyDegY++) {
+        bg_coeffs_at_stamps[stamp_idx] +=
+            kernelSol[bgSolutionIdx++] * polyBasisX * polyBasisY;
+        polyBasisY *= normalizedY;
+      }
+      polyBasisX *= normalizedX;
+    }
+  }
+
+  /* Fit TPS surface to per-stamp background coefficients */
+  {
+    int weights_offset = kernelSol_offset_tps_bg_weights(n_stamps);
+    int poly_offset = kernelSol_offset_tps_bg_poly(n_stamps);
+    int ret;
+
+    tps_weights = kernelSol + weights_offset;
+    tps_poly = kernelSol + poly_offset;
+
+    ret = tps_fit_coefficients(stamp_positions, n_stamps,
+                               bg_coeffs_at_stamps, tps_weights, tps_poly);
+    if (ret != 0) {
+      LOG_ERROR("TPS fit failed for background");
+      free(stamp_positions);
+      free(bg_coeffs_at_stamps);
+      return 1;
+    }
+
+    LOG_DEBUG("TPS background: fitted %d RBF weights, 3 poly trends", n_stamps);
+  }
+
+  free(stamp_positions);
+  free(bg_coeffs_at_stamps);
+
+  return 0;
+}
+
+/* =====================================================================
+ */
+
 /**
  * @brief Precompute all kernel basis function images and store them in
  * kernel_vec.
@@ -501,6 +983,27 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
   }
   LOG_PROGRESS("Sigma clipping of bad stamps converged, kernel determined");
 
+  /* If TPS mode is enabled, refit kernel and background coefficients using RBF interpolation */
+  if (useTPS) {
+    int ret = tps_fit_kernel(stamps, nS, kernelSol);
+    if (ret != 0) {
+      LOG_ERROR("TPS kernel refitting failed; using polynomial solution only");
+      useTPS = 0; /* Fall back to polynomial evaluation */
+    } else {
+      LOG_PROGRESS("TPS kernel refitting complete; RBF surfaces fitted for %d components",
+                   nCompKer);
+
+      /* Also fit TPS surface to background */
+      ret = tps_fit_background(stamps, nS, kernelSol);
+      if (ret != 0) {
+        LOG_ERROR("TPS background refitting failed; using polynomial background");
+        /* Note: we don't disable useTPS here; kernel TPS still works, just background reverts to polynomial */
+      } else {
+        LOG_PROGRESS("TPS background refitting complete");
+      }
+    }
+  }
+
   for (matrixRowIdx = 0; matrixRowIdx <= mat_size; matrixRowIdx++)
     free(matrix[matrixRowIdx]);
   for (matrixRowIdx = 0; matrixRowIdx < nS; matrixRowIdx++)
@@ -803,7 +1306,7 @@ double check_stamps(stamp_struct* stamps, int nS, float* imRef,
     solve_spd(matrix, mat_size, testKerSol);
 
     /* get the kernel sum to normalize figures of merit! */
-    kmean = make_kernel(0, 0, testKerSol);
+    kmean = make_kernel_dispatch(0, 0, testKerSol);
 
     /* determine figure of merit from good stamps */
 
@@ -1483,6 +1986,75 @@ static double make_kernel_local(int xi, int yi, double* kernelSol,
 }
 
 /**
+ * @brief TPS-based alternative to make_kernel_local().
+ *
+ * @details Evaluates TPS-interpolated kernel coefficients and assembles
+ * the kernel into the local buffer (for FFT-accelerated convolution).
+ *
+ * @param xi              x pixel coordinate
+ * @param yi              y pixel coordinate
+ * @param kernelSol       Extended kernel solution (includes TPS parameters)
+ * @param lkernel         Local kernel buffer (output, fwKernel×fwKernel)
+ * @param lkernel_coeffs  Local coefficient buffer (output, nCompKer values)
+ * @return Kernel sum (photometric scaling factor)
+ */
+static double make_kernel_local_tps(int xi, int yi, double* kernelSol,
+                                    double* lkernel,
+                                    double* lkernel_coeffs) {
+  int gaussianCompIdx, kernelPixelIdx;
+  double kernelSum;
+  double *tps_weights, *tps_poly, *positions;
+
+  /* Evaluate TPS-interpolated coefficients at (xi, yi) */
+  for (gaussianCompIdx = 1; gaussianCompIdx < nCompKer; gaussianCompIdx++) {
+    tps_weights = kernelSol + kernelSol_offset_tps_weights(gaussianCompIdx, nS);
+    tps_poly = kernelSol + kernelSol_offset_tps_poly(gaussianCompIdx, nS);
+    positions = kernelSol + kernelSol_offset_tps_positions(nS);
+
+    lkernel_coeffs[gaussianCompIdx] =
+        tps_evaluate((double)xi, (double)yi, positions, nS, tps_weights, tps_poly);
+  }
+
+  /* Constant component (no spatial variation) */
+  lkernel_coeffs[0] = kernelSol[1];
+
+  /* Assemble kernel from basis functions */
+  for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel;
+       kernelPixelIdx++)
+    lkernel[kernelPixelIdx] = 0.0;
+
+  kernelSum = 0.0;
+  for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel;
+       kernelPixelIdx++) {
+    for (gaussianCompIdx = 0; gaussianCompIdx < nCompKer; gaussianCompIdx++)
+      lkernel[kernelPixelIdx] += lkernel_coeffs[gaussianCompIdx] *
+                                 kernel_vec[gaussianCompIdx][kernelPixelIdx];
+    kernelSum += lkernel[kernelPixelIdx];
+  }
+  return kernelSum;
+}
+
+/**
+ * @brief Dispatcher: evaluate kernel into local buffer using polynomial or TPS.
+ *
+ * @param xi              x pixel coordinate
+ * @param yi              y pixel coordinate
+ * @param kernelSol       Kernel solution vector
+ * @param lkernel         Local kernel buffer (output)
+ * @param lkernel_coeffs  Local coefficient buffer (output)
+ * @return Kernel sum
+ */
+static double make_kernel_local_dispatch(int xi, int yi, double* kernelSol,
+                                         double* lkernel,
+                                         double* lkernel_coeffs) {
+  if (useTPS) {
+    return make_kernel_local_tps(xi, yi, kernelSol, lkernel, lkernel_coeffs);
+  } else {
+    return make_kernel_local(xi, yi, kernelSol, lkernel, lkernel_coeffs);
+  }
+}
+
+/**
  * @brief Round n up to the smallest integer >= n whose only prime factors
  *        are 2, 3, or 5.  Such sizes have fast FFTW r2c/c2r plans.
  */
@@ -1859,8 +2431,8 @@ static void spatial_convolve_fft(float* image, float** variance, int xSize,
     for (i = 0; i < nsteps_x_loc; i++) {
       i0 = i * kcStep + hwKernel;
 
-      make_kernel_local(i0 + hwKernel, j0 + hwKernel, kernelSol, lkernel,
-                        lkernel_coeffs);
+      make_kernel_local_dispatch(i0 + hwKernel, j0 + hwKernel, kernelSol, lkernel,
+                                 lkernel_coeffs);
 
       for (j2 = 0; j2 < kcStep; j2++) {
         j = j0 + j2;
@@ -2052,6 +2624,28 @@ void spatial_convolve(float* image, float** variance, int xSize, int ySize,
 }
 
 /**
+ * @brief Dispatcher: evaluate kernel at (xi, yi) using polynomial or TPS.
+ *
+ * @details Routes to make_kernel() or make_kernel_tps() based on useTPS flag.
+ * This is the primary entry point for kernel evaluation during convolution.
+ *
+ * @param xi         x pixel coordinate
+ * @param yi         y pixel coordinate
+ * @param kernelSol  Kernel solution vector
+ * @return Kernel sum (photometric scaling factor)
+ *
+ * @see make_kernel() for polynomial evaluation
+ * @see make_kernel_tps() for TPS evaluation
+ */
+double make_kernel_dispatch(int xi, int yi, double* kernelSol) {
+  if (useTPS) {
+    return make_kernel_tps(xi, yi, kernelSol);
+  } else {
+    return make_kernel(xi, yi, kernelSol);
+  }
+}
+
+/**
  * @brief Evaluate the spatially-varying convolution kernel at image position
  *        (xi, yi) and return its pixel sum.
  *
@@ -2114,6 +2708,101 @@ double make_kernel(int xi, int yi, double* kernelSol) {
 }
 
 /**
+ * @brief Evaluate the spatially-varying convolution kernel using thin plate
+ * spline interpolation.
+ *
+ * @details TPS-based alternative to make_kernel(). For each kernel component,
+ * evaluates the fitted TPS RBF surface at (xi, yi) to obtain the spatially-
+ * varying coefficient. Then assembles the final kernel image as a weighted
+ * sum of basis functions.
+ *
+ * TPS parameters are stored in kernelSol when useTPS=1. Layout:
+ *   [0..poly_size-1]: polynomial coefficients (for background compat)
+ *   [poly_size..poly_size+nCompKer*nS-1]: RBF weights
+ *   [poly_size+nCompKer*nS..poly_size+nCompKer*nS+3*nCompKer-1]: poly trends
+ *   [poly_size+nCompKer*nS+3*nCompKer..end]: stamp positions
+ *
+ * @param xi         x pixel coordinate at which to evaluate
+ * @param yi         y pixel coordinate at which to evaluate
+ * @param kernelSol  Extended kernel solution vector (includes TPS parameters)
+ * @return Sum of all pixels in the assembled kernel image
+ *
+ * @see tps_evaluate() for RBF surface evaluation
+ * @see make_kernel() for polynomial (non-TPS) version
+ */
+double make_kernel_tps(int xi, int yi, double* kernelSol) {
+  int gaussianCompIdx, kernelPixelIdx, pixelCompIdx;
+  double kernelSum;
+  double *tps_weights, *tps_poly, *positions;
+  int pos_offset;
+
+  /* For TPS evaluation, nS is the number of stamps per region used during fit.
+     Note: This assumes single-region (nRegX=1, nRegY=1), so nS == nStampX*nStampY
+  */
+
+  pos_offset = kernelSol_offset_tps_positions(nS);
+
+  /* Evaluate TPS-interpolated kernel coefficients at (xi, yi) */
+  for (gaussianCompIdx = 1; gaussianCompIdx < nCompKer; gaussianCompIdx++) {
+    tps_weights = kernelSol + kernelSol_offset_tps_weights(gaussianCompIdx, nS);
+    tps_poly = kernelSol + kernelSol_offset_tps_poly(gaussianCompIdx, nS);
+    positions = kernelSol + pos_offset;
+
+    kernel_coeffs[gaussianCompIdx] =
+        tps_evaluate((double)xi, (double)yi, positions, nS, tps_weights, tps_poly);
+  }
+
+  /* Constant component (no spatial variation) */
+  kernel_coeffs[0] = kernelSol[1];
+
+  /* Assemble kernel image from basis functions */
+  for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel;
+       kernelPixelIdx++)
+    kernel[kernelPixelIdx] = 0.0;
+
+  kernelSum = 0.0;
+  for (kernelPixelIdx = 0; kernelPixelIdx < fwKernel * fwKernel;
+       kernelPixelIdx++) {
+    for (pixelCompIdx = 0; pixelCompIdx < nCompKer; pixelCompIdx++) {
+      kernel[kernelPixelIdx] += kernel_coeffs[pixelCompIdx] *
+                                kernel_vec[pixelCompIdx][kernelPixelIdx];
+    }
+    kernelSum += kernel[kernelPixelIdx];
+  }
+
+  return kernelSum;
+}
+
+/**
+ * @brief Evaluate the spatially-varying background using thin plate spline
+ * interpolation.
+ *
+ * @details TPS-based alternative to polynomial get_background(). Evaluates the
+ * fitted TPS RBF surface at (xi, yi) to obtain the background value.
+ *
+ * @param xi         x pixel coordinate.
+ * @param yi         y pixel coordinate.
+ * @param kernelSol  Extended kernel solution vector (includes background TPS parameters)
+ * @return Background value at (xi, yi)
+ *
+ * @see get_background() for polynomial (non-TPS) version
+ */
+double get_background_tps(int xi, int yi, double* kernelSol) {
+  double *tps_weights, *tps_poly, *positions;
+  int pos_offset, n_stamps;
+
+  /* nS is the number of stamps per region used during fit */
+  n_stamps = nS;
+  pos_offset = kernelSol_offset_tps_positions(n_stamps);
+
+  tps_weights = kernelSol + kernelSol_offset_tps_bg_weights(n_stamps);
+  tps_poly = kernelSol + kernelSol_offset_tps_bg_poly(n_stamps);
+  positions = kernelSol + pos_offset;
+
+  return tps_evaluate((double)xi, (double)yi, positions, n_stamps, tps_weights, tps_poly);
+}
+
+/**
  * @brief Evaluate the spatially-varying background polynomial at image position
  *        (xi, yi).
  *
@@ -2130,6 +2819,10 @@ double make_kernel(int xi, int yi, double* kernelSol) {
  * @return Background value at (xi, yi) in data units.
  */
 double get_background(int xi, int yi, double* kernelSol) {
+  if (useTPS) {
+    return get_background_tps(xi, yi, kernelSol);
+  }
+
   double background, polyBasisX, polyBasisY, normalizedX, normalizedY;
   int polyDegX, polyDegY, solutionIdx;
   int backgroundComponentOffset;
@@ -2182,11 +2875,7 @@ void make_model(stamp_struct* stamp, double* kernelSol, float* csModel) {
       stampCenterX, stampCenterY;
   double polyBasisX, polyBasisY, polynomialCoeff;
   double* vector;
-  float halfPixX, halfPixY;
   double normalizedX, normalizedY;
-
-  halfPixX = 0.5 * rPixX;
-  halfPixY = 0.5 * rPixY;
 
   stampCenterX = stamp->xss[stamp->sscnt];
   stampCenterY = stamp->yss[stamp->sscnt];
