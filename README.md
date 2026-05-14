@@ -211,9 +211,8 @@ Key tuning parameters:
 | `-decorrUseTPS`          | Use TPS interpolation for φ field      | 0       |
 
 **When to use decorrelation:**
-- Image surveys with time-domain analysis (transient detection, variability)
 - When correlated noise in difference images affects photometry
-- Production pipelines requiring optimal signal-to-noise on faint transients
+- Production pipelines requiring optimal signal-to-noise on faint sources
 - Single-region mode (`-nrx 1 -nry 1`) for best results
 
 ---
