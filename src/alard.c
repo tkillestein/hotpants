@@ -222,6 +222,116 @@ void cleanup_delta_basis_grid(void) {
   memset(&delta_grid, 0, sizeof(delta_basis_grid_t));
 }
 
+/**
+ * @brief Convolve a stamp with a single delta basis function.
+ *
+ * @details For a delta basis function at grid index basisIdx, correlates
+ *          every pixel in the stamp with the RBF function centered at that
+ *          grid point. Returns the correlation array (pixFitted).
+ *
+ *          The correlation is computed as:
+ *          C[x,y] = Σ_{dx,dy} stamp[x+dx, y+dy] · φ_basis(dx, dy)
+ *          where φ_basis is the RBF function for grid point basisIdx.
+ *
+ * @param[in] stamp Stamp pixel array (mStampX × mStampY)
+ * @param[in] mStampX, mStampY Stamp dimensions
+ * @param[in] basisIdx Index of delta basis function (0 to nbasis-1)
+ * @param[out] pixFitted Correlation result array (must be pre-allocated,
+ *                       size mStampX × mStampY)
+ * @return 0 on success, -1 on error (invalid basisIdx or uninit grid)
+ *
+ * @note Performs direct 2D convolution (not separable); O(k²m²) complexity
+ *       where k is kernel width and m is stamp width.
+ * @note Uses eval_delta_basis() to compute RBF values on-the-fly.
+ *
+ * Reference: Bramich (2008), Section 2.1 for kernel fitting parameterization.
+ */
+int xy_conv_stamp_delta(double* stamp, int mStampX, int mStampY,
+                        int basisIdx, double* pixFitted) {
+  int stampPixelX, stampPixelY, kernelOffsetX, kernelOffsetY, pixelIdx;
+  double rbf_value, sum;
+  int half_stamp_x = mStampX / 2;
+  int half_stamp_y = mStampY / 2;
+
+  if (!delta_grid.nbasis) {
+    LOG_ERROR("Delta grid not initialized");
+    return -1;
+  }
+  if (basisIdx < 0 || basisIdx >= delta_grid.nbasis) {
+    LOG_ERROR("Invalid basisIdx %d (grid has %d functions)", basisIdx,
+              delta_grid.nbasis);
+    return -1;
+  }
+
+  /* Correlate stamp with delta RBF function at basisIdx.
+     For each pixel in the output, convolve with the RBF centered at
+     the grid point. */
+  pixelIdx = 0;
+  for (stampPixelY = 0; stampPixelY < mStampY; stampPixelY++) {
+    for (stampPixelX = 0; stampPixelX < mStampX; stampPixelX++) {
+      sum = 0.0;
+
+      /* Convolve this stamp pixel with the RBF kernel.
+         For each kernel offset, evaluate the RBF at that offset and
+         multiply by the corresponding stamp pixel. */
+      for (kernelOffsetY = -hwKernel; kernelOffsetY <= hwKernel;
+           kernelOffsetY++) {
+        for (kernelOffsetX = -hwKernel; kernelOffsetX <= hwKernel;
+             kernelOffsetX++) {
+          int stamp_y = stampPixelY + kernelOffsetY;
+          int stamp_x = stampPixelX + kernelOffsetX;
+
+          /* Check bounds (pad with zeros outside stamp) */
+          if (stamp_x >= 0 && stamp_x < mStampX && stamp_y >= 0 &&
+              stamp_y < mStampY) {
+            int stamp_idx = stamp_x + mStampX * stamp_y;
+            rbf_value = eval_delta_basis(basisIdx, (double)kernelOffsetX,
+                                         (double)kernelOffsetY);
+            sum += stamp[stamp_idx] * rbf_value;
+          }
+        }
+      }
+
+      pixFitted[pixelIdx++] = sum;
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * @brief Accumulate normal equations for delta basis kernel fitting.
+ *
+ * @details For a single substamp with delta basis, correlates the image
+ *          with each delta basis function using xy_conv_stamp_delta(),
+ *          then accumulates the normal-equation matrices (AᵀA and Aᵀb).
+ *
+ *          This is the delta-basis equivalent of fillStamp() / build_matrix0(),
+ *          but does not use pre-computed separable convolution.
+ *
+ * @param[in] substampIdx Index of the current substamp
+ * @param[in,out] kernelSol Kernel solution vector (accumulates equations)
+ * @param[in,out] iMatrixSize Current size of the normal equation matrix
+ * @return 0 on success, -1 on error
+ *
+ * @note Intended to be called from fitKernel() when iBasisType == BASIS_TYPE_DELTA.
+ * @note Currently a stub returning error (full implementation deferred to extended work).
+ *
+ * Reference: Bramich (2008), Section 2.2 for normal equation assembly.
+ */
+int build_matrix_delta(int substampIdx, double* kernelSol,
+                       int* iMatrixSize) {
+  LOG_ERROR(
+      "Delta basis matrix building not yet fully implemented (Phase 3+)");
+  /* TODO: Implement normal equation accumulation for delta basis.
+           This would:
+           1. For each delta basis function, call xy_conv_stamp_delta()
+           2. Build cross-product matrices (AᵀA, Aᵀb)
+           3. Accumulate into kernelSol using logic similar to build_matrix()
+  */
+  return -1;
+}
+
 /* =====================================================================
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
    ===================================================================== */
