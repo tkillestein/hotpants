@@ -32,6 +32,7 @@ producing optimal difference images for transient detection.
 
 - **Fast convolution** — FFT-accelerated via FFTW3 (3–8× speedup on typical images)
 - **Parallelized** — multi-threaded with OpenMP for modern CPUs (4–8× total speedup)
+- **Decorrelation** — LSST DMTN-021 afterburner noise decorrelation with spatially-varying whitening kernel
 - **Modern build system** — CMake with automatic dependency detection
 - **Comprehensive documentation** — Doxygen-generated API docs and user guides
 - **Python API** — full numpy integration via ctypes for the scientific Python stack
@@ -164,10 +165,23 @@ HOTPANTS produces a multi-layer FITS file:
 | Layer | Content                                                                   |
 |-------|---------------------------------------------------------------------------|
 | 1     | Difference image: `D = I − T⊗K`                                           |
-| 2+    | Optional: convolved image, noise map, noise-scaled difference, pixel mask |
+| 2     | Decorrelated difference image: `D_decorr = φ ⊗ D` (if `-useDecorrelation 1`) |
+| 3+    | Optional: convolved image, noise map, noise-scaled difference, pixel mask |
 
-Use `-allm` to output all available layers. Use `-nim`, `-cim`, `-oni` for individual
-layers.
+Use `-allm` to output all available layers. Use `-nim`, `-oni` for individual layers.
+
+### Decorrelation Output
+
+When decorrelation is enabled (`-useDecorrelation 1`), the output FITS file includes:
+
+- **Layer 2 (DECORR):** Decorrelated difference image with correlated noise removed
+- **Header keywords:**
+  - `HIERARCH DECORR_METHOD`: "AFTERBURNER" (LSST DMTN-021)
+  - `HIERARCH DECORR_SCI_VAR`: Science image variance used
+  - `HIERARCH DECORR_TPL_VAR`: Template image variance used
+
+The decorrelated image is obtained by convolving D with a spatially-varying whitening kernel
+φ(x,y) that removes the correlation structure introduced by the PSF-matching convolution.
 
 ---
 
@@ -186,6 +200,21 @@ Key tuning parameters:
 | `-bgo`         | Spatial polynomial order (background)       | 1       |
 | `-ft`          | Centroid fitting threshold (RMS pixels)     | 20.0    |
 | `-ks`          | Bad-stamp rejection threshold (sigma)       | 2.0     |
+
+### Decorrelation Parameters
+
+| Option                   | Purpose                                | Default |
+|--------------------------|----------------------------------------|---------|
+| `-useDecorrelation`      | Enable DMTN-021 decorrelation          | 0       |
+| `-decorrScienceVar`      | Science image variance (auto-estimated if 0) | 0 |
+| `-decorrTemplateVar`     | Template image variance (auto-estimated if 0) | 0 |
+| `-decorrUseTPS`          | Use TPS interpolation for φ field      | 0       |
+
+**When to use decorrelation:**
+- Image surveys with time-domain analysis (transient detection, variability)
+- When correlated noise in difference images affects photometry
+- Production pipelines requiring optimal signal-to-noise on faint transients
+- Single-region mode (`-nrx 1 -nry 1`) for best results
 
 ---
 
