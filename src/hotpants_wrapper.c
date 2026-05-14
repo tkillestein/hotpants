@@ -131,31 +131,6 @@ int adjust_blas_threads_for_region_layout(int nRegX, int nRegY) {
   return 0;
 }
 
-/* stamp_struct definition (copied from globals.h) */
-typedef struct {
-  int x0, y0;
-  int x, y;
-  int nx, ny;
-  int* xss;
-  int* yss;
-  int nss;
-  int sscnt;
-  double** vectors;
-  double* krefArea;
-  double** mat;
-  double* scprod;
-  double sum;
-  double mean;
-  double median;
-  double mode;
-  double sd;
-  double fwhm;
-  double lfwhm;
-  double chi2;
-  double norm;
-  double diff;
-} stamp_struct;
-
 /* Declare globals accessed by wrapper */
 extern __thread int rPixX, rPixY;
 extern __thread int* mRData;
