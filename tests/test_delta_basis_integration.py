@@ -92,20 +92,22 @@ class TestDeltaBasisIntegration:
             kernel_half_width=10,
             kernel_order=1,
             bg_order=1,
-            num_regions_x=1,
-            num_regions_y=1,
+        )
+        layout = RegionLayout(
+            n_regions_x=1,
+            n_regions_y=1,
             stamps_per_region_x=5,
             stamps_per_region_y=5,
         )
 
         # Fit kernel
-        kernel_sol = fit_kernel(template, science, config=config)
+        kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
         assert kernel_sol.kernel_norm > 0
 
         # Apply convolution: returns T⊗K + bg (matched template).
         # For identical images the difference D = science - (T⊗K + bg) should be ~0.
-        convolved = spatial_convolve(template, kernel_sol, config=config)
+        convolved = spatial_convolve(template, kernel_sol, config=config, layout=layout)
         diff = science - convolved
 
         assert convolved.shape == template.shape
@@ -128,20 +130,22 @@ class TestDeltaBasisIntegration:
             kernel_half_width=10,
             kernel_order=1,
             bg_order=1,
-            num_regions_x=1,
-            num_regions_y=1,
+        )
+        layout = RegionLayout(
+            n_regions_x=1,
+            n_regions_y=1,
             stamps_per_region_x=6,
             stamps_per_region_y=6,
         )
 
         # Fit kernel
-        kernel_sol = fit_kernel(template, science, config=config)
+        kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
         assert kernel_sol.kernel_norm > 0
 
         # Apply convolution: spatial_convolve returns T⊗K + bg (the matched template).
         # The difference image D = science - (T⊗K + bg) should be small (noise-dominated).
-        convolved = spatial_convolve(template, kernel_sol, config=config)
+        convolved = spatial_convolve(template, kernel_sol, config=config, layout=layout)
         diff = science - convolved
 
         # Check output validity
@@ -166,11 +170,13 @@ class TestDeltaBasisIntegration:
             kernel_half_width=8,
             kernel_order=1,
             bg_order=1,
-            num_regions_x=1,
-            num_regions_y=1,
+            delta_regularization=0.0,  # No regularization
+        )
+        layout = RegionLayout(
+            n_regions_x=1,
+            n_regions_y=1,
             stamps_per_region_x=5,
             stamps_per_region_y=5,
-            delta_regularization=0.0,  # No regularization
         )
 
         config_reg = KernelConfig(
@@ -178,23 +184,19 @@ class TestDeltaBasisIntegration:
             kernel_half_width=8,
             kernel_order=1,
             bg_order=1,
-            num_regions_x=1,
-            num_regions_y=1,
-            stamps_per_region_x=5,
-            stamps_per_region_y=5,
             delta_regularization=1e-3,  # Strong regularization
         )
 
         # Fit kernels
-        kernel_noreg = fit_kernel(template, science, config=config_noreg)
-        kernel_reg = fit_kernel(template, science, config=config_reg)
+        kernel_noreg = fit_kernel(template, science, config=config_noreg, layout=layout)
+        kernel_reg = fit_kernel(template, science, config=config_reg, layout=layout)
 
         assert kernel_noreg is not None
         assert kernel_reg is not None
 
         # Both should produce valid output
-        diff_noreg = spatial_convolve(template, kernel_noreg, config=config_noreg)
-        diff_reg = spatial_convolve(template, kernel_reg, config=config_reg)
+        diff_noreg = spatial_convolve(template, kernel_noreg, config=config_noreg, layout=layout)
+        diff_reg = spatial_convolve(template, kernel_reg, config=config_reg, layout=layout)
 
         assert diff_noreg.shape == template.shape
         assert diff_reg.shape == template.shape
@@ -211,10 +213,6 @@ class TestDeltaBasisIntegration:
             kernel_half_width=10,
             kernel_order=1,
             bg_order=1,
-            num_regions_x=1,
-            num_regions_y=1,
-            stamps_per_region_x=5,
-            stamps_per_region_y=5,
         )
 
         config_gaussian = KernelConfig(
@@ -222,22 +220,25 @@ class TestDeltaBasisIntegration:
             kernel_half_width=10,
             kernel_order=1,
             bg_order=1,
-            num_regions_x=1,
-            num_regions_y=1,
+        )
+
+        layout = RegionLayout(
+            n_regions_x=1,
+            n_regions_y=1,
             stamps_per_region_x=5,
             stamps_per_region_y=5,
         )
 
         # Fit both bases
-        kernel_delta = fit_kernel(template, science, config=config_delta)
-        kernel_gaussian = fit_kernel(template, science, config=config_gaussian)
+        kernel_delta = fit_kernel(template, science, config=config_delta, layout=layout)
+        kernel_gaussian = fit_kernel(template, science, config=config_gaussian, layout=layout)
 
         assert kernel_delta is not None
         assert kernel_gaussian is not None
 
         # Apply convolution with both
-        diff_delta = spatial_convolve(template, kernel_delta, config=config_delta)
-        diff_gaussian = spatial_convolve(template, kernel_gaussian, config=config_gaussian)
+        diff_delta = spatial_convolve(template, kernel_delta, config=config_delta, layout=layout)
+        diff_gaussian = spatial_convolve(template, kernel_gaussian, config=config_gaussian, layout=layout)
 
         # Check shapes match
         assert diff_delta.shape == diff_gaussian.shape
@@ -262,16 +263,18 @@ class TestDeltaBasisIntegration:
             kernel_half_width=10,
             kernel_order=2,  # Polynomial spatial variation
             bg_order=1,
-            num_regions_x=1,
-            num_regions_y=1,
+        )
+        layout = RegionLayout(
+            n_regions_x=1,
+            n_regions_y=1,
             stamps_per_region_x=5,
             stamps_per_region_y=5,
         )
 
-        kernel_sol = fit_kernel(template, science, config=config)
+        kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
 
-        diff = spatial_convolve(template, kernel_sol, config=config)
+        diff = spatial_convolve(template, kernel_sol, config=config, layout=layout)
         assert diff.shape == template.shape
         assert not np.any(np.isnan(diff))
 
@@ -286,16 +289,18 @@ class TestDeltaBasisIntegration:
             kernel_half_width=8,
             kernel_order=1,
             bg_order=1,
-            num_regions_x=2,
-            num_regions_y=2,
+        )
+        layout = RegionLayout(
+            n_regions_x=2,
+            n_regions_y=2,
             stamps_per_region_x=4,
             stamps_per_region_y=4,
         )
 
-        kernel_sol = fit_kernel(template, science, config=config)
+        kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
 
-        diff = spatial_convolve(template, kernel_sol, config=config)
+        diff = spatial_convolve(template, kernel_sol, config=config, layout=layout)
         assert diff.shape == template.shape
         assert not np.any(np.isnan(diff))
 
@@ -309,15 +314,17 @@ class TestDeltaBasisIntegration:
             kernel_half_width=10,
             kernel_order=1,
             bg_order=1,
-            num_regions_x=1,
-            num_regions_y=1,
+        )
+        layout = RegionLayout(
+            n_regions_x=1,
+            n_regions_y=1,
             stamps_per_region_x=5,
             stamps_per_region_y=5,
         )
 
         # Multiple fits should be stable
-        kernel_sol1 = fit_kernel(template, science, config=config)
-        kernel_sol2 = fit_kernel(template, science, config=config)
+        kernel_sol1 = fit_kernel(template, science, config=config, layout=layout)
+        kernel_sol2 = fit_kernel(template, science, config=config, layout=layout)
 
         # Both should produce non-NaN results
         assert kernel_sol1 is not None
@@ -346,17 +353,19 @@ class TestDeltaBasisIntegration:
             kernel_half_width=8,
             kernel_order=1,
             bg_order=1,
-            num_regions_x=1,
-            num_regions_y=1,
-            stamps_per_region_x=4,
-            stamps_per_region_y=4,
             delta_regularization=1e-3,  # Use regularization for noisy data
         )
+        layout = RegionLayout(
+            n_regions_x=1,
+            n_regions_y=1,
+            stamps_per_region_x=4,
+            stamps_per_region_y=4,
+        )
 
-        kernel_sol = fit_kernel(template, science, config=config)
+        kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
 
-        diff = spatial_convolve(template, kernel_sol, config=config)
+        diff = spatial_convolve(template, kernel_sol, config=config, layout=layout)
         assert not np.any(np.isnan(diff))
         assert not np.any(np.isinf(diff))
 
@@ -370,13 +379,15 @@ class TestDeltaBasisIntegration:
             kernel_half_width=10,
             kernel_order=1,
             bg_order=1,
-            num_regions_x=1,
-            num_regions_y=1,
+        )
+        layout = RegionLayout(
+            n_regions_x=1,
+            n_regions_y=1,
             stamps_per_region_x=5,
             stamps_per_region_y=5,
         )
 
-        kernel_sol = fit_kernel(template, science, config=config)
+        kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
 
         # Kernel norm should be positive and reasonable
@@ -393,18 +404,20 @@ class TestDeltaBasisIntegration:
             kernel_half_width=8,
             kernel_order=1,
             bg_order=1,
-            num_regions_x=1,
-            num_regions_y=1,
+            use_tps=True,  # TPS stub for delta (falls back to polynomial)
+        )
+        layout = RegionLayout(
+            n_regions_x=1,
+            n_regions_y=1,
             stamps_per_region_x=4,
             stamps_per_region_y=4,
-            use_tps=True,  # TPS stub for delta (falls back to polynomial)
         )
 
         # Should not crash; currently falls back to polynomial
-        kernel_sol = fit_kernel(template, science, config=config)
+        kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
 
-        diff = spatial_convolve(template, kernel_sol, config=config)
+        diff = spatial_convolve(template, kernel_sol, config=config, layout=layout)
         assert not np.any(np.isnan(diff))
 
 
