@@ -83,7 +83,7 @@ class TestKernelSolutionSize:
 
         size = calculate_kernel_solution_size(10, 10, use_tps=True)
         n_stamps = 10 * 10
-        expected = 16 + (3 * n_stamps + 3 * 3 + 2 * n_stamps)
+        expected = 16 + (3 * n_stamps + 3 * 3 + 2 * n_stamps + n_stamps + 3)
         assert size == expected
 
     def test_tps_vs_polynomial_size_ratio(self, monkeypatch):
@@ -129,8 +129,8 @@ class TestKernelSolutionSize:
         assert size_10x10 > size_5x5
         assert size_20x20 > size_10x10
 
-        # TPS overhead per additional stamp (nCompKer + 2)
-        overhead_per_stamp = 3 + 2  # nCompKer=3, positions=2
+        # TPS overhead per additional stamp (nCompKer + 3: kernel weights + positions(2) + bg_weight(1))
+        overhead_per_stamp = 3 + 3  # nCompKer=3, positions=2, bg_weight=1
         assert (size_10x10 - size_5x5) == overhead_per_stamp * 75  # (100-25) stamps
         assert (size_20x20 - size_10x10) == overhead_per_stamp * 300  # (400-100) stamps
 
@@ -425,7 +425,7 @@ class TestTPSEdgeCases:
 
         size_100x100 = calculate_kernel_solution_size(100, 100, use_tps=True)
         n_stamps = 100 * 100
-        expected = 16 + (3 * n_stamps + 3 * 3 + 2 * n_stamps)
+        expected = 16 + (3 * n_stamps + 3 * 3 + 2 * n_stamps + n_stamps + 3)
         assert size_100x100 == expected
 
 

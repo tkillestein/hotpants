@@ -18,6 +18,9 @@
 #include "functions.h"
 #include "decorrelation.h"
 
+/* Forward declaration for BLAS thread adjustment */
+int adjust_blas_threads_for_region_layout(int nRegX, int nRegY);
+
 /* Forward declaration of threading functions (implemented in hotpants_wrapper.c) */
 extern int init_threading(void);
 extern int get_fftw3_threading_available(void);

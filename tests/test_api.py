@@ -433,8 +433,8 @@ class TestTPSConfiguration:
             size_tps = calculate_kernel_solution_size(10, 10, use_tps=True)
             size_poly = calculate_kernel_solution_size(10, 10, use_tps=False)
 
-            # TPS should be larger: poly_size + (nCompKer*nStamps + 3*nCompKer + 2*nStamps)
-            expected_tps = size_poly + (3 * n_stamps + 3 * 3 + 2 * n_stamps)
+            # TPS layout: nCompKer*nS + 3*nCompKer + 2*nS (positions) + nS (bg weights) + 3 (bg poly)
+            expected_tps = size_poly + (3 * n_stamps + 3 * 3 + 2 * n_stamps + n_stamps + 3)
             assert size_tps == expected_tps
             assert size_tps > size_poly
 
@@ -452,8 +452,8 @@ class TestTPSConfiguration:
             size_8x8 = calculate_kernel_solution_size(8, 8, use_tps=True)
 
             # Difference should correspond to 48 additional stamps (64-16)
-            # Overhead per stamp = nCompKer + 2 = 3 + 2 = 5
-            expected_diff = 48 * 5
+            # Overhead per stamp = nCompKer + 3 = 3 + 3 = 6 (kernel weights + positions(2) + bg_weight(1))
+            expected_diff = 48 * 6
             assert (size_8x8 - size_4x4) == expected_diff
 
     def test_global_state_tps_flags(self):

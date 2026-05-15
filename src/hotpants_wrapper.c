@@ -165,6 +165,7 @@ extern __thread float *temp;
 /* Forward declarations - defined in alard.c */
 extern int getKernelVec(void);
 extern double make_kernel(int xi, int yi, double* kernelSol);
+extern double make_kernel_dispatch(int xi, int yi, double* kernelSol);
 
 /* Forward declarations - defined in functions.c */
 extern void makeInputMask(float* iRData, float* tRData, int* mRData);
@@ -220,6 +221,9 @@ int initKernelGlobals(int image_nx, int image_ny,
                       int n_reg_x, int n_reg_y,
                       int n_stamp_x, int n_stamp_y) {
   int i;
+  /* Tracks how many entries were allocated in kernel_vec so cleanup is safe
+   * across calls where iBasisType may differ (delta overrides nCompKer). */
+  static int kernel_vec_alloc_size = 0;
 
   /* --- Gaussian basis setup (mirrors vargs.c lines 36-45) --- */
 
@@ -242,17 +246,14 @@ int initKernelGlobals(int image_nx, int image_ny,
   sigma_gauss[1] = 1.0f / (2.0f * 1.5f * 1.5f);   /* D_SIG_GAUSS2 = 1.5 */
   sigma_gauss[2] = 1.0f / (2.0f * 3.0f * 3.0f);   /* D_SIG_GAUSS3 = 3.0 */
 
-  /* --- Derived counts (mirrors main.c lines 401-409) --- */
+  /* --- Derived counts for Gaussian basis (mirrors main.c lines 401-409) --- */
 
   nCompKer = 0;
   for (i = 0; i < ngauss; i++)
     nCompKer += ((deg_fixe[i] + 1) * (deg_fixe[i] + 2)) / 2;
 
   nComp   = ((kerOrder + 1) * (kerOrder + 2)) / 2;
-  nC      = nCompKer + 2;  /* used by allocateStamps for mat size */
-  nCompBG = (nCompKer - 1) * nComp + 1;
   nBGVectors = ((bgOrder + 1) * (bgOrder + 2)) / 2;
-  nCompTotal = nCompKer * nComp + nBGVectors;
 
   /* --- Frame widths (mirrors main.c lines 411-440) --- */
 
@@ -280,10 +281,12 @@ int initKernelGlobals(int image_nx, int image_ny,
   /* --- Kernel basis array allocation (mirrors main.c lines 450-461) ---
    * kernel_vec, filter_x, filter_y hold the pre-computed Gaussian-polynomial
    * basis images and separable filters used by fillStamp/xy_conv_stamp and
-   * spatial_convolve/make_kernel_local. */
+   * spatial_convolve/make_kernel_local.
+   * Use kernel_vec_alloc_size (not nCompKer) for cleanup to handle re-entry
+   * after a delta basis run that overrides nCompKer below. */
 
   if (kernel_vec) {
-    for (i = 0; i < nCompKer; i++) {
+    for (i = 0; i < kernel_vec_alloc_size; i++) {
       if (kernel_vec[i]) { free(kernel_vec[i]); kernel_vec[i] = NULL; }
     }
     free(kernel_vec); kernel_vec = NULL;
@@ -294,6 +297,8 @@ int initKernelGlobals(int image_nx, int image_ny,
   if (kernel_coeffs) { free(kernel_coeffs); kernel_coeffs = NULL; }
   if (temp)          { free(temp);          temp = NULL; }
 
+  /* Allocate using Gaussian nCompKer; delta basis does not use these arrays. */
+  kernel_vec_alloc_size = nCompKer;
   kernel_vec = (double**)calloc(nCompKer, sizeof(double*));
   filter_x   = (double*)calloc(nCompKer * fwKernel, sizeof(double));
   filter_y   = (double*)calloc(nCompKer * fwKernel, sizeof(double));
@@ -313,6 +318,24 @@ int initKernelGlobals(int image_nx, int image_ny,
     return -1;
   }
 
+  /* --- Delta basis: override nCompKer = fwKernel² ---
+   * For delta basis, each kernel pixel is a separate basis function, so
+   * nCompKer must equal fwKernel² (not the Gaussian polynomial count).
+   * This override must happen BEFORE allocateStamps() is called so that
+   * stamp->mat, stamp->scprod, and stamp->vectors are sized correctly.
+   * kernel_vec/filter_x/filter_y are Gaussian-only; delta fillStamp uses
+   * xy_conv_stamp_delta() which does not touch these arrays. */
+  if (iBasisType == BASIS_TYPE_DELTA) {
+    nCompKer = fwKernel * fwKernel;
+    fprintf(stderr, "INFO: Delta basis active: nCompKer = %d (%d×%d kernel pixels)\n",
+            nCompKer, fwKernel, fwKernel);
+  }
+
+  /* Recompute derived counts with the (possibly overridden) nCompKer */
+  nC      = nCompKer + 2;  /* used by allocateStamps for mat/scprod size */
+  nCompBG = (nCompKer - 1) * nComp + 1;
+  nCompTotal = nCompKer * nComp + nBGVectors;
+
   /* Initialize string globals normally set by vargs() — these must not be NULL
    * because buildStamps, fitKernel, and spatial_convolve call strncmp() on them.
    * forceConvolve = "t": Python API always fits template ⊗ K ≈ science,
@@ -329,6 +352,16 @@ int initKernelGlobals(int image_nx, int image_ny,
   if (fillVal == 0.0f)        fillVal        = D_FILL;
   if (kfSpreadMask1 == 0.0f)  kfSpreadMask1  = D_INMASKFSPREAD;
   if (kfSpreadMask2 == 0.0f)  kfSpreadMask2  = D_OUMASKFSPREAD;
+
+  /* Set the active basis so make_kernel_dispatch() routes correctly.
+   * For Gaussian this re-runs gaussian_init() (harmless since kernel_vec is
+   * already populated above); for delta it runs delta_init() which sets
+   * nCompKer = fwKernel² (consistent with the override above). */
+  if (initKernelBasis() < 0) {
+    fprintf(stderr, "ERROR: Failed to initialize kernel basis (iBasisType=%d)\n",
+            iBasisType);
+    return -1;
+  }
 
   return 0;
 }
@@ -631,7 +664,9 @@ void cleanupBuildStampsContext(void) {
 double computeKernelNorm(double* kernel_coeffs, int nx, int ny) {
   rPixX = nx;
   rPixY = ny;
-  return make_kernel(nx / 2, ny / 2, kernel_coeffs);
+  /* Use the dispatch function so delta basis routes to delta_eval_kernel_dispatch()
+   * rather than the Gaussian-specific make_kernel() which accesses kernel_vec. */
+  return make_kernel_dispatch(nx / 2, ny / 2, kernel_coeffs);
 }
 
 /* =====================================================================

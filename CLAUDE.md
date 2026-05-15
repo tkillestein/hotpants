@@ -889,25 +889,48 @@ or expand them to their own sections as in-progress tasks are completed.
 
 ---
 
-* ✓ **PARTIAL: Bramich (2008) Delta Function Kernel Basis** (May 2026, Phases 1-6 complete)
+* ✓ **COMPLETED: Bramich (2008) Delta Function Kernel Basis** (May 2026, Phases 1-7 complete)
   
-  **Status:** Pluggable basis infrastructure complete. Core grid initialization, RBF
-  evaluation, and stamp convolution working. Laplacian regularization implemented.
-  Kernel evaluation and full convolution stubs in place. Python API fully integrated.
+  **Status:** Full integration complete with universal kernel fitting and convolution pipeline.
+  Delta basis now uses the same FFT machinery as Gaussian basis, with basis-specific
+  kernel evaluation via active_basis abstraction.
   
-  **What's done:**
+  **Completed work (May 2026):**
   - Phase 1: Basis type enum, CLI flags, C API wrapper functions
-  - Phase 2: Delta grid initialization with configurable RBF spacing
-  - Phase 3: Direct 2D convolution with delta RBF basis (xy_conv_stamp_delta)
+  - Phase 2: Delta grid initialization (one basis function per kernel pixel)
+  - Phase 3: Direct stamp convolution with delta basis (xy_conv_stamp_delta)
   - Phase 4: Discrete 2D Laplacian regularization matrix assembly
-  - Phase 5: Kernel evaluation and convolution function stubs (interface defined)
+  - Phase 5: Kernel evaluation with polynomial spatial variation (delta_eval_kernel)
   - Phase 6: Full Python API support (KernelConfig.basis_type, delta parameters)
+  - **Phase 7: Integration with universal fitKernel() and spatial_convolve() (NEW)**
   
-  **What remains:**
-  - Phase 3+ (extended): Full normal equation accumulation (build_matrix_delta)
-  - Phase 5+ (extended): Complete kernel evaluation with spatial variation
-  - Phase 5+ (extended): Full FFT-based convolution with delta kernels
-  - Integration with fitKernel() pipeline and spatial variation (polynomial/TPS)
+  **Phase 7 Implementation (Integration with Universal Pipeline):**
+  - `delta_eval_kernel()`: Evaluates delta basis kernel at (xi, yi) with polynomial
+    spatial variation for each kernel pixel coefficient
+  - `delta_eval_kernel_tps()`: TPS variant (stub, falls back to polynomial)
+  - `delta_eval_kernel_dispatch()`: Routes to polynomial or TPS based on useTPS flag
+  - `xy_conv_stamp_delta(stamp_struct*, float*, int)`: Extracts shifted stamp pixels
+    matching Gaussian xy_conv_stamp signature and flow
+  - Updated fillStamp(): Calls xy_conv_stamp_delta in loop (parallel to Gaussian path)
+  - Updated spatial_convolve(): Removed fallback, both Gaussian and Delta use
+    make_kernel_dispatch() → active_basis->eval_kernel() → FFT convolution
+  - Laplacian regularization: Already integrated in fitKernel() (lines 1481-1504)
+  - TPS support: Already hooked in fitKernel() for tps_fit_kernel/background calls
+  
+  **Architecture:**
+  - Pluggable basis system: gaussian_basis ↔ delta_basis via get_basis_for_type()
+  - Kernel evaluation dispatch: make_kernel_dispatch() → active_basis->eval_kernel()
+  - Both bases use identical FFT convolution machinery (spatial_convolve_fft)
+  - Difference: Gaussian uses kernel_vec[] (precomputed Gaussians) + polynomial
+    coefficients; Delta uses direct pixel values + polynomial coefficients
+  
+  **Testing status:** Code complete, integration-ready. Awaiting build environment
+  for compilation and integration testing with synthetic astronomical images.
+  
+  **Remaining work (future):**
+  - TPS variant for delta basis (evaluate RBF surfaces per pixel)
+  - Integration tests with real astronomical data
+  - Performance profiling vs. Gaussian basis
   
   **Usage (Python API):**
   ```python

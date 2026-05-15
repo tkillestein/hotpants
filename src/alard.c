@@ -10,6 +10,7 @@
 #include "globals.h"
 #include "functions.h"
 #include "basis.h"
+#include "tps_utils.h"
 
 /*
 
@@ -32,14 +33,17 @@ static int tps_fit_background(stamp_struct* stamps, int n_stamps,
                               double* kernelSol);
 double get_background_tps(int xi, int yi, double* kernelSol);
 
+/* Forward declarations for FFT convolution */
+void spatial_convolve_fft(float* image, float** variance, int xSize,
+                          int ySize, double* kernelSol, float* cRdata,
+                          int* cMask);
+
 /* Forward declarations for delta function basis */
 int init_delta_basis_grid(void);
 void cleanup_delta_basis_grid(void);
 double eval_delta_basis(int basis_idx, double dx, double dy);
 double make_kernel_delta(int xi, int yi, double* kernelSol);
-int xy_conv_stamp_delta(double* stamp, int mStampX, int mStampY, int basisIdx,
-                        double* pixFitted);
-int build_matrix_delta(int substampIdx, double* kernelSol, int* iMatrixSize);
+int xy_conv_stamp_delta(stamp_struct* stamp, float* image, int basisIdx);
 
 /* =====================================================================
    DELTA FUNCTION KERNEL BASIS (Bramich 2008)
@@ -119,42 +123,7 @@ void cleanup_delta_basis_grid(void) {
  *
  * Reference: Bramich (2008), Section 2.1
  */
-int xy_conv_stamp_delta(double* stamp, int mStampX, int mStampY,
-                        int basisIdx, double* pixFitted) {
-  int stampPixelX, stampPixelY, pixelIdx;
-  int kernel_x, kernel_y;
-
-  if (basisIdx < 0 || basisIdx >= fwKernel * fwKernel) {
-    LOG_ERROR("Invalid basisIdx %d (kernel has %d×%d = %d pixels)", basisIdx,
-              fwKernel, fwKernel, fwKernel * fwKernel);
-    return -1;
-  }
-
-  /* Map basis index to kernel offset (kx, ky) */
-  kernel_x = (basisIdx % fwKernel) - hwKernel;
-  kernel_y = (basisIdx / fwKernel) - hwKernel;
-
-  /* Extract stamp values shifted by kernel offset (zero-padded outside bounds) */
-  pixelIdx = 0;
-  for (stampPixelY = 0; stampPixelY < mStampY; stampPixelY++) {
-    for (stampPixelX = 0; stampPixelX < mStampX; stampPixelX++) {
-      int stamp_y = stampPixelY + kernel_y;
-      int stamp_x = stampPixelX + kernel_x;
-
-      /* Zero-pad outside stamp bounds */
-      if (stamp_x >= 0 && stamp_x < mStampX && stamp_y >= 0 &&
-          stamp_y < mStampY) {
-        int stamp_idx = stamp_x + mStampX * stamp_y;
-        pixFitted[pixelIdx] = stamp[stamp_idx];
-      } else {
-        pixFitted[pixelIdx] = 0.0;
-      }
-      pixelIdx++;
-    }
-  }
-
-  return 0;
-}
+/* xy_conv_stamp_delta is defined later in this file (see line ~1344) */
 
 /**
  * @brief Accumulate normal equations for delta basis kernel fitting.
@@ -175,17 +144,17 @@ int xy_conv_stamp_delta(double* stamp, int mStampX, int mStampY,
  *
  * Reference: Bramich (2008), Section 2.2 for normal equation assembly.
  */
-int build_matrix_delta(int substampIdx, double* kernelSol,
-                       int* iMatrixSize) {
-  LOG_ERROR("Delta basis matrix building not yet integrated (deferred work)");
-  /* TODO: Implement delta basis normal equation accumulation.
-           Will require:
-           1. Dispatcher in fillStamp() to route to xy_conv_stamp_delta()
-           2. Direct matrix accumulation similar to build_matrix()
-           3. Integration with existing stamp context
-  */
-  return -1;
-}
+/**
+ * @brief Build normal equations matrix for delta basis.
+ *
+ * @details Simpler than Gaussian path: just accumulates cross-products of
+ * stamp vectors without polynomial decomposition. Polynomial spatial variation
+ * is applied at kernel evaluation time (make_kernel_delta), not here.
+ *
+ * @param stamps Array of stamp structures
+ * @param nS Number of stamps
+ * @param matrix Output normal equations matrix
+ */
 
 /* =====================================================================
    DELTA FUNCTION BASIS — Laplacian Regularization for Smoothness
@@ -476,55 +445,11 @@ double make_kernel_delta(int xi, int yi, double* kernelSol) {
  * @param[in] kernelSol Delta basis coefficients (length nCompKer = fwKernel²)
  * @return 0 on success, -1 on error
  */
-int spatial_convolve_delta(double* image, int mImageX, int mImageY,
-                           double* diffimage, const double* kernelSol) {
-  int xi, yi, pixelIdx;
-
-  if (!kernelSol || !image || !diffimage || nCompKer <= 0) {
-    LOG_ERROR("spatial_convolve_delta: invalid parameters");
-    return -1;
-  }
-
-  LOG_PROGRESS("Delta basis convolution: assembling kernel from %d coefficients", nCompKer);
-
-  /* Assemble the kernel array from delta basis coefficients.
-     For delta basis, kernelSol contains one coefficient per kernel pixel.
-     kernel[] is already declared as a global thread-local array. */
-  double kernel_sum = 0.0;
-  for (pixelIdx = 0; pixelIdx < nCompKer; pixelIdx++) {
-    kernel[pixelIdx] = kernelSol[pixelIdx];
-    kernel_sum += kernelSol[pixelIdx];
-  }
-
-  LOG_DEBUG("Kernel sum from delta coefficients: %.6f", kernel_sum);
-
-  /* Perform FFT-based convolution using the assembled kernel.
-     This reuses the standard FFT machinery from spatial_convolve_fft(). */
-  spatial_convolve_fft((float*)image, NULL, mImageX, mImageY, (float*)diffimage, NULL);
-
-  LOG_PROGRESS("Delta basis convolution complete");
-  return 0;
-}
-
 /* =====================================================================
    THIN PLATE SPLINE (TPS) SPATIAL VARIATION — Core RBF Functions
    ===================================================================== */
 
-/**
- * @brief Thin plate spline (TPS) RBF kernel: φ(r) = r² log(r).
- *
- * The RBF is rotation-invariant and minimizes bending energy, making it
- * ideal for smooth spatial interpolation in image differencing.
- *
- * @param r Euclidean distance between two points.
- * @return RBF kernel value φ(r).
- *
- * @note Special case: φ(0) = 0 by convention.
- */
-static inline double tps_kernel(double r) {
-  if (r < ZEROVAL) return 0.0;
-  return r * r * log(r);
-}
+/* tps_kernel() is now in tps_utils.h (included above) */
 
 /**
  * @brief Assemble the augmented RBF matrix for TPS fitting.
@@ -675,25 +600,7 @@ static int tps_fit_coefficients(double* positions, int n_points,
  * @param[in] poly_coeffs        (3,) polynomial coefficients [const, cx, cy]
  * @return Interpolated coefficient value at (eval_x, eval_y)
  */
-static double tps_evaluate(double eval_x, double eval_y, double* positions,
-                           int n_points, double* weights,
-                           double* poly_coeffs) {
-  int i;
-  double value, dx, dy, r;
-
-  /* Initialize with polynomial trend */
-  value = poly_coeffs[0] + poly_coeffs[1] * eval_x + poly_coeffs[2] * eval_y;
-
-  /* Add RBF contributions */
-  for (i = 0; i < n_points; i++) {
-    dx = eval_x - positions[2 * i];
-    dy = eval_y - positions[2 * i + 1];
-    r = sqrt(dx * dx + dy * dy);
-    value += weights[i] * tps_kernel(r);
-  }
-
-  return value;
-}
+/* tps_evaluate() is now in tps_utils.h (included above) */
 
 /* =====================================================================
    TPS kernelSol Layout Management
@@ -1112,26 +1019,18 @@ int fillStamp(stamp_struct* stamp, float* imConv, float* imRef) {
       }
     }
   } else if (iBasisType == BASIS_TYPE_DELTA) {
-    /* Delta basis: pixel-level basis functions (one per kernel pixel) */
-    double* scratch = (double*)malloc(fwKSStamp * fwKSStamp * sizeof(double));
-    if (!scratch) {
-      LOG_ERROR("Failed to allocate scratch buffer for delta basis convolution");
-      return 1;
-    }
-
+    /* Delta basis: pixel-level basis functions (one per kernel pixel)
+       stamp->vectors is dynamically allocated in buildStamps() with size
+       nCompKer + nbgVectors, so there's enough space for all basis functions. */
     for (int basisIdx = 0; basisIdx < nCompKer; basisIdx++) {
-      if (active_basis->convolve_stamp((double*)imConv, rPixX, rPixY, basisIdx, scratch) < 0) {
+      /* xy_conv_stamp_delta extracts shifted stamp region for this basis pixel
+         and stores result in stamp->vectors[basisIdx] */
+      if (xy_conv_stamp_delta(stamp, imConv, basisIdx) < 0) {
         LOG_ERROR("Failed to convolve stamp with delta basis function %d", basisIdx);
-        free(scratch);
         return 1;
       }
-
-      /* Copy scratch buffer to stamp->vectors[basisIdx] */
-      double* vec = stamp->vectors[basisIdx];
-      memcpy(vec, scratch, fwKSStamp * fwKSStamp * sizeof(double));
-      vectorComponentIdx++;
+      ++vectorComponentIdx;
     }
-    free(scratch);
   } else {
     LOG_ERROR("Unknown basis type: %d", iBasisType);
     return 1;
@@ -1351,6 +1250,63 @@ void xy_conv_stamp(stamp_struct* stamp, float* image, int n, int ren) {
   return;
 }
 
+/**
+ * @brief Delta basis stamp convolution for a single basis function.
+ *
+ * @details For delta basis function at kernel pixel (kx, ky), extracts the
+ *          shifted stamp pixels and stores in stamp->vectors[basisIdx].
+ *
+ *          The delta basis convolution is simply extracting the current substamp
+ *          shifted by the kernel offset, zero-padded outside bounds.
+ *
+ * @param stamp Stamp struct containing position and vector storage
+ * @param image Full image to extract pixels from
+ * @param basisIdx Kernel pixel index (0 to nCompKer-1)
+ * @return 0 on success, -1 on error
+ */
+int xy_conv_stamp_delta(stamp_struct* stamp, float* image, int basisIdx) {
+  int stampColIdx, stampRowIdx, kernel_x, kernel_y, imgColIdx, imgRowIdx, xij;
+  double *imc;
+  int stampCenterX, stampCenterY;
+
+  if (basisIdx < 0 || basisIdx >= nCompKer) {
+    LOG_ERROR("xy_conv_stamp_delta: invalid basisIdx %d (nCompKer=%d)", basisIdx, nCompKer);
+    return -1;
+  }
+
+  /* Get current substamp position */
+  stampCenterX = stamp->xss[stamp->sscnt];
+  stampCenterY = stamp->yss[stamp->sscnt];
+
+  /* Map basis index to kernel pixel offset (kx, ky) */
+  kernel_x = (basisIdx % fwKernel) - hwKernel;
+  kernel_y = (basisIdx / fwKernel) - hwKernel;
+
+  /* Get output vector for this basis function */
+  imc = stamp->vectors[basisIdx];
+
+  /* Extract stamp shifted by kernel offset, zero-padded outside bounds */
+  for (stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp; stampRowIdx++) {
+    for (stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp; stampColIdx++) {
+      xij = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
+
+      /* Compute image coordinates with kernel offset */
+      imgColIdx = stampCenterX + stampColIdx + kernel_x;
+      imgRowIdx = stampCenterY + stampRowIdx + kernel_y;
+
+      /* Extract pixel value, zero-pad if outside image bounds */
+      if (imgColIdx >= 0 && imgColIdx < (int)rPixX &&
+          imgRowIdx >= 0 && imgRowIdx < (int)rPixY) {
+        imc[xij] = (double)image[imgColIdx + rPixX * imgRowIdx];
+      } else {
+        imc[xij] = 0.0;
+      }
+    }
+  }
+
+  return 0;
+}
+
 
 /**
  * @brief Solve A·x = b in-place where A is symmetric positive-definite.
@@ -1449,12 +1405,15 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
   int matrixRowIdx, mat_size;
   int ncomp1, ncomp2, ncomp, nbg_vec;
 
-  ncomp1 = nCompKer - 1;
+  /* Delta basis uses all nCompKer pixel basis functions; Gaussian skips the DC term */
+  ncomp1 = (iBasisType == BASIS_TYPE_DELTA) ? nCompKer : (nCompKer - 1);
   ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
   ncomp = ncomp1 * ncomp2;
   nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
 
-  mat_size = ncomp1 * ncomp2 + nbg_vec + 1;
+  /* Delta: no DC slot → mat_size = ncomp + nbg_vec.
+   * Gaussian: DC amplitude at index 1 → mat_size = ncomp + nbg_vec + 1. */
+  mat_size = ncomp + nbg_vec + (iBasisType == BASIS_TYPE_DELTA ? 0 : 1);
 
   LOG_DEBUG("Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i", mat_size, ncomp2,
             ncomp1, nbg_vec);
@@ -1470,6 +1429,8 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
     wxy[matrixRowIdx] = (double*)malloc(ncomp2 * sizeof(double));
 
   LOG_DEBUG("Expanding Matrix For Full Fit");
+
+  /* Build matrix and RHS using unified basis-agnostic accumulators */
   build_matrix(stamps, nS, matrix);
   build_scprod(stamps, nS, imRef, kernelSol);
 
@@ -1481,7 +1442,9 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
   if (iBasisType == BASIS_TYPE_DELTA && rDeltaRegularization > 0.0) {
     LOG_PROGRESS("Delta basis: applying Laplacian regularization (lambda=%.2e)", rDeltaRegularization);
 
-    double* laplacian_reg = (double*)malloc((size_t)mat_size * mat_size * sizeof(double));
+    /* Laplacian is nCompKer×nCompKer (kernel pixels only); uses stride n=nCompKer */
+    int n_reg = nCompKer;
+    double* laplacian_reg = (double*)malloc((size_t)n_reg * n_reg * sizeof(double));
     if (!laplacian_reg) {
       LOG_ERROR("Failed to allocate Laplacian regularization matrix");
       goto cleanup_fitKernel;
@@ -1493,10 +1456,26 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
       goto cleanup_fitKernel;
     }
 
-    /* Add regularization to the normal equations: M = M + λ·L^T·L */
-    for (matrixRowIdx = 0; matrixRowIdx < mat_size; matrixRowIdx++) {
-      for (int col = 0; col < mat_size; col++) {
-        matrix[matrixRowIdx + 1][col + 1] += laplacian_reg[matrixRowIdx * mat_size + col];
+    /* Add regularization to the normal equations: M[i][j] += R[pixel_i][pixel_j]
+     * The regularization only applies to kernel pixel entries (rows/cols 1..ncomp)
+     * with ncomp2 polynomial copies per pixel. Each polynomial term of the same
+     * pixel pair shares the same regularization weight. */
+    {
+      int pi, pj, ti, tj;
+      for (pi = 0; pi < nCompKer; pi++) {
+        for (pj = 0; pj <= pi; pj++) {
+          double r = laplacian_reg[pi * n_reg + pj];
+          if (r == 0.0) continue;
+          /* Apply to all polynomial copies of this pixel pair */
+          for (ti = 0; ti < ncomp2; ti++) {
+            for (tj = 0; tj < ncomp2; tj++) {
+              int row = pi * ncomp2 + ti + 1;
+              int col = pj * ncomp2 + tj + 1;
+              matrix[row][col] += r;
+              if (row != col) matrix[col][row] += r;
+            }
+          }
+        }
       }
     }
 
@@ -1512,12 +1491,14 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
 
   while (convergedFlag) {
     LOG_PROGRESS("Re-Expanding Matrix");
+    /* Build matrix and RHS using unified basis-agnostic accumulators */
     build_matrix(stamps, nS, matrix);
     build_scprod(stamps, nS, imRef, kernelSol);
 
     /* Apply regularization again for delta basis in sigma-clipping iterations */
     if (iBasisType == BASIS_TYPE_DELTA && rDeltaRegularization > 0.0) {
-      double* laplacian_reg = (double*)malloc((size_t)mat_size * mat_size * sizeof(double));
+      int n_reg = nCompKer;
+      double* laplacian_reg = (double*)malloc((size_t)n_reg * n_reg * sizeof(double));
       if (!laplacian_reg) {
         LOG_ERROR("Failed to allocate Laplacian regularization matrix in iteration");
         goto cleanup_fitKernel;
@@ -1528,9 +1509,21 @@ void fitKernel(stamp_struct* stamps, float* imRef, float* imConv,
         goto cleanup_fitKernel;
       }
 
-      for (matrixRowIdx = 0; matrixRowIdx < mat_size; matrixRowIdx++) {
-        for (int col = 0; col < mat_size; col++) {
-          matrix[matrixRowIdx + 1][col + 1] += laplacian_reg[matrixRowIdx * mat_size + col];
+      {
+        int pi, pj, ti, tj;
+        for (pi = 0; pi < nCompKer; pi++) {
+          for (pj = 0; pj <= pi; pj++) {
+            double r = laplacian_reg[pi * n_reg + pj];
+            if (r == 0.0) continue;
+            for (ti = 0; ti < ncomp2; ti++) {
+              for (tj = 0; tj < ncomp2; tj++) {
+                int row = pi * ncomp2 + ti + 1;
+                int col = pj * ncomp2 + tj + 1;
+                matrix[row][col] += r;
+                if (row != col) matrix[col][row] += r;
+              }
+            }
+          }
         }
       }
 
@@ -1790,8 +1783,16 @@ double check_stamps(stamp_struct* stamps, int nS, float* imRef,
     /* fit stamp, the constant kernel coefficients end up in check_vec */
     solve_spd(check_mat, nComps, check_vec);
 
-    /* find kernel sum */
-    sum = check_vec[1];
+    /* find kernel sum:
+     * Gaussian: check_vec[1] = DC amplitude ≈ kernel sum.
+     * Delta: sum all nCompKer pixel coefficients (check_vec[1..nCompKer]). */
+    if (iBasisType == BASIS_TYPE_DELTA) {
+      int pi;
+      sum = 0.0;
+      for (pi = 1; pi <= nCompKer; pi++) sum += check_vec[pi];
+    } else {
+      sum = check_vec[1];
+    }
     check_stack[stampIdx] = sum;
     stamps[stampIdx].norm = sum;
     ks[nks++] = sum;
@@ -2001,7 +2002,8 @@ void build_matrix(stamp_struct* stamps, int nS, double** matrix) {
   int polyDegX, polyDegY, stampCenterX, stampCenterY;
   double polyBasisX, polyBasisY, normalizedX, normalizedY;
 
-  ncomp1 = nCompKer - 1;
+  /* For delta basis, use all nCompKer basis functions; for Gaussian, skip first */
+  ncomp1 = (iBasisType == BASIS_TYPE_DELTA) ? nCompKer : (nCompKer - 1);
   ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
   ncomp = ncomp1 * ncomp2;
   nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
@@ -2010,7 +2012,7 @@ void build_matrix(stamp_struct* stamps, int nS, double** matrix) {
   rPixX2 = 0.5 * rPixX;
   rPixY2 = 0.5 * rPixY;
 
-  mat_size = ncomp1 * ncomp2 + nbg_vec + 1;
+  mat_size = ncomp + nbg_vec + (iBasisType == BASIS_TYPE_DELTA ? 0 : 1);
   LOG_DEBUG(" Mat_size: %i ncomp2: %i ncomp1: %i nbg_vec: %i", mat_size, ncomp2,
             ncomp1, nbg_vec);
 
@@ -2050,69 +2052,106 @@ void build_matrix(stamp_struct* stamps, int nS, double** matrix) {
     }
 
     matrix0 = stamps[stampIdx].mat;
-    for (polyTermIdx1 = 0; polyTermIdx1 < ncomp; polyTermIdx1++) {
-      /* Decompose linear index polyTermIdx1 into (gaussianCompIdx1,
-         polyTermWithinGaussianIdx1): gaussianCompIdx1 = which Gaussian
-         component (0 to ncomp1-1) polyTermWithinGaussianIdx1 = which polynomial
-         term within that component (0 to ncomp2-1) */
-      gaussianCompIdx1 = polyTermIdx1 / ncomp2;
-      polyTermWithinGaussianIdx1 = polyTermIdx1 - gaussianCompIdx1 * ncomp2;
 
-      for (polyTermIdx2 = 0; polyTermIdx2 <= polyTermIdx1; polyTermIdx2++) {
-        /* Same decomposition for column index polyTermIdx2 */
-        gaussianCompIdx2 = polyTermIdx2 / ncomp2;
-        polyTermWithinGaussianIdx2 = polyTermIdx2 - gaussianCompIdx2 * ncomp2;
+    if (iBasisType == BASIS_TYPE_DELTA) {
+      /* Delta basis: all nCompKer pixels are spatially-varying; no DC component.
+       * mat0[pixel+1][pixel+1] stores the pixel-pixel inner products.
+       * kernelSol row/col for pixel p, poly term t = p*ncomp2 + t + 1. */
 
-        /* spatially weighted W_m1 and W_m2 integrals */
-        matrix[(gaussianCompIdx1 * ncomp2 + polyTermWithinGaussianIdx1) + 2]
-              [(gaussianCompIdx2 * ncomp2 + polyTermWithinGaussianIdx2) + 2] +=
-            wxy[stampIdx][polyTermWithinGaussianIdx1] *
-            wxy[stampIdx][polyTermWithinGaussianIdx2] *
-            matrix0[gaussianCompIdx1 + 2][gaussianCompIdx2 + 2];
-      }
-    }
-
-    matrix[1][1] += matrix0[1][1];
-    for (polyTermIdx1 = 0; polyTermIdx1 < ncomp; polyTermIdx1++) {
-      /* Index decomposition for background terms */
-      gaussianCompIdx1 = polyTermIdx1 / ncomp2;
-      polyTermWithinGaussianIdx1 = polyTermIdx1 - gaussianCompIdx1 * ncomp2;
-      matrix[(gaussianCompIdx1 * ncomp2 + polyTermWithinGaussianIdx1) + 2][1] +=
-          wxy[stampIdx][polyTermWithinGaussianIdx1] *
-          matrix0[gaussianCompIdx1 + 2][1];
-    }
-
-    for (bgTermIdx = 0; bgTermIdx < nbg_vec; bgTermIdx++) {
-      polyTermIdx1 = ncomp + bgTermIdx + 1;
-      bgVectorIdx = ncomp1 + bgTermIdx + 1;
-      for (gaussianCompIdx1 = 1; gaussianCompIdx1 < ncomp1 + 1;
-           gaussianCompIdx1++) {
-        p0 = 0.0;
-
-        /* integrate convolved images over all order backgrounds */
-        for (polyTermIdx = 0; polyTermIdx < pixStamp; polyTermIdx++)
-          p0 += vec[gaussianCompIdx1][polyTermIdx] *
-                vec[bgVectorIdx][polyTermIdx];
-
-        /* spatially weighted image * background terms */
-        for (polyTermIdx2 = 0; polyTermIdx2 < ncomp2; polyTermIdx2++) {
-          matrixColCalcIdx = (gaussianCompIdx1 - 1) * ncomp2 + polyTermIdx2 + 1;
-          matrix[polyTermIdx1 + 1][matrixColCalcIdx + 1] +=
-              p0 * wxy[stampIdx][polyTermIdx2];
+      /* Kernel-kernel block */
+      for (polyTermIdx1 = 0; polyTermIdx1 < ncomp; polyTermIdx1++) {
+        gaussianCompIdx1 = polyTermIdx1 / ncomp2;
+        polyTermWithinGaussianIdx1 = polyTermIdx1 - gaussianCompIdx1 * ncomp2;
+        for (polyTermIdx2 = 0; polyTermIdx2 <= polyTermIdx1; polyTermIdx2++) {
+          gaussianCompIdx2 = polyTermIdx2 / ncomp2;
+          polyTermWithinGaussianIdx2 = polyTermIdx2 - gaussianCompIdx2 * ncomp2;
+          matrix[polyTermIdx1 + 1][polyTermIdx2 + 1] +=
+              wxy[stampIdx][polyTermWithinGaussianIdx1] *
+              wxy[stampIdx][polyTermWithinGaussianIdx2] *
+              matrix0[gaussianCompIdx1 + 1][gaussianCompIdx2 + 1];
         }
       }
 
-      p0 = 0.0;
-      for (polyTermIdx = 0; polyTermIdx < pixStamp; polyTermIdx++)
-        p0 += vec[0][polyTermIdx] * vec[bgVectorIdx][polyTermIdx];
-      matrix[polyTermIdx1 + 1][1] += p0;
+      /* Background-kernel and background-background blocks */
+      for (bgTermIdx = 0; bgTermIdx < nbg_vec; bgTermIdx++) {
+        int bgRow = ncomp + bgTermIdx + 1;  /* matrix row (1-indexed) */
+        bgVectorIdx = nCompKer + bgTermIdx;
 
-      /* background * background */
-      for (bgTermColIdx = 0; bgTermColIdx <= bgTermIdx; bgTermColIdx++) {
-        for (polyTermIdx = 0, q = 0.0; polyTermIdx < pixStamp; polyTermIdx++)
-          q += vec[bgVectorIdx][polyTermIdx] *
-               vec[ncomp1 + bgTermColIdx + 1][polyTermIdx];
-        matrix[polyTermIdx1 + 1][ncomp + bgTermColIdx + 2] += q;
+        /* bg × kernel coupling (iterate all ncomp1 pixels) */
+        for (gaussianCompIdx1 = 0; gaussianCompIdx1 < ncomp1; gaussianCompIdx1++) {
+          p0 = 0.0;
+          for (polyTermIdx = 0; polyTermIdx < pixStamp; polyTermIdx++)
+            p0 += vec[gaussianCompIdx1][polyTermIdx] * vec[bgVectorIdx][polyTermIdx];
+          for (polyTermIdx2 = 0; polyTermIdx2 < ncomp2; polyTermIdx2++) {
+            matrixColCalcIdx = gaussianCompIdx1 * ncomp2 + polyTermIdx2 + 1;
+            matrix[bgRow][matrixColCalcIdx] += p0 * wxy[stampIdx][polyTermIdx2];
+          }
+        }
+
+        /* bg × bg block */
+        for (bgTermColIdx = 0; bgTermColIdx <= bgTermIdx; bgTermColIdx++) {
+          for (polyTermIdx = 0, q = 0.0; polyTermIdx < pixStamp; polyTermIdx++)
+            q += vec[bgVectorIdx][polyTermIdx] *
+                 vec[nCompKer + bgTermColIdx][polyTermIdx];
+          matrix[bgRow][ncomp + bgTermColIdx + 1] += q;
+        }
+      }
+
+    } else {
+      /* Gaussian basis: vec[0] is the constant DC component (no spatial variation);
+       * vec[1..ncomp1] are the spatially-varying Gaussian components. */
+
+      for (polyTermIdx1 = 0; polyTermIdx1 < ncomp; polyTermIdx1++) {
+        gaussianCompIdx1 = polyTermIdx1 / ncomp2;
+        polyTermWithinGaussianIdx1 = polyTermIdx1 - gaussianCompIdx1 * ncomp2;
+        for (polyTermIdx2 = 0; polyTermIdx2 <= polyTermIdx1; polyTermIdx2++) {
+          gaussianCompIdx2 = polyTermIdx2 / ncomp2;
+          polyTermWithinGaussianIdx2 = polyTermIdx2 - gaussianCompIdx2 * ncomp2;
+          matrix[(gaussianCompIdx1 * ncomp2 + polyTermWithinGaussianIdx1) + 2]
+                [(gaussianCompIdx2 * ncomp2 + polyTermWithinGaussianIdx2) + 2] +=
+              wxy[stampIdx][polyTermWithinGaussianIdx1] *
+              wxy[stampIdx][polyTermWithinGaussianIdx2] *
+              matrix0[gaussianCompIdx1 + 2][gaussianCompIdx2 + 2];
+        }
+      }
+
+      /* DC × DC term (constant, no spatial weighting) */
+      matrix[1][1] += matrix0[1][1];
+      /* DC × kernel coupling */
+      for (polyTermIdx1 = 0; polyTermIdx1 < ncomp; polyTermIdx1++) {
+        gaussianCompIdx1 = polyTermIdx1 / ncomp2;
+        polyTermWithinGaussianIdx1 = polyTermIdx1 - gaussianCompIdx1 * ncomp2;
+        matrix[(gaussianCompIdx1 * ncomp2 + polyTermWithinGaussianIdx1) + 2][1] +=
+            wxy[stampIdx][polyTermWithinGaussianIdx1] *
+            matrix0[gaussianCompIdx1 + 2][1];
+      }
+
+      /* Background-kernel and background-background blocks */
+      for (bgTermIdx = 0; bgTermIdx < nbg_vec; bgTermIdx++) {
+        polyTermIdx1 = ncomp + bgTermIdx + 1;
+        bgVectorIdx = nCompKer + bgTermIdx;
+        for (gaussianCompIdx1 = 1; gaussianCompIdx1 < ncomp1 + 1; gaussianCompIdx1++) {
+          p0 = 0.0;
+          for (polyTermIdx = 0; polyTermIdx < pixStamp; polyTermIdx++)
+            p0 += vec[gaussianCompIdx1][polyTermIdx] * vec[bgVectorIdx][polyTermIdx];
+          for (polyTermIdx2 = 0; polyTermIdx2 < ncomp2; polyTermIdx2++) {
+            matrixColCalcIdx = (gaussianCompIdx1 - 1) * ncomp2 + polyTermIdx2 + 1;
+            matrix[polyTermIdx1 + 1][matrixColCalcIdx + 1] +=
+                p0 * wxy[stampIdx][polyTermIdx2];
+          }
+        }
+        /* bg × DC coupling */
+        p0 = 0.0;
+        for (polyTermIdx = 0; polyTermIdx < pixStamp; polyTermIdx++)
+          p0 += vec[0][polyTermIdx] * vec[bgVectorIdx][polyTermIdx];
+        matrix[polyTermIdx1 + 1][1] += p0;
+        /* bg × bg block */
+        for (bgTermColIdx = 0; bgTermColIdx <= bgTermIdx; bgTermColIdx++) {
+          for (polyTermIdx = 0, q = 0.0; polyTermIdx < pixStamp; polyTermIdx++)
+            q += vec[bgVectorIdx][polyTermIdx] *
+                 vec[nCompKer + bgTermColIdx][polyTermIdx];
+          matrix[polyTermIdx1 + 1][ncomp + bgTermColIdx + 2] += q;
+        }
       }
     }
   }
@@ -2157,12 +2196,15 @@ void build_scprod(stamp_struct* stamps, int nS, float* image,
   double scalarProduct, innerProduct;
   double** vectorArray;
 
-  ncomp1 = nCompKer - 1;
+  /* For delta basis, use all nCompKer basis functions; for Gaussian, skip first */
+  ncomp1 = (iBasisType == BASIS_TYPE_DELTA) ? nCompKer : (nCompKer - 1);
   ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
   ncomp = ncomp1 * ncomp2;
   nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
 
-  for (solIdx = 0; solIdx <= ncomp + nbg_vec + 1; solIdx++)
+  /* mat_size matches fitKernel: delta has no DC slot, Gaussian has +1 */
+  int mat_size = ncomp + nbg_vec + (iBasisType == BASIS_TYPE_DELTA ? 0 : 1);
+  for (solIdx = 0; solIdx <= mat_size; solIdx++)
     kernelSol[solIdx] = 0.0;
 
   for (stampIdx = 0; stampIdx < nS; stampIdx++) {
@@ -2177,34 +2219,57 @@ void build_scprod(stamp_struct* stamps, int nS, float* image,
     stampCenterX = stamps[stampIdx].xss[stamps[stampIdx].sscnt];
     stampCenterY = stamps[stampIdx].yss[stamps[stampIdx].sscnt];
 
-    scalarProduct = stamps[stampIdx].scprod[1];
-    kernelSol[1] += scalarProduct;
-
-    /* spatially weighted convolved image * ref image */
-    for (gaussianCompIdx = 1; gaussianCompIdx < ncomp1 + 1; gaussianCompIdx++) {
-      scalarProduct = stamps[stampIdx].scprod[gaussianCompIdx + 1];
-      for (polyTermIdx = 0; polyTermIdx < ncomp2; polyTermIdx++) {
-        recomputedColIdx = (gaussianCompIdx - 1) * ncomp2 + polyTermIdx + 1;
-        /* no need for weighting here */
-        kernelSol[recomputedColIdx + 1] +=
-            scalarProduct * wxy[stampIdx][polyTermIdx];
-      }
-    }
-
-    /* spatially weighted bg model convolved with ref image */
-    for (bgVecIdx = 0; bgVecIdx < nbg_vec; bgVecIdx++) {
-      innerProduct = 0.0;
-      for (stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp; stampColIdx++) {
-        for (stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp;
-             stampRowIdx++) {
-          pixelIdx =
-              stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
-          innerProduct += vectorArray[ncomp1 + bgVecIdx + 1][pixelIdx] *
-                          image[stampColIdx + stampCenterX +
-                                rPixX * (stampRowIdx + stampCenterY)];
+    if (iBasisType == BASIS_TYPE_DELTA) {
+      /* Delta: all nComp1=nCompKer pixels are spatially-varying; no DC slot.
+       * scprod[pixel+1] for pixel=0..nComp1-1 → kernelSol[pixel*ncomp2+t+1]. */
+      for (gaussianCompIdx = 0; gaussianCompIdx < ncomp1; gaussianCompIdx++) {
+        scalarProduct = stamps[stampIdx].scprod[gaussianCompIdx + 1];
+        for (polyTermIdx = 0; polyTermIdx < ncomp2; polyTermIdx++) {
+          kernelSol[gaussianCompIdx * ncomp2 + polyTermIdx + 1] +=
+              scalarProduct * wxy[stampIdx][polyTermIdx];
         }
       }
-      kernelSol[ncomp + bgVecIdx + 2] += innerProduct;
+      /* Background terms: kernelSol[ncomp + bgVecIdx + 1] for delta */
+      for (bgVecIdx = 0; bgVecIdx < nbg_vec; bgVecIdx++) {
+        innerProduct = 0.0;
+        for (stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp; stampColIdx++) {
+          for (stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp; stampRowIdx++) {
+            pixelIdx = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
+            innerProduct += vectorArray[nCompKer + bgVecIdx][pixelIdx] *
+                            image[stampColIdx + stampCenterX +
+                                  rPixX * (stampRowIdx + stampCenterY)];
+          }
+        }
+        kernelSol[ncomp + bgVecIdx + 1] += innerProduct;
+      }
+    } else {
+      /* Gaussian: DC component at scprod[1] → kernelSol[1], no spatial weighting */
+      scalarProduct = stamps[stampIdx].scprod[1];
+      kernelSol[1] += scalarProduct;
+
+      /* Spatially weighted convolved image × ref image (components 1..ncomp1) */
+      for (gaussianCompIdx = 1; gaussianCompIdx < ncomp1 + 1; gaussianCompIdx++) {
+        scalarProduct = stamps[stampIdx].scprod[gaussianCompIdx + 1];
+        for (polyTermIdx = 0; polyTermIdx < ncomp2; polyTermIdx++) {
+          recomputedColIdx = (gaussianCompIdx - 1) * ncomp2 + polyTermIdx + 1;
+          kernelSol[recomputedColIdx + 1] +=
+              scalarProduct * wxy[stampIdx][polyTermIdx];
+        }
+      }
+
+      /* Background terms: kernelSol[ncomp + bgVecIdx + 2] for Gaussian (DC occupies [1]) */
+      for (bgVecIdx = 0; bgVecIdx < nbg_vec; bgVecIdx++) {
+        innerProduct = 0.0;
+        for (stampColIdx = -hwKSStamp; stampColIdx <= hwKSStamp; stampColIdx++) {
+          for (stampRowIdx = -hwKSStamp; stampRowIdx <= hwKSStamp; stampRowIdx++) {
+            pixelIdx = stampColIdx + hwKSStamp + fwKSStamp * (stampRowIdx + hwKSStamp);
+            innerProduct += vectorArray[nCompKer + bgVecIdx][pixelIdx] *
+                            image[stampColIdx + stampCenterX +
+                                  rPixX * (stampRowIdx + stampCenterY)];
+          }
+        }
+        kernelSol[ncomp + bgVecIdx + 2] += innerProduct;
+      }
     }
   }
   return;
@@ -2611,6 +2676,13 @@ static double make_kernel_local_tps(int xi, int yi, double* kernelSol,
 double make_kernel_local_dispatch(int xi, int yi, double* kernelSol,
                                   double* lkernel,
                                   double* lkernel_coeffs) {
+  if (iBasisType == BASIS_TYPE_DELTA) {
+    /* Delta basis: make_kernel_dispatch fills global kernel[]; copy to lkernel */
+    double kernelSum = make_kernel_dispatch(xi, yi, kernelSol);
+    memcpy(lkernel, kernel, (size_t)fwKernel * fwKernel * sizeof(double));
+    (void)lkernel_coeffs;  /* not meaningful for delta basis */
+    return kernelSum;
+  }
   if (useTPS) {
     return make_kernel_local_tps(xi, yi, kernelSol, lkernel, lkernel_coeffs);
   } else {
@@ -2838,12 +2910,21 @@ void spatial_convolve_fft(float* image, float** variance, int xSize,
     cidx = j + 1;
 
     memset(effKernel, 0, (size_t)fwKernel * fwKernel * sizeof(double));
-    if (j < 0) {
-      /* constant term: kernelSol[1] * kernel_vec[0] */
+    if (iBasisType == BASIS_TYPE_DELTA) {
+      /* Delta basis: kernel_vec[i][p] = delta(i,p), so effKernel[p] is direct.
+       * DC slot (j<0) is unused (no separate constant Gaussian); poly terms are
+       * kernelSol[1 + p*ncomp2 + j] for each pixel p. */
+      if (j >= 0) {
+        for (p = 0; p < fwKernel * fwKernel; p++)
+          effKernel[p] = kernelSol[1 + p * ncomp2 + j];
+      }
+      /* j < 0: effKernel stays zero (no DC term for delta) */
+    } else if (j < 0) {
+      /* Gaussian constant term: kernelSol[1] * kernel_vec[0] */
       for (p = 0; p < fwKernel * fwKernel; p++)
         effKernel[p] = kernelSol[1] * kernel_vec[0][p];
     } else {
-      /* poly term j: Σᵢ kernelSol[2+(i-1)*ncomp2+j] * kernel_vec[i] */
+      /* Gaussian poly term j: Σᵢ kernelSol[2+(i-1)*ncomp2+j] * kernel_vec[i] */
       for (i1 = 1; i1 < nCompKer; i1++) {
         double a = kernelSol[2 + (i1 - 1) * ncomp2 + j];
         for (p = 0; p < fwKernel * fwKernel; p++)
@@ -3193,15 +3274,15 @@ cleanup_fft:
  */
 void spatial_convolve(float* image, float** variance, int xSize, int ySize,
                       double* kernelSol, float* cRdata, int* cMask) {
-  if (iBasisType == BASIS_TYPE_GAUSSIAN) {
-    /* Gaussian basis: standard FFT convolution with polynomial-weighted Gaussians */
-    spatial_convolve_fft(image, variance, xSize, ySize, kernelSol, cRdata, cMask);
-  } else if (iBasisType == BASIS_TYPE_DELTA) {
-    /* Delta basis: FFT convolution with pixel-level delta functions */
-    /* Note: spatial_convolve_delta() ultimately calls spatial_convolve_fft() after
-       assembling the kernel from delta coefficients */
-    LOG_ERROR("Delta basis convolution not yet fully integrated with variance/mask handling");
-    /* For now, fall back to Gaussian path to avoid crashes */
+  /* Both Gaussian and Delta basis use FFT convolution.
+     The difference is in kernel evaluation:
+     - Gaussian: kernel_coeffs[] are weighted combinations of kernel_vec[]
+     - Delta: kernel[] is directly assembled from kernelSol (pixel values)
+
+     Both route through make_kernel_dispatch() which calls active_basis->eval_kernel()
+     to assemble the kernel at each image position. FFT convolution is identical. */
+
+  if (iBasisType == BASIS_TYPE_GAUSSIAN || iBasisType == BASIS_TYPE_DELTA) {
     spatial_convolve_fft(image, variance, xSize, ySize, kernelSol, cRdata, cMask);
   } else {
     LOG_ERROR("Unknown basis type: %d", iBasisType);
@@ -3414,8 +3495,14 @@ double get_background(int xi, int yi, double* kernelSol) {
   int polyDegX, polyDegY, solutionIdx;
   int backgroundComponentOffset;
 
-  backgroundComponentOffset =
-      (nCompKer - 1) * (((kerOrder + 1) * (kerOrder + 2)) / 2) + 1;
+  {
+    /* Delta: no DC slot, bg starts right after kernel coefficients.
+     * Gaussian: DC at slot 1, bg follows after ncomp polynomial coefficients. */
+    int ncomp1_bg = (iBasisType == BASIS_TYPE_DELTA) ? nCompKer : (nCompKer - 1);
+    int ncomp2_bg = ((kerOrder + 1) * (kerOrder + 2)) / 2;
+    backgroundComponentOffset = ncomp1_bg * ncomp2_bg +
+                                (iBasisType == BASIS_TYPE_DELTA ? 0 : 1);
+  }
 
   background = 0.0;
   solutionIdx = 1;
