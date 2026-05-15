@@ -465,16 +465,33 @@ def calculate_kernel_solution_size(
     n_comp_ker = kernel_info["kernel_components"]
     n_comp = kernel_info["kernel_terms"]
     n_comp_bg = kernel_info["bg_terms"]
+    ker_order = kernel_info["kernel_order"]
+    bg_order = kernel_info["bg_order"]
 
-    # Base size: kernel polynomial + background polynomial
-    poly_size = n_comp + n_comp_bg + 1
+    i_basis_type = _hotpants_ffi.get_global_int("iBasisType")
+
+    if i_basis_type == 1:  # delta basis
+        # Delta layout: [0 unused][1..ncomp] kernel poly [ncomp+1..ncomp+nbg_vec] bg poly
+        # ncomp = nCompKer * ncomp2 (all pixels, no DC slot)
+        ncomp2 = (ker_order + 1) * (ker_order + 2) // 2
+        nbg_vec = (bg_order + 1) * (bg_order + 2) // 2
+        poly_size = n_comp_ker * ncomp2 + nbg_vec + 1
+    else:
+        # Gaussian layout: [0 unused][1 DC][2..ncomp+1] kernel poly [ncomp+2..] bg poly
+        # Original formula using C globals nComp/nCompBG (safe over-allocation)
+        poly_size = n_comp + n_comp_bg + 1
 
     if not use_tps:
         return poly_size
 
-    # Extended size for TPS: add RBF weights, polynomial trends, and positions
+    # Extended size for TPS. Layout after poly_size (from kernelSol_offset_* in alard.c):
+    #   kernel RBF weights:      n_comp_ker * n_stamps
+    #   kernel poly trends:      3 * n_comp_ker (3 polynomial terms per component)
+    #   stamp positions:         2 * n_stamps   (x₀,y₀ for each stamp)
+    #   background RBF weights:  n_stamps
+    #   background poly trend:   3
     n_stamps = n_stamps_x * n_stamps_y
-    tps_additional = n_comp_ker * n_stamps + 3 * n_comp_ker + 2 * n_stamps
+    tps_additional = n_comp_ker * n_stamps + 3 * n_comp_ker + 2 * n_stamps + n_stamps + 3
     return poly_size + tps_additional
 
 
@@ -730,6 +747,43 @@ def build_stamps(
                             0.0,  # hardX
                             0.0,  # hardY
                         )
+
+                        # If no PSF centers were found (e.g. images without bright
+                        # stars), fall back to forcing the stamp midpoint as the
+                        # substamp centre.  checkPsfCenter() requires bright pixels
+                        # above kerFitThresh·sigma and returns 0 for featureless
+                        # noise, leaving nss=0 and making the stamp unusable.
+                        # Forcing a centre ensures the matrix has non-zero diagonal
+                        # entries so the Cholesky solve does not fail immediately.
+                        #
+                        # The centre must be at least hwKSStamp pixels from every
+                        # image edge: build_scprod accesses image[cx±hwKSStamp] and
+                        # an out-of-bounds read corrupts the RHS vector with NaN,
+                        # which makes LAPACKE dpotrs return status=-7.
+                        # For delta basis only: force a stamp centre when no bright PSF
+                        # peaks exist (e.g., random noise images without stars).
+                        # Gaussian basis relies on normal PSF-peak detection; forcing
+                        # centres for Gaussian would corrupt the sigma-clipping step.
+                        i_basis_type = _hotpants_ffi.get_global_int("iBasisType")
+                        if stamps[global_stamp_idx].nss == 0 and i_basis_type == 1:
+                            hw_ks = _hotpants_ffi.get_global_int("hwKSStamp")
+                            # Midpoint in full-image coords; equals region-buffer
+                            # coords because r_x_b_min == 0 for single-region and
+                            # rPixX == r_pix_x in all cases we support.
+                            cx = (s_x_min + s_x_max) // 2
+                            cy = (s_y_min + s_y_max) // 2
+                            # Clamp to region-buffer valid range [hw_ks, r_pix-hw_ks-1]
+                            # so build_scprod's ±hwKSStamp window stays in bounds.
+                            cx = max(hw_ks, min(r_pix_x - hw_ks - 1, cx))
+                            cy = max(hw_ks, min(r_pix_y - hw_ks - 1, cy))
+                            # Only use the forced centre if the region is large enough
+                            # and if xss was actually allocated (nKSStamps > 0)
+                            if hw_ks < r_pix_x - hw_ks and hw_ks < r_pix_y - hw_ks \
+                                    and stamps[global_stamp_idx].xss:
+                                stamps[global_stamp_idx].xss[0] = cx
+                                stamps[global_stamp_idx].yss[0] = cy
+                                stamps[global_stamp_idx].nss = 1
+                                stamps[global_stamp_idx].sscnt = 0
 
                         # Mirror main.c: only advance the stamp index when PSF centers
                         # were found (nss > 0). This densely packs valid stamps so

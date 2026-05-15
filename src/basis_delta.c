@@ -157,9 +157,10 @@ static double delta_eval_kernel(int xi, int yi, double* kernelSol) {
  *       nbg_vec = (bgOrder+1)*(bgOrder+2)/2
  */
 static int delta_kernelSol_size_polynomial(void) {
-  int ncomp1 = nCompKer - 1;
+  /* All nCompKer pixels have polynomial variation; no DC slot.
+   * poly_size = mat_size + 1 = nCompKer*ncomp2 + nbg_vec + 1. */
   int ncomp2 = ((kerOrder + 1) * (kerOrder + 2)) / 2;
-  int ncomp = ncomp1 * ncomp2;
+  int ncomp = nCompKer * ncomp2;
   int nbg_vec = ((bgOrder + 1) * (bgOrder + 2)) / 2;
   return ncomp + nbg_vec + 1;
 }

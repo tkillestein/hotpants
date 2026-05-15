@@ -572,13 +572,18 @@ def spatial_convolve(
         # Callers compute D = science - output, so output must include the background
         # term so that D matches the CLI difference image.
         #
-        # C get_background() uses: backgroundComponentOffset = (nCompKer-1)*nComp + 1
-        # and solutionIdx starting at 1, so first background coefficient is at
-        # kernelSol[(nCompKer-1)*nComp + 2].
+        # C get_background() layout (1-indexed kernelSol):
+        #   Gaussian: backgroundComponentOffset = (nCompKer-1)*nComp + 1
+        #             → first bg coeff at kernelSol[(nCompKer-1)*nComp + 2]
+        #   Delta:    no DC slot, so backgroundComponentOffset = nCompKer*nComp
+        #             → first bg coeff at kernelSol[nCompKer*nComp + 1]
         n_comp_ker = _hotpants_ffi.get_global_int("nCompKer")
         n_comp = _hotpants_ffi.get_global_int("nComp")
         if n_comp_ker > 0 and n_comp > 0:
-            bg_start = (n_comp_ker - 1) * n_comp + 2
+            if basis_type_code == 1:  # delta basis
+                bg_start = n_comp_ker * n_comp + 1
+            else:  # gaussian basis
+                bg_start = (n_comp_ker - 1) * n_comp + 2
             n_bg_terms = (config.bg_order + 1) * (config.bg_order + 2) // 2
             if bg_start + n_bg_terms <= len(kernel_solution.kernel_coefficients):
                 bg_coeffs = kernel_solution.kernel_coefficients[bg_start:bg_start + n_bg_terms]

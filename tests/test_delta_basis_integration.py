@@ -103,14 +103,20 @@ class TestDeltaBasisIntegration:
         assert kernel_sol is not None
         assert kernel_sol.kernel_norm > 0
 
-        # Apply convolution
-        diff = spatial_convolve(template, kernel_sol, config=config)
+        # Apply convolution: returns T⊗K + bg (matched template).
+        # For identical images the difference D = science - (T⊗K + bg) should be ~0.
+        convolved = spatial_convolve(template, kernel_sol, config=config)
+        diff = science - convolved
 
-        # Difference should be small (only noise)
-        assert diff.shape == template.shape
-        assert not np.any(np.isnan(diff))
-        rms_diff = np.sqrt(np.mean(diff**2))
-        assert rms_diff < 100.0, f"RMS difference {rms_diff} is too large for identical images"
+        assert convolved.shape == template.shape
+        assert not np.any(np.isnan(convolved))
+
+        # spatial_convolve_fft only fills interior pixels; border pixels (within
+        # hwKernel of edge) are left zero.  Evaluate only the valid interior region.
+        hw = config.kernel_half_width
+        interior_diff = diff[hw:-hw, hw:-hw]
+        rms_diff = np.sqrt(np.mean(interior_diff**2))
+        assert rms_diff < 10.0, f"Interior RMS difference {rms_diff} is too large for identical images"
 
     def test_delta_basis_with_synthetic_stars(self, star_field):
         """Delta basis should fit and deconvolve synthetic star field correctly."""
@@ -133,15 +139,18 @@ class TestDeltaBasisIntegration:
         assert kernel_sol is not None
         assert kernel_sol.kernel_norm > 0
 
-        # Apply convolution
-        diff = spatial_convolve(template, kernel_sol, config=config)
+        # Apply convolution: spatial_convolve returns T⊗K + bg (the matched template).
+        # The difference image D = science - (T⊗K + bg) should be small (noise-dominated).
+        convolved = spatial_convolve(template, kernel_sol, config=config)
+        diff = science - convolved
 
         # Check output validity
-        assert diff.shape == template.shape
-        assert not np.any(np.isnan(diff))
-        assert not np.any(np.isinf(diff))
+        assert convolved.shape == template.shape
+        assert not np.any(np.isnan(convolved))
+        assert not np.any(np.isinf(convolved))
 
-        # Difference should be reasonable (dominated by star noise, not residuals)
+        # Difference should be small relative to the template amplitude
+        # (dominated by star noise rdnoise~5, not large systematic residuals)
         rms_diff = np.sqrt(np.mean(diff**2))
         rms_template = np.sqrt(np.mean(template**2))
         relative_rms = rms_diff / rms_template
