@@ -248,6 +248,12 @@ class TestDeltaBasisIntegration:
         rms_delta = np.sqrt(np.mean(diff_delta**2))
         rms_gaussian = np.sqrt(np.mean(diff_gaussian**2))
 
+        # Both bases should produce reasonable results (non-zero, non-NaN)
+        assert rms_delta > 0, "Delta basis produced zero output"
+        assert rms_gaussian > 0, "Gaussian basis produced zero output"
+        assert not np.isnan(rms_delta) and not np.isinf(rms_delta)
+        assert not np.isnan(rms_gaussian) and not np.isinf(rms_gaussian)
+
         # RMS values should be in same ballpark (within factor of 2)
         ratio = rms_delta / rms_gaussian
         assert 0.5 < ratio < 2.0, f"RMS ratio {ratio} suggests incompatible results"
@@ -434,8 +440,10 @@ class TestDeltaBasisEdgeCases:
             kernel_half_width=2,  # Very small kernel
             kernel_order=0,  # No spatial variation
             bg_order=0,
-            num_regions_x=1,
-            num_regions_y=1,
+        )
+        layout = RegionLayout(
+            n_regions_x=1,
+            n_regions_y=1,
             stamps_per_region_x=3,
             stamps_per_region_y=3,
         )
@@ -456,8 +464,10 @@ class TestDeltaBasisEdgeCases:
             kernel_half_width=20,  # Large kernel
             kernel_order=0,
             bg_order=0,
-            num_regions_x=1,
-            num_regions_y=1,
+        )
+        layout = RegionLayout(
+            n_regions_x=1,
+            n_regions_y=1,
             stamps_per_region_x=3,
             stamps_per_region_y=3,
         )
@@ -478,11 +488,13 @@ class TestDeltaBasisEdgeCases:
             kernel_half_width=8,
             kernel_order=1,
             bg_order=1,
-            num_regions_x=1,
-            num_regions_y=1,
+            delta_regularization=1e6,  # Very high regularization
+        )
+        layout = RegionLayout(
+            n_regions_x=1,
+            n_regions_y=1,
             stamps_per_region_x=4,
             stamps_per_region_y=4,
-            delta_regularization=1e6,  # Very high regularization
         )
 
         kernel_sol = fit_kernel(template, science, config=config, layout=layout)
