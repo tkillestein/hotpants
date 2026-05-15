@@ -107,7 +107,7 @@ class TestDeltaBasisIntegration:
 
         # Apply convolution: returns T⊗K + bg (matched template).
         # For identical images the difference D = science - (T⊗K + bg) should be ~0.
-        convolved = spatial_convolve(template, kernel_sol, config=config, layout=layout)
+        convolved = spatial_convolve(template, kernel_sol, config=config)
         diff = science - convolved
 
         assert convolved.shape == template.shape
@@ -145,7 +145,7 @@ class TestDeltaBasisIntegration:
 
         # Apply convolution: spatial_convolve returns T⊗K + bg (the matched template).
         # The difference image D = science - (T⊗K + bg) should be small (noise-dominated).
-        convolved = spatial_convolve(template, kernel_sol, config=config, layout=layout)
+        convolved = spatial_convolve(template, kernel_sol, config=config)
         diff = science - convolved
 
         # Check output validity
@@ -195,8 +195,8 @@ class TestDeltaBasisIntegration:
         assert kernel_reg is not None
 
         # Both should produce valid output
-        diff_noreg = spatial_convolve(template, kernel_noreg, config=config_noreg, layout=layout)
-        diff_reg = spatial_convolve(template, kernel_reg, config=config_reg, layout=layout)
+        diff_noreg = spatial_convolve(template, kernel_noreg, config=config_noreg)
+        diff_reg = spatial_convolve(template, kernel_reg, config=config_reg)
 
         assert diff_noreg.shape == template.shape
         assert diff_reg.shape == template.shape
@@ -237,8 +237,8 @@ class TestDeltaBasisIntegration:
         assert kernel_gaussian is not None
 
         # Apply convolution with both
-        diff_delta = spatial_convolve(template, kernel_delta, config=config_delta, layout=layout)
-        diff_gaussian = spatial_convolve(template, kernel_gaussian, config=config_gaussian, layout=layout)
+        diff_delta = spatial_convolve(template, kernel_delta, config=config_delta)
+        diff_gaussian = spatial_convolve(template, kernel_gaussian, config=config_gaussian)
 
         # Check shapes match
         assert diff_delta.shape == diff_gaussian.shape
@@ -274,7 +274,7 @@ class TestDeltaBasisIntegration:
         kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
 
-        diff = spatial_convolve(template, kernel_sol, config=config, layout=layout)
+        diff = spatial_convolve(template, kernel_sol, config=config)
         assert diff.shape == template.shape
         assert not np.any(np.isnan(diff))
 
@@ -300,7 +300,7 @@ class TestDeltaBasisIntegration:
         kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
 
-        diff = spatial_convolve(template, kernel_sol, config=config, layout=layout)
+        diff = spatial_convolve(template, kernel_sol, config=config)
         assert diff.shape == template.shape
         assert not np.any(np.isnan(diff))
 
@@ -365,7 +365,7 @@ class TestDeltaBasisIntegration:
         kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
 
-        diff = spatial_convolve(template, kernel_sol, config=config, layout=layout)
+        diff = spatial_convolve(template, kernel_sol, config=config)
         assert not np.any(np.isnan(diff))
         assert not np.any(np.isinf(diff))
 
@@ -417,7 +417,7 @@ class TestDeltaBasisIntegration:
         kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
 
-        diff = spatial_convolve(template, kernel_sol, config=config, layout=layout)
+        diff = spatial_convolve(template, kernel_sol, config=config)
         assert not np.any(np.isnan(diff))
 
 
@@ -440,7 +440,7 @@ class TestDeltaBasisEdgeCases:
             stamps_per_region_y=3,
         )
 
-        kernel_sol = fit_kernel(template, science, config=config)
+        kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
 
         diff = spatial_convolve(template, kernel_sol, config=config)
@@ -462,7 +462,7 @@ class TestDeltaBasisEdgeCases:
             stamps_per_region_y=3,
         )
 
-        kernel_sol = fit_kernel(template, science, config=config)
+        kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
 
         diff = spatial_convolve(template, kernel_sol, config=config)
@@ -485,7 +485,7 @@ class TestDeltaBasisEdgeCases:
             delta_regularization=1e6,  # Very high regularization
         )
 
-        kernel_sol = fit_kernel(template, science, config=config)
+        kernel_sol = fit_kernel(template, science, config=config, layout=layout)
         assert kernel_sol is not None
 
         diff = spatial_convolve(template, kernel_sol, config=config)
