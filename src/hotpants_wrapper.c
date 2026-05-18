@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <pthread.h>
 #include <fftw3.h>
 #ifdef _OPENMP
 #include <omp.h>
@@ -8,6 +9,7 @@
 #include "defaults.h"
 #include "globals.h"
 #include "functions.h"
+#include "hotpants_api.h"
 
 /* BLAS/LAPACK threading control macros */
 #ifdef __OPENBLAS__
@@ -729,4 +731,168 @@ int set_delta_regularization(double regularization_weight) {
  */
 double get_delta_regularization(void) {
   return rDeltaRegularization;
+}
+
+/* =====================================================================
+ * Thread-Safe _ctx Wrappers
+ * =====================================================================
+ * Each wrapper:
+ *   1. Acquires g_hotpants_mutex
+ *   2. Copies hotpants_config_t fields → globals
+ *   3. Calls the existing (global-reading) function
+ *   4. Copies computed outputs → struct
+ *   5. Releases mutex
+ *
+ * This makes concurrent Python-thread calls safe: globals are only
+ * modified while the mutex is held.  OpenMP parallelism within each
+ * C function call is unaffected (OMP spawns worker threads after the
+ * single-threaded mutex section).
+ */
+
+static pthread_mutex_t g_hotpants_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Copy all configuration inputs from struct to globals. */
+static void apply_config_to_globals(const hotpants_config_t* c) {
+  hwKernel             = c->hwKernel;
+  kerOrder             = c->kerOrder;
+  bgOrder              = c->bgOrder;
+  iBasisType           = c->iBasisType;
+  rDeltaRegularization = c->rDeltaRegularization;
+  useTPS               = c->useTPS;
+  tpsSmoothing         = c->tpsSmoothing;
+  nKSStamps            = c->nKSStamps;
+  hwKSStamp            = c->hwKSStamp;
+  nRegX                = c->nRegX;
+  nRegY                = c->nRegY;
+  nStampX              = c->nStampX;
+  nStampY              = c->nStampY;
+  useFullSS            = c->useFullSS;
+  tUThresh             = c->tUThresh;
+  tLThresh             = c->tLThresh;
+  iUThresh             = c->iUThresh;
+  iLThresh             = c->iLThresh;
+  tGain                = c->tGain;
+  iGain                = c->iGain;
+  tRdnoise             = c->tRdnoise;
+  iRdnoise             = c->iRdnoise;
+  tPedestal            = c->tPedestal;
+  iPedestal            = c->iPedestal;
+  kerFitThresh         = c->kerFitThresh;
+  scaleFitThresh       = c->scaleFitThresh;
+  verbose              = c->verbose;
+  nThread              = c->nThread;
+  /* tUKThresh/iUKThresh mirror the upper thresholds (matches vargs.c) */
+  tUKThresh            = c->tUThresh;
+  iUKThresh            = c->iUThresh;
+}
+
+/* Copy derived outputs (computed by initKernelGlobals) back to struct. */
+static void read_computed_globals(hotpants_config_t* c) {
+  c->nCompKer   = nCompKer;
+  c->nComp      = nComp;
+  c->nCompBG    = nCompBG;
+  c->nCompTotal = nCompTotal;
+  c->fwKernel   = fwKernel;
+  c->fwKSStamp  = fwKSStamp;
+  c->fwStamp    = fwStamp;
+  c->kcStep     = kcStep;
+}
+
+int initKernelGlobals_ctx(hotpants_config_t* cfg,
+                           int image_nx, int image_ny,
+                           int n_reg_x, int n_reg_y,
+                           int n_stamp_x, int n_stamp_y) {
+  pthread_mutex_lock(&g_hotpants_mutex);
+  apply_config_to_globals(cfg);
+  int ret = initKernelGlobals(image_nx, image_ny,
+                              n_reg_x, n_reg_y,
+                              n_stamp_x, n_stamp_y);
+  read_computed_globals(cfg);
+  pthread_mutex_unlock(&g_hotpants_mutex);
+  return ret;
+}
+
+int initBuildStampsContext_ctx(hotpants_config_t* cfg,
+                                float* tmpl, float* science,
+                                int ny, int nx,
+                                int n_regions_x, int n_regions_y,
+                                int stamps_per_x, int stamps_per_y) {
+  pthread_mutex_lock(&g_hotpants_mutex);
+  apply_config_to_globals(cfg);
+  int ret = initBuildStampsContext(tmpl, science, ny, nx,
+                                   n_regions_x, n_regions_y,
+                                   stamps_per_x, stamps_per_y);
+  pthread_mutex_unlock(&g_hotpants_mutex);
+  return ret;
+}
+
+int buildStampsRegion_ctx(hotpants_config_t* cfg,
+                           int region_x, int region_y,
+                           float** out_template_region,
+                           float** out_science_region) {
+  pthread_mutex_lock(&g_hotpants_mutex);
+  apply_config_to_globals(cfg);
+  int ret = buildStampsRegion(region_x, region_y,
+                               out_template_region, out_science_region);
+  pthread_mutex_unlock(&g_hotpants_mutex);
+  return ret;
+}
+
+int fillStampsForRegion_ctx(hotpants_config_t* cfg,
+                             stamp_struct* stamps, int n_stamps) {
+  pthread_mutex_lock(&g_hotpants_mutex);
+  apply_config_to_globals(cfg);
+  int ret = fillStampsForRegion(stamps, n_stamps);
+  pthread_mutex_unlock(&g_hotpants_mutex);
+  return ret;
+}
+
+void fitKernel_ctx(hotpants_config_t* cfg,
+                   stamp_struct* stamps,
+                   float* imRef, float* imConv, float* imNoise,
+                   double* kernel_coeffs,
+                   double* meansig, double* scatter, int* n_skipped) {
+  pthread_mutex_lock(&g_hotpants_mutex);
+  apply_config_to_globals(cfg);
+  /* nS is OMP threadprivate; set it from the struct before fitKernel reads it */
+  nS = cfg->nS;
+  fitKernel(stamps, imRef, imConv, imNoise,
+            kernel_coeffs, meansig, scatter, n_skipped);
+  pthread_mutex_unlock(&g_hotpants_mutex);
+}
+
+int* setupSpatialConvolve_ctx(hotpants_config_t* cfg, int nx, int ny) {
+  pthread_mutex_lock(&g_hotpants_mutex);
+  apply_config_to_globals(cfg);
+  int* ret = setupSpatialConvolve(nx, ny);
+  pthread_mutex_unlock(&g_hotpants_mutex);
+  return ret;
+}
+
+double computeKernelNorm_ctx(hotpants_config_t* cfg,
+                              double* kernel_coeffs, int nx, int ny) {
+  pthread_mutex_lock(&g_hotpants_mutex);
+  apply_config_to_globals(cfg);
+  double ret = computeKernelNorm(kernel_coeffs, nx, ny);
+  pthread_mutex_unlock(&g_hotpants_mutex);
+  return ret;
+}
+
+void spatial_convolve_ctx(hotpants_config_t* cfg,
+                           float* image, float** var_image,
+                           int ny, int nx,
+                           double* kernel_coeffs, float* output,
+                           int* conv_method) {
+  pthread_mutex_lock(&g_hotpants_mutex);
+  apply_config_to_globals(cfg);
+  spatial_convolve(image, var_image, ny, nx, kernel_coeffs, output, conv_method);
+  pthread_mutex_unlock(&g_hotpants_mutex);
+}
+
+void cleanupBuildStampsContext_ctx(void) {
+  cleanupBuildStampsContext();
+}
+
+void cleanupSpatialConvolve_ctx(void) {
+  cleanupSpatialConvolve();
 }

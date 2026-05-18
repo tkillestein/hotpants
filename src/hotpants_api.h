@@ -50,6 +50,73 @@ typedef struct {
 } stamp_struct;
 
 /* =====================================================================
+ * Configuration Struct — Thread-Safe API
+ * =====================================================================
+ * Bundles all configuration inputs for a single fit_kernel / spatial_convolve
+ * call. Pass a pointer to the _ctx wrapper functions below. Computed fields
+ * (nCompKer, nComp, ...) are written back by initKernelGlobals_ctx().
+ *
+ * Using this struct avoids setting individual C globals from Python, enabling
+ * safe concurrent calls via the internal mutex.
+ */
+typedef struct {
+    /* Kernel geometry */
+    int    hwKernel;
+    int    kerOrder;
+    int    bgOrder;
+
+    /* Basis type */
+    int    iBasisType;
+    double rDeltaRegularization;
+    int    useTPS;
+    double tpsSmoothing;
+
+    /* Stamp layout */
+    int    nKSStamps;
+    int    hwKSStamp;
+    int    nRegX;
+    int    nRegY;
+    int    nStampX;
+    int    nStampY;
+    int    useFullSS;
+
+    /* Image thresholds */
+    float  tUThresh;
+    float  tLThresh;
+    float  iUThresh;
+    float  iLThresh;
+
+    /* Noise model */
+    float  tGain;
+    float  iGain;
+    float  tRdnoise;
+    float  iRdnoise;
+    float  tPedestal;
+    float  iPedestal;
+
+    /* Fit quality */
+    float  kerFitThresh;
+    float  scaleFitThresh;
+
+    /* Execution control */
+    int    verbose;
+    int    nThread;
+
+    /* Derived fields written by initKernelGlobals_ctx() */
+    int    nCompKer;
+    int    nComp;
+    int    nCompBG;
+    int    nCompTotal;
+    int    fwKernel;
+    int    fwKSStamp;
+    int    fwStamp;
+    int    kcStep;
+
+    /* Valid stamp count: set by build phase, read by fit phase */
+    int    nS;
+} hotpants_config_t;
+
+/* =====================================================================
  * Core API Functions
  * =====================================================================
  * These functions comprise the minimal public interface for kernel fitting
@@ -212,40 +279,17 @@ void spatial_convolve(float* image, float** var_image, int ny, int nx,
                       double* kernel_coeffs, float* output, int* conv_method);
 
 /* =====================================================================
- * Global Configuration Variables (set by Python before calling core functions)
- * =====================================================================
- * These globals control kernel fitting parameters and image thresholds.
- * The Python API must set these before calling fitKernel() or buildStamps().
- */
-
-extern int hwKernel;         /* half-width of kernel region */
-extern int kerOrder;         /* spatial polynomial order of kernel */
-extern int bgOrder;          /* spatial polynomial order of background */
-extern float kerFitThresh;   /* sigma threshold for kernel fit */
-extern float scaleFitThresh; /* scale factor for fit threshold */
-extern int nKSStamps;        /* number of kernel substamps per stamp */
-extern int hwKSStamp;        /* half-width of kernel substamp */
-extern int nStampX, nStampY; /* stamps per region, each axis */
-extern int useFullSS; /* maximally divide image into kernel-sized stamps */
-
-extern float tUThresh, tLThresh;   /* template upper/lower thresholds */
-extern float iUThresh, iLThresh;   /* science image upper/lower thresholds */
-extern float tGain, iGain;         /* template and science gain (e-/ADU) */
-extern float tRdnoise, iRdnoise;   /* template and science readnoise (e-) */
-extern float tPedestal, iPedestal; /* pedestals (ADU) */
-
-extern int nCompKer; /* number of kernel basis components (computed) */
-extern int nComp;    /* number of spatial polynomial terms (computed) */
-extern int nCompBG;  /* number of background polynomial terms (computed) */
-
-extern int verbose; /* verbosity level (0=silent, 1=progress, 2=debug) */
-extern int nThread; /* number of OpenMP threads */
-
-/* =====================================================================
  * Wrapper Functions for Python Integration
  * =====================================================================
- * These functions manage global state and provide a clean interface
- * for calling core algorithms from Python without exposing C complexity.
+ * Two families of wrappers are provided:
+ *
+ * 1. Legacy (original) functions — still available; set globals directly.
+ *    Used by main.c CLI and any code that sets globals before calling.
+ *
+ * 2. _ctx variants — accept a hotpants_config_t* as the first argument.
+ *    They apply config → globals atomically under an internal mutex, call
+ *    the algorithm, and read back computed outputs into the struct.
+ *    Prefer these for Python callers; safe for concurrent threads.
  */
 
 /*
@@ -481,5 +525,66 @@ int set_delta_regularization(double regularization_weight);
  *   Current regularization weight
  */
 double get_delta_regularization(void);
+
+/* =====================================================================
+ * Thread-Safe _ctx Wrapper Functions
+ * =====================================================================
+ * Each function acquires an internal mutex, applies cfg to globals,
+ * calls the core algorithm, reads back computed outputs, releases mutex.
+ *
+ * Preferred call sequence for fit_kernel:
+ *   initKernelGlobals_ctx(cfg, nx, ny, ...)
+ *   → allocateStamps()
+ *   → initBuildStampsContext_ctx(cfg, ...)
+ *   → for each region: buildStampsRegion_ctx + fillStampsForRegion_ctx
+ *   → fitKernel_ctx(cfg, ...)
+ *   → computeKernelNorm_ctx(cfg, ...)
+ *   → cleanupBuildStampsContext_ctx()
+ *
+ * Preferred call sequence for spatial_convolve:
+ *   initKernelGlobals_ctx(cfg, nx, ny, ...)
+ *   → setupSpatialConvolve_ctx(cfg, nx, ny)
+ *   → spatial_convolve_ctx(cfg, ...)
+ *   → cleanupSpatialConvolve_ctx()
+ */
+
+int    initKernelGlobals_ctx(hotpants_config_t* cfg,
+                              int image_nx, int image_ny,
+                              int n_reg_x, int n_reg_y,
+                              int n_stamp_x, int n_stamp_y);
+
+int    initBuildStampsContext_ctx(hotpants_config_t* cfg,
+                                   float* tmpl, float* science,
+                                   int ny, int nx,
+                                   int n_regions_x, int n_regions_y,
+                                   int stamps_per_x, int stamps_per_y);
+
+int    buildStampsRegion_ctx(hotpants_config_t* cfg,
+                              int region_x, int region_y,
+                              float** out_template_region,
+                              float** out_science_region);
+
+int    fillStampsForRegion_ctx(hotpants_config_t* cfg,
+                                stamp_struct* stamps, int n_stamps);
+
+void   fitKernel_ctx(hotpants_config_t* cfg,
+                     stamp_struct* stamps,
+                     float* imRef, float* imConv, float* imNoise,
+                     double* kernel_coeffs,
+                     double* meansig, double* scatter, int* n_skipped);
+
+int*   setupSpatialConvolve_ctx(hotpants_config_t* cfg, int nx, int ny);
+
+double computeKernelNorm_ctx(hotpants_config_t* cfg,
+                              double* kernel_coeffs, int nx, int ny);
+
+void   spatial_convolve_ctx(hotpants_config_t* cfg,
+                             float* image, float** var_image,
+                             int ny, int nx,
+                             double* kernel_coeffs, float* output,
+                             int* conv_method);
+
+void   cleanupBuildStampsContext_ctx(void);
+void   cleanupSpatialConvolve_ctx(void);
 
 #endif /* HOTPANTS_API_H */
