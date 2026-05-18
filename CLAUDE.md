@@ -36,7 +36,7 @@ License: MIT (Andy Becker, 2013). See `LICENSE`.
 - ✓ `pyproject.toml` configured for Python ≥ 3.11 (excludes 3.14 due to segfault)
 - ✓ Sphinx + Breathe setup, Doxygen integration
 - ✓ Test suite: unit tests, integration tests, regression tests
-- ✓ Performance profiling tools: `profile_hotpants.py`, `analyze_bottlenecks.py`
+- ✓ Performance profiling tools: `dev/profiling/profile_hotpants.py`, `dev/profiling/analyze_bottlenecks.py`
 - ✓ `BOTTLENECK_ANALYSIS.md`: comprehensive profiling report with optimization roadmap
 
 ---
@@ -88,9 +88,12 @@ hotpants/
 ├── BOTTLENECK_ANALYSIS.md  # Profiling report and acceleration roadmap
 ├── CONTRIBUTING.md         # Contributor guidelines
 ├── NOTES.md                # Version history and changelog
-├── profile_hotpants.py     # Profiling utility for performance analysis
-├── analyze_bottlenecks.py  # Bottleneck identification and reporting
-└── profile_gprof.py        # gprof output parsing and analysis
+├── dev/
+│   └── profiling/          # Performance profiling and analysis tools
+│       ├── profile_hotpants.py     # Profiling utility for performance analysis
+│       ├── analyze_bottlenecks.py  # Bottleneck identification and reporting
+│       └── profile_gprof.py        # gprof output parsing and analysis
+└── .gitignore
 ```
 
 ### Key Functions
@@ -327,7 +330,7 @@ Remaining acceleration paths:
 - ✓ Configuration dataclasses with Pydantic validation
 - ✓ Unit, integration, and regression test suites
 - ✓ BOTTLENECK_ANALYSIS.md with profiling methodology and roadmap
-- ✓ Performance profiling scripts: `profile_hotpants.py`, `analyze_bottlenecks.py`
+- ✓ Performance profiling scripts: `dev/profiling/profile_hotpants.py`, `dev/profiling/analyze_bottlenecks.py`
 
 **Optional enhancements:**
 - User guides (Installation, Python API Tutorial, Command-line Reference)
@@ -1095,8 +1098,8 @@ When working on HOTPANTS:
 
 10. **Profiling workflow:**
     - Baseline: `cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build build`
-    - Profile: `OMP_NUM_THREADS=1 python profile_hotpants.py <test_image>`
-    - Analyze: `python analyze_bottlenecks.py <gprof_output>`
+    - Profile: `OMP_NUM_THREADS=1 python dev/profiling/profile_hotpants.py <test_image>`
+    - Analyze: `python dev/profiling/analyze_bottlenecks.py <gprof_output>`
     - Compare: Document baseline vs. optimized runtime and CPU %; update BOTTLENECK_ANALYSIS.md
 
 11. **Before refactoring legacy code** (e.g., PCA path, matrix builders):
