@@ -32,6 +32,8 @@ producing optimal difference images for transient detection.
 
 - **Fast convolution** — FFT-accelerated via FFTW3 (3–8× speedup on typical images)
 - **Parallelized** — multi-threaded with OpenMP for modern CPUs (4–8× total speedup)
+- **Flexible basis functions** — Multi-Gaussian basis (default) or delta function basis (Bramich 2008)
+- **Smooth spatial variation** — Thin Plate Spline (TPS) mode for artifact-free single-region processing
 - **Decorrelation** — LSST DMTN-021 afterburner noise decorrelation with spatially-varying whitening kernel
 - **Modern build system** — CMake with automatic dependency detection
 - **Comprehensive documentation** — Doxygen-generated API docs and user guides
@@ -189,7 +191,7 @@ The decorrelated image is obtained by convolving D with a spatially-varying whit
 
 Full option reference: run `hotpants` with no arguments.
 
-Key tuning parameters:
+### Kernel Fitting Parameters
 
 | Option         | Purpose                                     | Default |
 |----------------|---------------------------------------------|---------|
@@ -200,6 +202,15 @@ Key tuning parameters:
 | `-bgo`         | Spatial polynomial order (background)       | 1       |
 | `-ft`          | Centroid fitting threshold (RMS pixels)     | 20.0    |
 | `-ks`          | Bad-stamp rejection threshold (sigma)       | 2.0     |
+
+### Basis and Spatial Variation
+
+| Option                   | Purpose                                | Default |
+|--------------------------|----------------------------------------|---------|
+| `-basisType`             | Kernel basis (0=gaussian, 1=delta)     | 0       |
+| `-deltaRegularization`   | Laplacian smoothness for delta basis   | 0.0     |
+| `-useTPS`                | Use thin plate splines for spatial variation | 0 |
+| `-tpsSmoothing`          | TPS regularization parameter           | 1e-6    |
 
 ### Decorrelation Parameters
 
