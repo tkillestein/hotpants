@@ -42,10 +42,6 @@ int stampStats(double*, int*, long, double*, double*, double*, double*, double*,
                double*, double*);
 int sigma_clip(float*, int, double*, double*, int);
 void freeStampMem(stamp_struct*, int);
-/*int         makeNoiseImage2(float **, float, float, float *, float, float,
- * int, int, double *);*/
-/*int         makeNoiseImage3(float *, float, float, float *, float, float, int,
- * int);*/
 float* makeNoiseImage4(float*, float, float);
 void getKernelInfo(char*);
 void readKernel(char*, int, double**, double**, int*, int*, int*, int*, double*,
@@ -86,13 +82,3 @@ void lanczos(double, double*, int);
 
 /* Vargs.c */
 void vargs(int, char*[]);
-
-/* jtwarp.c */
-/*
-void         jtrebin(int, int, float *, int, int, int, int,
-                     double *, double *, double *, float *, float *,
-                     float, float, int, float, float, float, float, float);
-int          jtdotri(int, int, double *, double [], double [], double, float *,
-int []); void         jtsprinkle(int, int, double *, double, double, double,
-double, double, float, float *, int []);
-*/
