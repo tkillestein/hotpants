@@ -7,6 +7,7 @@
 #endif
 #include "defaults.h"
 #include "globals.h"
+#include "functions.h"
 
 /* BLAS/LAPACK threading control macros */
 #ifdef __OPENBLAS__
